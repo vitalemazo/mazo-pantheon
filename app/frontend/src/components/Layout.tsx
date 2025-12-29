@@ -9,6 +9,7 @@ import { LayoutProvider, useLayoutContext } from '@/contexts/layout-context';
 import { TabsProvider, useTabsContext } from '@/contexts/tabs-context';
 import { WorkflowProvider } from '@/contexts/workflow-context';
 import { PortfolioHealthProvider } from '@/contexts/portfolio-health-context';
+import { TradingDashboardProvider } from '@/contexts/trading-dashboard-context';
 import { useLayoutKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts';
 import { cn } from '@/lib/utils';
 import { SidebarStorageService } from '@/services/sidebar-storage';
@@ -203,9 +204,11 @@ export function Layout({ children }: LayoutProps) {
           <TabsProvider>
             <WorkflowProvider>
               <PortfolioHealthProvider>
-                <LayoutProvider>
-                  <LayoutContent>{children}</LayoutContent>
-                </LayoutProvider>
+                <TradingDashboardProvider>
+                  <LayoutProvider>
+                    <LayoutContent>{children}</LayoutContent>
+                  </LayoutProvider>
+                </TradingDashboardProvider>
               </PortfolioHealthProvider>
             </WorkflowProvider>
           </TabsProvider>
