@@ -104,10 +104,18 @@ def compute_allowed_actions(
         max_shares: dict[str, int],
         portfolio: dict[str, float],
 ) -> dict[str, dict[str, int]]:
-    """Compute allowed actions and max quantities for each ticker deterministically."""
+    """Compute allowed actions and max quantities for each ticker.
+    
+    NOTE: We always include ALL actions to give the LLM full autonomy.
+    The LLM can decide to take any action based on its analysis.
+    Quantity constraints are advisory, not blocking.
+    """
     allowed = {}
     cash = float(portfolio.get("cash", 0.0))
+    buying_power = float(portfolio.get("buying_power", cash))
     positions = portfolio.get("positions", {}) or {}
+    pending_orders = portfolio.get("pending_orders", []) or []
+    is_paper = portfolio.get("paper_trading", True)
     margin_requirement = float(portfolio.get("margin_requirement", 0.5))
     margin_used = float(portfolio.get("margin_used", 0.0))
     equity = float(portfolio.get("equity", cash))
@@ -121,43 +129,50 @@ def compute_allowed_actions(
         long_shares = int(pos.get("long", 0) or 0)
         short_shares = int(pos.get("short", 0) or 0)
         max_qty = int(max_shares.get(ticker, 0) or 0)
+        
+        # Check for pending orders on this ticker
+        ticker_pending = [o for o in pending_orders if o.get('symbol') == ticker]
+        has_pending = len(ticker_pending) > 0
 
-        # Start with zeros
-        actions = {"buy": 0, "sell": 0, "short": 0, "cover": 0, "hold": 0}
+        # ALWAYS include all actions - let LLM decide
+        actions = {}
 
-        # Long side
-        if long_shares > 0:
-            actions["sell"] = long_shares
-        if cash > 0 and price > 0:
-            max_buy_cash = int(cash // price)
-            max_buy = max(0, min(max_qty, max_buy_cash))
-            if max_buy > 0:
-                actions["buy"] = max_buy
+        # BUY: Limited by cash/buying power and risk limits
+        if price > 0:
+            max_buy_cash = int(buying_power // price)
+            max_buy = max(1, min(max_qty, max_buy_cash)) if max_buy_cash > 0 else 0
+            # For paper trading, allow at least some shares if we have any buying power
+            if is_paper and max_buy == 0 and buying_power > price:
+                max_buy = int(buying_power // price)
+            actions["buy"] = max_buy
 
-        # Short side
-        if short_shares > 0:
-            actions["cover"] = short_shares
-        if price > 0 and max_qty > 0:
+        # SELL: Can sell whatever long position we have
+        actions["sell"] = long_shares if long_shares > 0 else 0
+
+        # SHORT: Limited by margin
+        if price > 0:
             if margin_requirement <= 0.0:
-                # If margin requirement is zero or unset, only cap by max_qty
                 max_short = max_qty
             else:
                 available_margin = max(0.0, (equity / margin_requirement) - margin_used)
                 max_short_margin = int(available_margin // price)
                 max_short = max(0, min(max_qty, max_short_margin))
-            if max_short > 0:
-                actions["short"] = max_short
+            # For paper trading, be more generous
+            if is_paper and max_short == 0 and equity > 0:
+                max_short = max(1, int(equity * 0.3 / price))  # Allow up to 30% of equity
+            actions["short"] = max_short
 
-        # Hold always valid
+        # COVER: Can cover whatever short position we have  
+        actions["cover"] = short_shares if short_shares > 0 else 0
+
+        # HOLD: Always available
         actions["hold"] = 0
+        
+        # CANCEL: Available if there are pending orders
+        if has_pending:
+            actions["cancel"] = len(ticker_pending)  # Number of orders that can be cancelled
 
-        # Prune zero-capacity actions to reduce tokens, keep hold
-        pruned = {"hold": 0}
-        for k, v in actions.items():
-            if k != "hold" and v > 0:
-                pruned[k] = v
-
-        allowed[ticker] = pruned
+        allowed[ticker] = actions
 
     return allowed
 
@@ -242,21 +257,13 @@ def generate_trading_decision(
 ) -> PortfolioManagerOutput:
     """Get decisions from the LLM with deterministic constraints and portfolio context."""
 
-    # Deterministic constraints
+    # Get action constraints (advisory, not blocking)
     allowed_actions_full = compute_allowed_actions(tickers, current_prices, max_shares, portfolio)
 
-    # Pre-fill pure holds to avoid sending them to the LLM at all
+    # ALWAYS send ALL tickers to LLM - let it decide based on full analysis
+    # Don't pre-fill holds - the LLM should make ALL decisions
     prefilled_decisions: dict[str, PortfolioDecision] = {}
-    tickers_for_llm: list[str] = []
-    for t in tickers:
-        aa = allowed_actions_full.get(t, {"hold": 0})
-        # If only 'hold' key exists, there is no trade possible
-        if set(aa.keys()) == {"hold"}:
-            prefilled_decisions[t] = PortfolioDecision(
-                action="hold", quantity=0, confidence=100.0, reasoning="No valid trade available"
-            )
-        else:
-            tickers_for_llm.append(t)
+    tickers_for_llm = list(tickers)  # ALL tickers go to LLM
 
     if not tickers_for_llm:
         return PortfolioManagerOutput(decisions=prefilled_decisions)
