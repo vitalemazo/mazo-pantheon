@@ -201,10 +201,11 @@ mazo-pantheon/
 │   └── src/                # Mazo source code
 ├── src/
 │   ├── agents/             # 18 trading agents
+│   ├── backtesting/        # Backtesting engine
 │   ├── llm/                # LLM providers
 │   ├── tools/              # Financial data APIs
 │   └── utils/              # Helpers
-└── tests/                  # Unit tests
+└── docker/                 # Docker deployment files
 ```
 
 ---
@@ -258,11 +259,3 @@ curl -X POST "http://localhost:8000/env-sync/sync?overwrite=true"
 ## License
 
 MIT License - See LICENSE file for details.
-
----
-
-## Credits
-
-- Original AI Hedge Fund concept by [virattt](https://github.com/virattt)
-- Mazo research agent integration
-- Multi-agent architecture using LangGraph
