@@ -320,3 +320,28 @@ class PortfolioContext:
             account_status=account.status,
             trading_blocked=account.trading_blocked,
         )
+
+
+def build_portfolio_context() -> PortfolioContext:
+    """
+    Convenience function to build PortfolioContext from live Alpaca data.
+    
+    Returns:
+        PortfolioContext populated with current account, positions, and orders
+    """
+    from src.trading.alpaca_service import AlpacaService
+    
+    alpaca = AlpacaService()
+    
+    # Get account info
+    account = alpaca.get_account()
+    if not account:
+        raise ValueError("Could not fetch Alpaca account")
+    
+    # Get positions
+    positions = alpaca.get_positions() or []
+    
+    # Get open orders
+    orders = alpaca.get_orders(status="open") or []
+    
+    return PortfolioContext.from_alpaca(account, positions, orders)

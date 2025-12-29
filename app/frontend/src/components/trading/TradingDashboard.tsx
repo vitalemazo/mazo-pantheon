@@ -17,7 +17,12 @@ import {
   Eye,
   Zap,
   Calendar,
-  Award
+  Award,
+  Brain,
+  Rocket,
+  CheckCircle2,
+  XCircle,
+  AlertCircle
 } from 'lucide-react';
 
 interface Position {
@@ -82,6 +87,26 @@ interface WatchlistItem {
   strategy: string;
 }
 
+interface AutomatedTradingStatus {
+  is_running: boolean;
+  last_run: string | null;
+  total_runs: number;
+  last_result: {
+    tickers_screened: number;
+    signals_found: number;
+    mazo_validated: number;
+    trades_analyzed: number;
+    trades_executed: number;
+    total_execution_time_ms: number;
+    results: Array<{
+      ticker: string;
+      action: string;
+      dry_run?: boolean;
+    }>;
+    errors: string[];
+  } | null;
+}
+
 function formatCurrency(value: number): string {
   const sign = value >= 0 ? '' : '-';
   return `${sign}$${Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -97,7 +122,9 @@ export function TradingDashboard() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [automatedStatus, setAutomatedStatus] = useState<AutomatedTradingStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [aiLoading, setAiLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
@@ -107,11 +134,12 @@ export function TradingDashboard() {
 
     try {
       // Fetch all data in parallel
-      const [perfRes, metricsRes, schedulerRes, watchlistRes] = await Promise.all([
+      const [perfRes, metricsRes, schedulerRes, watchlistRes, automatedRes] = await Promise.all([
         fetch('http://localhost:8000/trading/performance'),
         fetch('http://localhost:8000/trading/performance/metrics'),
         fetch('http://localhost:8000/trading/scheduler/status'),
         fetch('http://localhost:8000/trading/watchlist'),
+        fetch('http://localhost:8000/trading/automated/status'),
       ]);
 
       if (perfRes.ok) {
@@ -132,6 +160,11 @@ export function TradingDashboard() {
       if (watchlistRes.ok) {
         const data = await watchlistRes.json();
         setWatchlist(data.items || []);
+      }
+
+      if (automatedRes.ok) {
+        const data = await automatedRes.json();
+        setAutomatedStatus(data);
       }
 
       setLastRefresh(new Date());
@@ -170,6 +203,35 @@ export function TradingDashboard() {
       fetchData();
     } catch (err) {
       console.error('Failed to add schedule:', err);
+    }
+  };
+
+  const runAiTradingCycle = async (dryRun: boolean = false) => {
+    setAiLoading(true);
+    try {
+      const endpoint = dryRun 
+        ? 'http://localhost:8000/trading/automated/dry-run'
+        : 'http://localhost:8000/trading/automated/run';
+      
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          min_confidence: 60,
+          max_signals: 5,
+          execute_trades: true,
+        }),
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('AI Trading Result:', data);
+        fetchData();
+      }
+    } catch (err) {
+      console.error('Failed to run AI trading:', err);
+    } finally {
+      setAiLoading(false);
     }
   };
 
@@ -318,6 +380,121 @@ export function TradingDashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {/* AI Trading Control Panel */}
+        <Card className="bg-gradient-to-r from-purple-900/30 via-indigo-900/30 to-blue-900/30 border-purple-500/50">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-3 text-white">
+              <Brain className="w-6 h-6 text-purple-400" />
+              AI-Powered Trading Pipeline
+              {automatedStatus?.is_running && (
+                <Badge className="bg-purple-600 animate-pulse">RUNNING</Badge>
+              )}
+            </CardTitle>
+            <CardDescription className="text-slate-300">
+              Strategy Engine → Mazo Validation → AI Analysts → Portfolio Manager → Alpaca Execution
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Controls */}
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => runAiTradingCycle(false)}
+                    disabled={aiLoading || automatedStatus?.is_running}
+                    className="bg-purple-600 hover:bg-purple-700"
+                  >
+                    {aiLoading ? (
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Rocket className="w-4 h-4 mr-2" />
+                    )}
+                    Run AI Trading Cycle
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => runAiTradingCycle(true)}
+                    disabled={aiLoading || automatedStatus?.is_running}
+                    className="border-purple-500 text-purple-400 hover:bg-purple-500/20"
+                  >
+                    <Eye className="w-4 h-4 mr-2" />
+                    Dry Run
+                  </Button>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Full cycle: Screen → Validate → Analyze → Decide → Execute
+                </p>
+              </div>
+              
+              {/* Last Run Stats */}
+              <div className="grid grid-cols-5 gap-2 text-center">
+                <div className="p-2 bg-slate-700/50 rounded-lg">
+                  <div className="text-lg font-bold text-white">
+                    {automatedStatus?.last_result?.tickers_screened || 0}
+                  </div>
+                  <div className="text-xs text-slate-400">Screened</div>
+                </div>
+                <div className="p-2 bg-slate-700/50 rounded-lg">
+                  <div className="text-lg font-bold text-cyan-400">
+                    {automatedStatus?.last_result?.signals_found || 0}
+                  </div>
+                  <div className="text-xs text-slate-400">Signals</div>
+                </div>
+                <div className="p-2 bg-slate-700/50 rounded-lg">
+                  <div className="text-lg font-bold text-purple-400">
+                    {automatedStatus?.last_result?.mazo_validated || 0}
+                  </div>
+                  <div className="text-xs text-slate-400">Validated</div>
+                </div>
+                <div className="p-2 bg-slate-700/50 rounded-lg">
+                  <div className="text-lg font-bold text-yellow-400">
+                    {automatedStatus?.last_result?.trades_analyzed || 0}
+                  </div>
+                  <div className="text-xs text-slate-400">Analyzed</div>
+                </div>
+                <div className="p-2 bg-slate-700/50 rounded-lg">
+                  <div className="text-lg font-bold text-emerald-400">
+                    {automatedStatus?.last_result?.trades_executed || 0}
+                  </div>
+                  <div className="text-xs text-slate-400">Executed</div>
+                </div>
+              </div>
+            </div>
+            
+            {/* Recent AI Trade Results */}
+            {automatedStatus?.last_result?.results && automatedStatus.last_result.results.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-slate-600">
+                <h4 className="text-sm font-medium text-slate-300 mb-2">Latest AI Decisions</h4>
+                <div className="flex flex-wrap gap-2">
+                  {automatedStatus.last_result.results.slice(0, 5).map((res, i) => (
+                    <Badge 
+                      key={i} 
+                      variant="outline"
+                      className={
+                        res.action === 'buy' || res.action === 'cover' 
+                          ? 'border-emerald-500 text-emerald-400' 
+                          : res.action === 'sell' || res.action === 'short'
+                          ? 'border-red-500 text-red-400'
+                          : 'border-slate-500 text-slate-400'
+                      }
+                    >
+                      {res.ticker}: {res.action.toUpperCase()}
+                      {res.dry_run && ' (dry)'}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {automatedStatus?.last_run && (
+              <div className="text-xs text-slate-500 mt-3">
+                Last run: {new Date(automatedStatus.last_run).toLocaleString()} 
+                ({automatedStatus.total_runs} total runs)
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Main Content Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

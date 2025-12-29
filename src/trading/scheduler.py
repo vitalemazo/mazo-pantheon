@@ -39,6 +39,7 @@ class TaskType(Enum):
     DAILY_REPORT = "daily_report"
     STOP_LOSS_CHECK = "stop_loss_check"
     WATCHLIST_MONITOR = "watchlist_monitor"
+    AUTOMATED_TRADING = "automated_trading"  # Full AI pipeline
 
 
 @dataclass
@@ -110,6 +111,7 @@ class TradingScheduler:
             TaskType.STOP_LOSS_CHECK: self._run_stop_loss_check,
             TaskType.DAILY_REPORT: self._run_daily_report,
             TaskType.WATCHLIST_MONITOR: self._run_watchlist_monitor,
+            TaskType.AUTOMATED_TRADING: self._run_automated_trading,
         }
     
     def start(self) -> bool:
@@ -223,6 +225,20 @@ class TradingScheduler:
             parameters={"during_market_hours": True}
         )
         jobs_added["stop_loss_monitor"] = job_id
+        
+        # AI-powered automated trading (every 30 minutes during market hours)
+        job_id = self.add_interval_task(
+            task_type=TaskType.AUTOMATED_TRADING,
+            name="AI Trading Cycle",
+            minutes=30,
+            parameters={
+                "during_market_hours": True,
+                "min_confidence": 65,
+                "max_signals": 3,
+                "execute_trades": True
+            }
+        )
+        jobs_added["ai_trading"] = job_id
         
         logger.info(f"Added {len(jobs_added)} default scheduled tasks")
         return jobs_added
@@ -613,6 +629,46 @@ class TradingScheduler:
             
         except Exception as e:
             logger.error(f"Daily report failed: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def _run_automated_trading(self, params: Dict) -> Dict:
+        """
+        Run full AI-powered automated trading cycle.
+        
+        Pipeline:
+        1. Strategy Engine screens for technical signals
+        2. Mazo validates promising signals
+        3. AI Analysts provide deep analysis
+        4. Portfolio Manager makes final decision
+        5. Trades execute on Alpaca
+        """
+        from src.trading.automated_trading import get_automated_trading_service
+        
+        try:
+            service = get_automated_trading_service()
+            
+            result = await service.run_trading_cycle(
+                tickers=params.get("tickers"),
+                min_confidence=params.get("min_confidence", 65),
+                max_signals=params.get("max_signals", 3),
+                execute_trades_flag=params.get("execute_trades", True),
+                dry_run=params.get("dry_run", False),
+            )
+            
+            return {
+                "status": "completed",
+                "tickers_screened": result.tickers_screened,
+                "signals_found": result.signals_found,
+                "mazo_validated": result.mazo_validated,
+                "trades_analyzed": result.trades_analyzed,
+                "trades_executed": result.trades_executed,
+                "execution_time_ms": result.total_execution_time_ms,
+                "results": result.results[:5],  # Top 5 results
+                "errors": result.errors,
+            }
+            
+        except Exception as e:
+            logger.error(f"Automated trading failed: {e}")
             return {"status": "error", "error": str(e)}
 
 

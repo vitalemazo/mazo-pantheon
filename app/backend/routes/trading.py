@@ -17,6 +17,7 @@ from src.trading.scheduler import get_scheduler, TaskType
 from src.trading.strategy_engine import get_strategy_engine
 from src.trading.watchlist_service import get_watchlist_service
 from src.trading.performance_tracker import get_performance_tracker
+from src.trading.automated_trading import get_automated_trading_service
 
 
 router = APIRouter(prefix="/trading", tags=["trading"])
@@ -78,6 +79,14 @@ class RecordTradeRequest(BaseModel):
 class CloseTradeRequest(BaseModel):
     trade_id: int
     exit_price: float
+
+
+class AutomatedTradingRequest(BaseModel):
+    tickers: Optional[List[str]] = None
+    min_confidence: float = 65
+    max_signals: int = 3
+    execute_trades: bool = True
+    dry_run: bool = False
 
 
 # ==================== Scheduler Endpoints ====================
@@ -484,4 +493,96 @@ async def get_daily_snapshots(days: int = 30):
     return {
         "success": True,
         "snapshots": [s.to_dict() for s in snapshots],
+    }
+
+
+# ==================== Automated Trading Endpoints ====================
+
+@router.get("/automated/status")
+async def get_automated_trading_status():
+    """Get automated trading service status."""
+    service = get_automated_trading_service()
+    return {
+        "success": True,
+        **service.get_status()
+    }
+
+
+@router.post("/automated/run")
+async def run_automated_trading_cycle(request: AutomatedTradingRequest):
+    """
+    Manually trigger an automated trading cycle.
+    
+    This runs the full AI pipeline:
+    1. Strategy Engine screens for signals
+    2. Mazo validates promising signals  
+    3. AI Analysts provide deep analysis
+    4. Portfolio Manager makes final decision
+    5. Trades execute on Alpaca
+    """
+    import asyncio
+    
+    service = get_automated_trading_service()
+    
+    if service.is_running:
+        raise HTTPException(
+            status_code=409, 
+            detail="A trading cycle is already running"
+        )
+    
+    # Run the cycle
+    result = await service.run_trading_cycle(
+        tickers=request.tickers,
+        min_confidence=request.min_confidence,
+        max_signals=request.max_signals,
+        execute_trades_flag=request.execute_trades,
+        dry_run=request.dry_run,
+    )
+    
+    return {
+        "success": True,
+        "result": result.to_dict(),
+    }
+
+
+@router.get("/automated/history")
+async def get_automated_trading_history(limit: int = 10):
+    """Get automated trading run history."""
+    service = get_automated_trading_service()
+    return {
+        "success": True,
+        "history": service.get_history(limit=limit),
+    }
+
+
+@router.post("/automated/dry-run")
+async def run_automated_trading_dry_run(request: AutomatedTradingRequest):
+    """
+    Run automated trading in dry-run mode (no actual trades).
+    
+    Useful for testing the pipeline without executing.
+    """
+    import asyncio
+    
+    service = get_automated_trading_service()
+    
+    if service.is_running:
+        raise HTTPException(
+            status_code=409,
+            detail="A trading cycle is already running"
+        )
+    
+    # Force dry run
+    result = await service.run_trading_cycle(
+        tickers=request.tickers,
+        min_confidence=request.min_confidence,
+        max_signals=request.max_signals,
+        execute_trades_flag=True,
+        dry_run=True,  # Force dry run
+    )
+    
+    return {
+        "success": True,
+        "dry_run": True,
+        "result": result.to_dict(),
     }
