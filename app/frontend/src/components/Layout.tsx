@@ -59,6 +59,11 @@ function LayoutContent({ children: _children }: { children: ReactNode }) {
     openTab(tabData);
   };
 
+  const handleCommandCenterClick = () => {
+    const tabData = TabService.createCommandCenterTab();
+    openTab(tabData);
+  };
+
   // Add keyboard shortcuts for toggling sidebars and fit view
   useLayoutKeyboardShortcuts(
     () => setIsRightCollapsed(!isRightCollapsed), // Cmd+I for right sidebar
@@ -113,6 +118,7 @@ function LayoutContent({ children: _children }: { children: ReactNode }) {
         onUnifiedWorkflowClick={handleUnifiedWorkflowClick}
         onPortfolioClick={handlePortfolioClick}
         onTradingClick={handleTradingClick}
+        onCommandCenterClick={handleCommandCenterClick}
       />
 
       {/* Tab Bar - positioned absolutely like bottom panel */}

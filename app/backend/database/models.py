@@ -309,6 +309,103 @@ class ScheduledTask(Base):
     max_retries = Column(Integer, nullable=False, default=3)
 
 
+class AgentPerformance(Base):
+    """Track individual agent signal accuracy over time"""
+    __tablename__ = "agent_performance"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Agent identification
+    agent_name = Column(String(100), nullable=False, unique=True, index=True)
+    agent_type = Column(String(50), nullable=True)  # fundamental, technical, sentiment, etc.
+    
+    # Signal tracking
+    total_signals = Column(Integer, nullable=False, default=0)
+    bullish_signals = Column(Integer, nullable=False, default=0)
+    bearish_signals = Column(Integer, nullable=False, default=0)
+    neutral_signals = Column(Integer, nullable=False, default=0)
+    
+    # Accuracy metrics (calculated from closed trades)
+    correct_predictions = Column(Integer, nullable=False, default=0)
+    incorrect_predictions = Column(Integer, nullable=False, default=0)
+    accuracy_rate = Column(Float, nullable=True)  # % of correct predictions
+    
+    # Performance when followed
+    trades_following_signal = Column(Integer, nullable=False, default=0)
+    avg_return_when_followed = Column(Float, nullable=True)
+    total_pnl_when_followed = Column(Float, nullable=False, default=0)
+    
+    # Best/worst calls
+    best_call_ticker = Column(String(20), nullable=True)
+    best_call_return = Column(Float, nullable=True)
+    worst_call_ticker = Column(String(20), nullable=True)
+    worst_call_return = Column(Float, nullable=True)
+    
+    # Recent activity
+    last_signal_date = Column(DateTime(timezone=True), nullable=True)
+    last_accuracy_update = Column(DateTime(timezone=True), nullable=True)
+
+
+class TradeDecisionContext(Base):
+    """Store full context for each trade decision (for learning and analysis)"""
+    __tablename__ = "trade_decision_context"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Link to trade
+    trade_id = Column(Integer, ForeignKey("trade_history.id"), nullable=True, index=True)
+    order_id = Column(String(100), nullable=True)
+    ticker = Column(String(20), nullable=False, index=True)
+    
+    # Trigger source
+    trigger_source = Column(String(50), nullable=False)  # manual, scheduler, automated
+    workflow_mode = Column(String(50), nullable=True)  # full, research, signal, pre-research, post-research
+    
+    # Strategy signals
+    strategy_signal = Column(String(20), nullable=True)  # LONG, SHORT, NEUTRAL
+    strategy_confidence = Column(Float, nullable=True)
+    strategy_name = Column(String(50), nullable=True)
+    strategy_reasoning = Column(Text, nullable=True)
+    
+    # Mazo research
+    mazo_sentiment = Column(String(20), nullable=True)  # bullish, bearish, neutral
+    mazo_confidence = Column(String(20), nullable=True)  # high, medium, low
+    mazo_key_points = Column(JSON, nullable=True)
+    mazo_full_response = Column(Text, nullable=True)
+    
+    # All agent signals (comprehensive)
+    agent_signals = Column(JSON, nullable=False)  # {agent_name: {signal, confidence, reasoning}}
+    
+    # Consensus
+    bullish_count = Column(Integer, nullable=True)
+    bearish_count = Column(Integer, nullable=True)
+    neutral_count = Column(Integer, nullable=True)
+    consensus_direction = Column(String(20), nullable=True)
+    consensus_confidence = Column(Float, nullable=True)
+    
+    # Portfolio context at decision time
+    portfolio_equity = Column(Float, nullable=True)
+    portfolio_cash = Column(Float, nullable=True)
+    existing_positions = Column(JSON, nullable=True)  # Positions at time of decision
+    pending_orders = Column(JSON, nullable=True)
+    
+    # PM decision
+    pm_action = Column(String(20), nullable=True)  # buy, sell, short, cover, hold
+    pm_quantity = Column(Integer, nullable=True)
+    pm_confidence = Column(Float, nullable=True)
+    pm_reasoning = Column(Text, nullable=True)
+    pm_stop_loss_pct = Column(Float, nullable=True)
+    pm_take_profit_pct = Column(Float, nullable=True)
+    
+    # Outcome (filled in later when trade closes)
+    actual_return = Column(Float, nullable=True)
+    was_profitable = Column(Boolean, nullable=True)
+    outcome_notes = Column(Text, nullable=True)
+
+
 class TradingStrategy(Base):
     """Trading strategy configurations"""
     __tablename__ = "trading_strategies"

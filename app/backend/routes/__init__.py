@@ -14,6 +14,7 @@ from app.backend.routes.env_sync import router as env_sync_router
 from app.backend.routes.alpaca import router as alpaca_router
 from app.backend.routes.diversification import router as diversification_router
 from app.backend.routes.trading import router as trading_router
+from app.backend.routes.history import router as history_router
 
 # Main API router
 api_router = APIRouter()
@@ -33,3 +34,4 @@ api_router.include_router(env_sync_router, tags=["env-sync"])
 api_router.include_router(alpaca_router, tags=["alpaca"])
 api_router.include_router(diversification_router, tags=["diversification"])
 api_router.include_router(trading_router, tags=["trading"])
+api_router.include_router(history_router, tags=["history"])

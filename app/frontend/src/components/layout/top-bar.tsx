@@ -6,7 +6,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings, Workflow, Activity, BarChart3 } from 'lucide-react';
+import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings, Workflow, Activity, BarChart3, Crosshair } from 'lucide-react';
 import { useState } from 'react';
 import { KeyboardShortcutsDialog } from './keyboard-shortcuts-dialog';
 
@@ -21,6 +21,7 @@ interface TopBarProps {
   onUnifiedWorkflowClick: () => void;
   onPortfolioClick: () => void;
   onTradingClick: () => void;
+  onCommandCenterClick: () => void;
 }
 
 export function TopBar({
@@ -34,6 +35,7 @@ export function TopBar({
   onUnifiedWorkflowClick,
   onPortfolioClick,
   onTradingClick,
+  onCommandCenterClick,
 }: TopBarProps) {
   const [showShortcuts, setShowShortcuts] = useState(false);
 
@@ -169,6 +171,25 @@ export function TopBar({
           <TooltipContent side="bottom" className="flex flex-col gap-0.5">
             <span className="font-medium">Trading Dashboard</span>
             <span className="text-xs text-muted-foreground">Performance & strategies • ⌘T</span>
+          </TooltipContent>
+        </Tooltip>
+
+        {/* Command Center */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onCommandCenterClick}
+              className="h-8 w-8 p-0 text-amber-400 hover:text-amber-300 hover:bg-ramp-grey-700 transition-colors"
+              aria-label="Open command center"
+            >
+              <Crosshair size={16} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="flex flex-col gap-0.5">
+            <span className="font-medium">Command Center</span>
+            <span className="text-xs text-muted-foreground">Unified view • Trade history • Agent leaderboard</span>
           </TooltipContent>
         </Tooltip>
 
