@@ -13,6 +13,57 @@ This system integrates two AI components:
 | **AI Hedge Fund** | 18 specialized agents generating trading signals |
 | **Mazo Research** | Autonomous deep financial research agent |
 
+## Screenshots
+
+### Main Dashboard
+![Main Dashboard](docs/screenshots/main-dashboard.png)
+
+### Unified Workflow
+Complete transparency with workflow execution graph, configuration options, and real-time progress tracking.
+![Unified Workflow](docs/screenshots/unified-workflow.png)
+
+### Workflow Mode Dropdown
+Select from 5 workflow modes: Signal Only, Research Only, Pre-Research, Post-Research, or Full Workflow.
+![Workflow Modes Dropdown](docs/screenshots/workflow-modes-dropdown.png)
+
+### Workflow Modes Guide
+Built-in help explaining each workflow mode, token usage, cost estimates, and recommendations.
+![Workflow Modes Guide](docs/screenshots/workflow-modes-guide.png)
+
+### Research Depth Dropdown
+Choose research depth: Quick (30-60s), Standard (2-5min), or Deep (5-15min).
+![Research Depth Dropdown](docs/screenshots/research-depth-dropdown.png)
+
+### Research Depth Guide
+Detailed explanation of each research depth level, token costs, and when to use each.
+![Research Depth Guide](docs/screenshots/research-depth-guide.png)
+
+### Trading Options Guide
+Understand Dry Run vs Execute Trades, recommended workflows, and safety practices.
+![Trading Options Guide](docs/screenshots/trading-options-guide.png)
+
+### Raw JSON Output
+Inspect the full workflow state as JSON - useful for debugging and export.
+![Raw JSON Panel](docs/screenshots/raw-json-panel.png)
+
+### Settings - API Keys
+Configure all API keys for financial data, LLM providers, web search, and trading.
+![Settings API Keys](docs/screenshots/settings-api-keys.png)
+
+### Settings - Data Source Fallbacks
+Configure backup data sources (Yahoo Finance, FMP) when primary API is unavailable.
+![Data Source Fallbacks](docs/screenshots/settings-data-fallbacks.png)
+
+### Primary Data Source Dropdown
+Choose your preferred data source: Financial Datasets API, FMP, or Yahoo Finance.
+![Data Source Dropdown](docs/screenshots/data-source-dropdown.png)
+
+### Settings - Models
+View available cloud and local (Ollama) models with provider information.
+![Settings Models](docs/screenshots/settings-models.png)
+
+---
+
 ## Quick Start
 
 ### 1. Setup Environment
