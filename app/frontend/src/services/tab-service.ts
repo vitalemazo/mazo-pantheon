@@ -2,11 +2,12 @@ import { Settings } from '@/components/settings/settings';
 import { FlowTabContent } from '@/components/tabs/flow-tab-content';
 import { DetailedWorkflowView } from '@/components/unified-workflow/DetailedWorkflowView';
 import { PortfolioHealthView } from '@/components/portfolio/PortfolioHealthView';
+import { TradingDashboard } from '@/components/trading/TradingDashboard';
 import { Flow } from '@/types/flow';
 import { ReactNode, createElement } from 'react';
 
 export interface TabData {
-  type: 'flow' | 'settings' | 'unified-workflow' | 'portfolio';
+  type: 'flow' | 'settings' | 'unified-workflow' | 'portfolio' | 'trading';
   title: string;
   flow?: Flow;
   metadata?: Record<string, any>;
@@ -29,6 +30,9 @@ export class TabService {
       
       case 'portfolio':
         return createElement(PortfolioHealthView);
+      
+      case 'trading':
+        return createElement(TradingDashboard);
       
       default:
         throw new Error(`Unsupported tab type: ${tabData.type}`);
@@ -68,6 +72,14 @@ export class TabService {
     };
   }
 
+  static createTradingTab(): TabData & { content: ReactNode } {
+    return {
+      type: 'trading',
+      title: 'Trading Dashboard',
+      content: TabService.createTabContent({ type: 'trading', title: 'Trading Dashboard' }),
+    };
+  }
+
   // Restore tab content for persisted tabs (used when loading from localStorage)
   static restoreTabContent(tabData: TabData): ReactNode {
     return TabService.createTabContent(tabData);
@@ -90,6 +102,9 @@ export class TabService {
       
       case 'portfolio':
         return TabService.createPortfolioTab();
+      
+      case 'trading':
+        return TabService.createTradingTab();
       
       default:
         throw new Error(`Cannot restore unsupported tab type: ${savedTab.type}`);

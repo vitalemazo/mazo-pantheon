@@ -1,6 +1,41 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON, ForeignKey, Float, Enum
 from sqlalchemy.sql import func
 from .connection import Base
+import enum
+
+
+class TradeAction(enum.Enum):
+    """Trade action types"""
+    BUY = "buy"
+    SELL = "sell"
+    SHORT = "short"
+    COVER = "cover"
+    HOLD = "hold"
+
+
+class TradeStatus(enum.Enum):
+    """Trade execution status"""
+    PENDING = "pending"
+    FILLED = "filled"
+    PARTIAL = "partial"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+
+
+class WatchlistStatus(enum.Enum):
+    """Watchlist item status"""
+    WATCHING = "watching"
+    TRIGGERED = "triggered"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+
+
+class ScheduledTaskStatus(enum.Enum):
+    """Scheduled task status"""
+    ACTIVE = "active"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class HedgeFundFlow(Base):
@@ -112,4 +147,198 @@ class ApiKey(Base):
     last_used = Column(DateTime(timezone=True), nullable=True)  # Track usage
 
 
- 
+class TradeHistory(Base):
+    """Track all executed trades for performance analysis"""
+    __tablename__ = "trade_history"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Trade identification
+    order_id = Column(String(100), nullable=True, index=True)  # Alpaca order ID
+    ticker = Column(String(20), nullable=False, index=True)
+    
+    # Trade details
+    action = Column(String(20), nullable=False)  # buy, sell, short, cover
+    quantity = Column(Float, nullable=False)
+    entry_price = Column(Float, nullable=True)
+    exit_price = Column(Float, nullable=True)
+    
+    # Timing
+    entry_time = Column(DateTime(timezone=True), nullable=True)
+    exit_time = Column(DateTime(timezone=True), nullable=True)
+    
+    # Risk management
+    stop_loss_price = Column(Float, nullable=True)
+    take_profit_price = Column(Float, nullable=True)
+    stop_loss_pct = Column(Float, nullable=True)
+    take_profit_pct = Column(Float, nullable=True)
+    
+    # Strategy
+    strategy = Column(String(50), nullable=True)  # momentum, mean_reversion, trend, etc.
+    strategy_params = Column(JSON, nullable=True)  # Parameters used
+    
+    # Results
+    realized_pnl = Column(Float, nullable=True)
+    return_pct = Column(Float, nullable=True)
+    holding_period_hours = Column(Float, nullable=True)
+    
+    # Status
+    status = Column(String(20), nullable=False, default="pending")  # pending, filled, closed
+    
+    # Metadata
+    notes = Column(Text, nullable=True)
+    signals = Column(JSON, nullable=True)  # Agent signals that led to this trade
+
+
+class DailyPerformance(Base):
+    """Daily portfolio performance snapshots"""
+    __tablename__ = "daily_performance"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(DateTime(timezone=True), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Portfolio state
+    starting_equity = Column(Float, nullable=False)
+    ending_equity = Column(Float, nullable=False)
+    high_equity = Column(Float, nullable=True)
+    low_equity = Column(Float, nullable=True)
+    
+    # P&L
+    realized_pnl = Column(Float, nullable=False, default=0)
+    unrealized_pnl = Column(Float, nullable=False, default=0)
+    total_pnl = Column(Float, nullable=False, default=0)
+    return_pct = Column(Float, nullable=False, default=0)
+    
+    # Trading activity
+    trades_count = Column(Integer, nullable=False, default=0)
+    winning_trades = Column(Integer, nullable=False, default=0)
+    losing_trades = Column(Integer, nullable=False, default=0)
+    win_rate = Column(Float, nullable=True)
+    
+    # Best/worst
+    biggest_winner = Column(Float, nullable=True)
+    biggest_winner_ticker = Column(String(20), nullable=True)
+    biggest_loser = Column(Float, nullable=True)
+    biggest_loser_ticker = Column(String(20), nullable=True)
+    
+    # Risk metrics
+    max_drawdown = Column(Float, nullable=True)
+    sharpe_ratio = Column(Float, nullable=True)
+    
+    # Positions
+    positions_count = Column(Integer, nullable=False, default=0)
+    positions_snapshot = Column(JSON, nullable=True)
+
+
+class Watchlist(Base):
+    """Watchlist for potential trades"""
+    __tablename__ = "watchlist"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Stock info
+    ticker = Column(String(20), nullable=False, index=True)
+    name = Column(String(200), nullable=True)
+    sector = Column(String(100), nullable=True)
+    
+    # Entry criteria
+    strategy = Column(String(50), nullable=True)  # momentum, mean_reversion, trend
+    entry_target = Column(Float, nullable=True)  # Target entry price
+    entry_condition = Column(String(50), nullable=True)  # above, below, breakout
+    
+    # Risk management
+    stop_loss = Column(Float, nullable=True)
+    take_profit = Column(Float, nullable=True)
+    position_size_pct = Column(Float, nullable=True)  # % of portfolio
+    
+    # Tracking
+    status = Column(String(20), nullable=False, default="watching")
+    triggered_at = Column(DateTime(timezone=True), nullable=True)
+    triggered_price = Column(Float, nullable=True)
+    
+    # Analysis
+    notes = Column(Text, nullable=True)
+    signals = Column(JSON, nullable=True)  # Agent analysis
+    mazo_research = Column(Text, nullable=True)
+    
+    # Expiration
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    priority = Column(Integer, nullable=False, default=5)  # 1-10, 10 = highest
+
+
+class ScheduledTask(Base):
+    """Scheduled trading tasks"""
+    __tablename__ = "scheduled_tasks"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Task definition
+    name = Column(String(200), nullable=False)
+    task_type = Column(String(50), nullable=False)  # health_check, scan, analyze, trade, report
+    description = Column(Text, nullable=True)
+    
+    # Schedule (cron-like)
+    schedule_cron = Column(String(100), nullable=True)  # Cron expression
+    schedule_interval = Column(Integer, nullable=True)  # Minutes between runs
+    schedule_time = Column(String(10), nullable=True)  # HH:MM format for daily tasks
+    
+    # Configuration
+    parameters = Column(JSON, nullable=True)  # Task-specific config
+    tickers = Column(JSON, nullable=True)  # List of tickers to analyze
+    
+    # Execution tracking
+    status = Column(String(20), nullable=False, default="active")
+    last_run = Column(DateTime(timezone=True), nullable=True)
+    next_run = Column(DateTime(timezone=True), nullable=True)
+    run_count = Column(Integer, nullable=False, default=0)
+    
+    # Results
+    last_result = Column(JSON, nullable=True)
+    last_error = Column(Text, nullable=True)
+    success_count = Column(Integer, nullable=False, default=0)
+    failure_count = Column(Integer, nullable=False, default=0)
+    
+    # Control
+    is_enabled = Column(Boolean, nullable=False, default=True)
+    max_retries = Column(Integer, nullable=False, default=3)
+
+
+class TradingStrategy(Base):
+    """Trading strategy configurations"""
+    __tablename__ = "trading_strategies"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Strategy info
+    name = Column(String(100), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    strategy_type = Column(String(50), nullable=False)  # momentum, mean_reversion, trend, dividend, earnings
+    
+    # Parameters
+    parameters = Column(JSON, nullable=False)  # Strategy-specific params
+    
+    # Risk limits
+    max_position_size = Column(Float, nullable=False, default=0.10)  # % of portfolio
+    stop_loss_pct = Column(Float, nullable=False, default=0.05)  # 5% default
+    take_profit_pct = Column(Float, nullable=False, default=0.10)  # 10% default
+    max_daily_trades = Column(Integer, nullable=False, default=5)
+    
+    # Performance
+    total_trades = Column(Integer, nullable=False, default=0)
+    winning_trades = Column(Integer, nullable=False, default=0)
+    total_pnl = Column(Float, nullable=False, default=0)
+    avg_return = Column(Float, nullable=True)
+    
+    # Status
+    is_enabled = Column(Boolean, nullable=False, default=True)
+    is_paper_only = Column(Boolean, nullable=False, default=True)  # Only for paper trading
+
+

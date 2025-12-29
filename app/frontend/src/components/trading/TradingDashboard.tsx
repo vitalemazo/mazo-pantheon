@@ -1,0 +1,548 @@
+import { useState, useEffect, useCallback } from 'react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { 
+  RefreshCw, 
+  TrendingUp, 
+  TrendingDown, 
+  DollarSign,
+  Target,
+  BarChart3,
+  Clock,
+  Play,
+  Pause,
+  Plus,
+  Eye,
+  Zap,
+  Calendar,
+  Award
+} from 'lucide-react';
+
+interface Position {
+  ticker: string;
+  qty: number;
+  side: string;
+  entry_price: number;
+  current_price: number;
+  market_value: number;
+  unrealized_pnl: number;
+  unrealized_pnl_pct: number;
+}
+
+interface PerformanceData {
+  timestamp: string;
+  equity: number;
+  cash: number;
+  buying_power: number;
+  day_pnl: number;
+  day_pnl_pct: number;
+  total_unrealized_pnl: number;
+  positions_count: number;
+  positions: Position[];
+  best_position: Position | null;
+  worst_position: Position | null;
+}
+
+interface Metrics {
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  win_rate: number | null;
+  total_pnl: number;
+  average_pnl: number | null;
+  average_return_pct: number | null;
+  profit_factor: number | null;
+  average_holding_hours: number | null;
+}
+
+interface SchedulerStatus {
+  is_running: boolean;
+  scheduled_tasks: Array<{
+    id: string;
+    name: string;
+    next_run: string;
+    trigger: string;
+  }>;
+  recent_history: Array<{
+    task_id: string;
+    task_type: string;
+    success: boolean;
+    timestamp: string;
+  }>;
+}
+
+interface WatchlistItem {
+  id: number;
+  ticker: string;
+  entry_target: number;
+  status: string;
+  priority: number;
+  strategy: string;
+}
+
+function formatCurrency(value: number): string {
+  const sign = value >= 0 ? '' : '-';
+  return `${sign}$${Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatPercent(value: number): string {
+  const sign = value >= 0 ? '+' : '';
+  return `${sign}${value.toFixed(2)}%`;
+}
+
+export function TradingDashboard() {
+  const [performance, setPerformance] = useState<PerformanceData | null>(null);
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Fetch all data in parallel
+      const [perfRes, metricsRes, schedulerRes, watchlistRes] = await Promise.all([
+        fetch('http://localhost:8000/trading/performance'),
+        fetch('http://localhost:8000/trading/performance/metrics'),
+        fetch('http://localhost:8000/trading/scheduler/status'),
+        fetch('http://localhost:8000/trading/watchlist'),
+      ]);
+
+      if (perfRes.ok) {
+        const data = await perfRes.json();
+        setPerformance(data);
+      }
+
+      if (metricsRes.ok) {
+        const data = await metricsRes.json();
+        setMetrics(data.metrics);
+      }
+
+      if (schedulerRes.ok) {
+        const data = await schedulerRes.json();
+        setScheduler(data);
+      }
+
+      if (watchlistRes.ok) {
+        const data = await watchlistRes.json();
+        setWatchlist(data.items || []);
+      }
+
+      setLastRefresh(new Date());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch data');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(fetchData, 30000);
+    return () => clearInterval(interval);
+  }, [fetchData]);
+
+  const toggleScheduler = async () => {
+    try {
+      const endpoint = scheduler?.is_running 
+        ? 'http://localhost:8000/trading/scheduler/stop'
+        : 'http://localhost:8000/trading/scheduler/start';
+      
+      await fetch(endpoint, { method: 'POST' });
+      fetchData();
+    } catch (err) {
+      console.error('Failed to toggle scheduler:', err);
+    }
+  };
+
+  const addDefaultSchedule = async () => {
+    try {
+      await fetch('http://localhost:8000/trading/scheduler/add-default-schedule', { 
+        method: 'POST' 
+      });
+      fetchData();
+    } catch (err) {
+      console.error('Failed to add schedule:', err);
+    }
+  };
+
+  return (
+    <div className="h-full overflow-auto bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+      <div className="max-w-7xl mx-auto p-6 space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-400 bg-clip-text text-transparent">
+              Trading Dashboard
+            </h1>
+            <p className="text-slate-400 mt-1">
+              Real-time performance • Strategy signals • Automated trading
+            </p>
+          </div>
+          <div className="flex items-center gap-4">
+            {lastRefresh && (
+              <span className="text-xs text-slate-500">
+                Updated: {lastRefresh.toLocaleTimeString()}
+              </span>
+            )}
+            <Button 
+              onClick={fetchData} 
+              disabled={loading}
+              variant="outline"
+              className="border-slate-600"
+            >
+              <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
+        </div>
+
+        {error && (
+          <Card className="border-red-500/50 bg-red-500/10">
+            <CardContent className="pt-6">
+              <div className="text-red-400">{error}</div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Top Stats Row */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Equity */}
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader className="pb-2">
+              <CardDescription className="flex items-center gap-2 text-slate-400">
+                <DollarSign className="w-4 h-4" />
+                Total Equity
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loading && !performance ? (
+                <Skeleton className="h-8 w-32" />
+              ) : (
+                <>
+                  <div className="text-3xl font-bold text-white">
+                    {formatCurrency(performance?.equity || 0)}
+                  </div>
+                  <div className={`text-sm mt-1 ${(performance?.day_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {formatCurrency(performance?.day_pnl || 0)} today ({formatPercent(performance?.day_pnl_pct || 0)})
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Unrealized P&L */}
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader className="pb-2">
+              <CardDescription className="flex items-center gap-2 text-slate-400">
+                {(performance?.total_unrealized_pnl || 0) >= 0 ? (
+                  <TrendingUp className="w-4 h-4 text-emerald-400" />
+                ) : (
+                  <TrendingDown className="w-4 h-4 text-red-400" />
+                )}
+                Unrealized P&L
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loading && !performance ? (
+                <Skeleton className="h-8 w-32" />
+              ) : (
+                <>
+                  <div className={`text-3xl font-bold ${(performance?.total_unrealized_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {formatCurrency(performance?.total_unrealized_pnl || 0)}
+                  </div>
+                  <div className="text-sm text-slate-400 mt-1">
+                    {performance?.positions_count || 0} open positions
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Win Rate */}
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader className="pb-2">
+              <CardDescription className="flex items-center gap-2 text-slate-400">
+                <Award className="w-4 h-4" />
+                Win Rate
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loading && !metrics ? (
+                <Skeleton className="h-8 w-32" />
+              ) : (
+                <>
+                  <div className="text-3xl font-bold text-cyan-400">
+                    {metrics?.win_rate !== null ? `${metrics.win_rate}%` : 'N/A'}
+                  </div>
+                  <div className="text-sm text-slate-400 mt-1">
+                    {metrics?.winning_trades || 0}W / {metrics?.losing_trades || 0}L ({metrics?.total_trades || 0} total)
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Scheduler Status */}
+          <Card className={`border ${scheduler?.is_running ? 'bg-emerald-500/10 border-emerald-500/50' : 'bg-slate-800/50 border-slate-700'}`}>
+            <CardHeader className="pb-2">
+              <CardDescription className="flex items-center gap-2 text-slate-400">
+                <Clock className="w-4 h-4" />
+                Auto-Trading
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <Badge className={scheduler?.is_running ? 'bg-emerald-600' : 'bg-slate-600'}>
+                  {scheduler?.is_running ? 'ACTIVE' : 'STOPPED'}
+                </Badge>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={toggleScheduler}
+                  className={scheduler?.is_running ? 'border-red-500 text-red-400 hover:bg-red-500/20' : 'border-emerald-500 text-emerald-400 hover:bg-emerald-500/20'}
+                >
+                  {scheduler?.is_running ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                </Button>
+              </div>
+              <div className="text-sm text-slate-400 mt-2">
+                {scheduler?.scheduled_tasks.length || 0} scheduled tasks
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Positions */}
+          <Card className="lg:col-span-2 bg-slate-800/50 border-slate-700">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-white">
+                <BarChart3 className="w-5 h-5 text-blue-400" />
+                Open Positions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {loading && !performance ? (
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <Skeleton key={i} className="h-16 w-full" />
+                  ))}
+                </div>
+              ) : !performance?.positions || performance.positions.length === 0 ? (
+                <div className="text-center py-8 text-slate-400">
+                  <BarChart3 className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p>No open positions</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {performance.positions.map((pos) => (
+                    <div 
+                      key={pos.ticker}
+                      className="flex items-center justify-between p-4 bg-slate-700/50 rounded-lg"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="font-bold text-white text-lg">{pos.ticker}</span>
+                        <Badge variant="outline" className={pos.side === 'long' ? 'border-emerald-500 text-emerald-400' : 'border-red-500 text-red-400'}>
+                          {pos.side.toUpperCase()}
+                        </Badge>
+                        <span className="text-slate-400">{Math.abs(pos.qty)} shares</span>
+                      </div>
+                      <div className="text-right">
+                        <div className={`font-mono font-bold ${pos.unrealized_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {formatCurrency(pos.unrealized_pnl)}
+                        </div>
+                        <div className="text-sm text-slate-400">
+                          {formatPercent(pos.unrealized_pnl_pct)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Watchlist */}
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2 text-white">
+                  <Eye className="w-5 h-5 text-purple-400" />
+                  Watchlist
+                </CardTitle>
+                <Button size="sm" variant="ghost" className="text-slate-400 hover:text-white">
+                  <Plus className="w-4 h-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {watchlist.length === 0 ? (
+                <div className="text-center py-8 text-slate-400">
+                  <Eye className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p>No items in watchlist</p>
+                  <p className="text-sm mt-1">Add stocks to monitor</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {watchlist.slice(0, 5).map((item) => (
+                    <div 
+                      key={item.id}
+                      className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg"
+                    >
+                      <div>
+                        <span className="font-semibold text-white">{item.ticker}</span>
+                        <div className="text-xs text-slate-400">
+                          Target: ${item.entry_target?.toFixed(2) || 'N/A'}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge 
+                          variant="outline" 
+                          className={
+                            item.status === 'triggered' 
+                              ? 'border-emerald-500 text-emerald-400' 
+                              : 'border-slate-500 text-slate-400'
+                          }
+                        >
+                          {item.status}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Scheduled Tasks & Metrics */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Scheduled Tasks */}
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2 text-white">
+                  <Calendar className="w-5 h-5 text-orange-400" />
+                  Scheduled Tasks
+                </CardTitle>
+                {scheduler && !scheduler.is_running && (
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    onClick={addDefaultSchedule}
+                    className="border-orange-500 text-orange-400 hover:bg-orange-500/20"
+                  >
+                    <Plus className="w-4 h-4 mr-1" />
+                    Add Schedule
+                  </Button>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {!scheduler?.scheduled_tasks || scheduler.scheduled_tasks.length === 0 ? (
+                <div className="text-center py-8 text-slate-400">
+                  <Calendar className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p>No scheduled tasks</p>
+                  <p className="text-sm mt-1">Click "Add Schedule" to set up automated trading</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {scheduler.scheduled_tasks.map((task) => (
+                    <div 
+                      key={task.id}
+                      className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg"
+                    >
+                      <div>
+                        <span className="font-medium text-white">{task.name}</span>
+                        <div className="text-xs text-slate-400">
+                          {task.trigger}
+                        </div>
+                      </div>
+                      <div className="text-right text-sm">
+                        <div className="text-slate-400">Next run:</div>
+                        <div className="text-cyan-400">
+                          {task.next_run ? new Date(task.next_run).toLocaleTimeString() : 'N/A'}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Trading Metrics */}
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-white">
+                <Target className="w-5 h-5 text-cyan-400" />
+                Trading Metrics
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-3 bg-slate-700/50 rounded-lg">
+                  <div className="text-slate-400 text-sm">Total P&L</div>
+                  <div className={`text-xl font-bold ${(metrics?.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {formatCurrency(metrics?.total_pnl || 0)}
+                  </div>
+                </div>
+                <div className="p-3 bg-slate-700/50 rounded-lg">
+                  <div className="text-slate-400 text-sm">Avg Return</div>
+                  <div className={`text-xl font-bold ${(metrics?.average_return_pct || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {metrics?.average_return_pct != null ? `${metrics.average_return_pct}%` : 'N/A'}
+                  </div>
+                </div>
+                <div className="p-3 bg-slate-700/50 rounded-lg">
+                  <div className="text-slate-400 text-sm">Profit Factor</div>
+                  <div className="text-xl font-bold text-cyan-400">
+                    {metrics?.profit_factor != null ? metrics.profit_factor : 'N/A'}
+                  </div>
+                </div>
+                <div className="p-3 bg-slate-700/50 rounded-lg">
+                  <div className="text-slate-400 text-sm">Avg Hold Time</div>
+                  <div className="text-xl font-bold text-purple-400">
+                    {metrics?.average_holding_hours != null ? `${metrics.average_holding_hours}h` : 'N/A'}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Recent Task History */}
+        {scheduler?.recent_history && scheduler.recent_history.length > 0 && (
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-white">
+                <Zap className="w-5 h-5 text-yellow-400" />
+                Recent Task Executions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex gap-2 flex-wrap">
+                {scheduler.recent_history.slice(0, 10).map((hist, i) => (
+                  <Badge 
+                    key={i}
+                    variant="outline"
+                    className={hist.success ? 'border-emerald-500 text-emerald-400' : 'border-red-500 text-red-400'}
+                  >
+                    {hist.task_type} • {new Date(hist.timestamp).toLocaleTimeString()}
+                  </Badge>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </div>
+  );
+}
