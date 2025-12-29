@@ -1,11 +1,12 @@
 import { Settings } from '@/components/settings/settings';
 import { FlowTabContent } from '@/components/tabs/flow-tab-content';
 import { DetailedWorkflowView } from '@/components/unified-workflow/DetailedWorkflowView';
+import { PortfolioHealthView } from '@/components/portfolio/PortfolioHealthView';
 import { Flow } from '@/types/flow';
 import { ReactNode, createElement } from 'react';
 
 export interface TabData {
-  type: 'flow' | 'settings' | 'unified-workflow';
+  type: 'flow' | 'settings' | 'unified-workflow' | 'portfolio';
   title: string;
   flow?: Flow;
   metadata?: Record<string, any>;
@@ -25,6 +26,9 @@ export class TabService {
       
       case 'unified-workflow':
         return createElement(DetailedWorkflowView);
+      
+      case 'portfolio':
+        return createElement(PortfolioHealthView);
       
       default:
         throw new Error(`Unsupported tab type: ${tabData.type}`);
@@ -56,6 +60,14 @@ export class TabService {
     };
   }
 
+  static createPortfolioTab(): TabData & { content: ReactNode } {
+    return {
+      type: 'portfolio',
+      title: 'Portfolio Health',
+      content: TabService.createTabContent({ type: 'portfolio', title: 'Portfolio Health' }),
+    };
+  }
+
   // Restore tab content for persisted tabs (used when loading from localStorage)
   static restoreTabContent(tabData: TabData): ReactNode {
     return TabService.createTabContent(tabData);
@@ -75,6 +87,9 @@ export class TabService {
       
       case 'unified-workflow':
         return TabService.createUnifiedWorkflowTab();
+      
+      case 'portfolio':
+        return TabService.createPortfolioTab();
       
       default:
         throw new Error(`Cannot restore unsupported tab type: ${savedTab.type}`);

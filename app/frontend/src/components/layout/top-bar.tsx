@@ -6,7 +6,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings, Workflow } from 'lucide-react';
+import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings, Workflow, Activity } from 'lucide-react';
 import { useState } from 'react';
 import { KeyboardShortcutsDialog } from './keyboard-shortcuts-dialog';
 
@@ -19,6 +19,7 @@ interface TopBarProps {
   onToggleBottom: () => void;
   onSettingsClick: () => void;
   onUnifiedWorkflowClick: () => void;
+  onPortfolioClick: () => void;
 }
 
 export function TopBar({
@@ -30,6 +31,7 @@ export function TopBar({
   onToggleBottom,
   onSettingsClick,
   onUnifiedWorkflowClick,
+  onPortfolioClick,
 }: TopBarProps) {
   const [showShortcuts, setShowShortcuts] = useState(false);
 
@@ -127,6 +129,25 @@ export function TopBar({
           <TooltipContent side="bottom" className="flex flex-col gap-0.5">
             <span className="font-medium">Unified Workflow</span>
             <span className="text-xs text-muted-foreground">Mazo Pantheon</span>
+          </TooltipContent>
+        </Tooltip>
+
+        {/* Portfolio Health */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onPortfolioClick}
+              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-ramp-grey-700 transition-colors"
+              aria-label="Open portfolio health"
+            >
+              <Activity size={16} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="flex flex-col gap-0.5">
+            <span className="font-medium">Portfolio Health</span>
+            <span className="text-xs text-muted-foreground">AI-powered portfolio analysis • ⌘P</span>
           </TooltipContent>
         </Tooltip>
 
