@@ -40,6 +40,7 @@ class TaskType(Enum):
     STOP_LOSS_CHECK = "stop_loss_check"
     WATCHLIST_MONITOR = "watchlist_monitor"
     AUTOMATED_TRADING = "automated_trading"  # Full AI pipeline
+    POSITION_MONITOR = "position_monitor"  # Active stop-loss/take-profit enforcement
 
 
 @dataclass
@@ -112,6 +113,7 @@ class TradingScheduler:
             TaskType.DAILY_REPORT: self._run_daily_report,
             TaskType.WATCHLIST_MONITOR: self._run_watchlist_monitor,
             TaskType.AUTOMATED_TRADING: self._run_automated_trading,
+            TaskType.POSITION_MONITOR: self._run_position_monitor,
         }
     
     def start(self) -> bool:
@@ -217,14 +219,15 @@ class TradingScheduler:
         )
         jobs_added["daily_report"] = job_id
         
-        # Frequent stop-loss monitoring (every 15 minutes during market hours)
+        # Active position monitoring with auto-exit (every 5 minutes during market hours)
+        # This is the CRITICAL safety net that enforces stop-loss and take-profit
         job_id = self.add_interval_task(
-            task_type=TaskType.STOP_LOSS_CHECK,
-            name="Stop-Loss Monitor",
-            minutes=15,
+            task_type=TaskType.POSITION_MONITOR,
+            name="Position Monitor (Auto-Exit)",
+            minutes=5,
             parameters={"during_market_hours": True}
         )
-        jobs_added["stop_loss_monitor"] = job_id
+        jobs_added["position_monitor"] = job_id
         
         # AI-powered automated trading (every 30 minutes during market hours)
         job_id = self.add_interval_task(
@@ -629,6 +632,34 @@ class TradingScheduler:
             
         except Exception as e:
             logger.error(f"Daily report failed: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def _run_position_monitor(self, params: Dict) -> Dict:
+        """
+        Run active position monitoring with automatic stop-loss/take-profit execution.
+        
+        This is the CRITICAL safety net that:
+        - Checks all positions every 5 minutes
+        - Automatically exits if stop-loss triggered
+        - Automatically exits if take-profit reached
+        - Prevents catastrophic losses
+        """
+        from src.trading.position_monitor import get_position_monitor
+        
+        try:
+            monitor = get_position_monitor()
+            result = await monitor.check_all_positions()
+            
+            return {
+                "status": "completed",
+                "positions_checked": result.get("positions_checked", 0),
+                "exits_executed": result.get("exits_executed", 0),
+                "alerts": len([d for d in result.get("details", []) if d.get("action") != "HOLD"]),
+                "details": result.get("details", []),
+            }
+            
+        except Exception as e:
+            logger.error(f"Position monitor failed: {e}")
             return {"status": "error", "error": str(e)}
     
     async def _run_automated_trading(self, params: Dict) -> Dict:

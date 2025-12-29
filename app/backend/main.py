@@ -97,7 +97,7 @@ async def startup_event():
             logger.info("  2:00 PM  - Afternoon health check")
             logger.info("  3:30 PM  - Pre-close watchlist monitor")
             logger.info("  4:05 PM  - Daily performance report")
-            logger.info("  Every 15m - Stop-loss monitoring")
+            logger.info("  Every 5m  - Position Monitor (AUTO-EXIT on stop-loss/take-profit)")
             logger.info("  Every 30m - AI Trading Cycle (full pipeline)")
             logger.info("")
             logger.info("System is now fully autonomous!")
