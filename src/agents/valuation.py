@@ -39,7 +39,12 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
             api_key=api_key,
         )
         if not financial_metrics:
-            progress.update_status(agent_id, ticker, "Failed: No financial metrics found")
+            valuation_analysis[ticker] = {
+                "signal": "neutral",
+                "confidence": 50,
+                "reasoning": "No financial metrics available for valuation analysis. This may indicate the data source doesn't have coverage for this ticker.",
+            }
+            progress.update_status(agent_id, ticker, "Neutral: No financial metrics")
             continue
         most_recent_metrics = financial_metrics[0]
 
@@ -67,7 +72,12 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
             api_key=api_key,
         )
         if len(line_items) < 2:
-            progress.update_status(agent_id, ticker, "Failed: Insufficient financial line items")
+            valuation_analysis[ticker] = {
+                "signal": "neutral",
+                "confidence": 50,
+                "reasoning": f"Insufficient financial line items for valuation analysis. Need at least 2 periods but only got {len(line_items)}. DCF, owner earnings, and other valuation models require historical financial statement data that may not be available from fallback data sources.",
+            }
+            progress.update_status(agent_id, ticker, "Neutral: Insufficient line items")
             continue
         li_curr, li_prev = line_items[0], line_items[1]
 

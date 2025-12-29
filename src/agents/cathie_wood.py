@@ -422,7 +422,21 @@ def generate_cathie_wood_output(
     prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
 
     def create_default_cathie_wood_signal():
-        return CathieWoodSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis, defaulting to neutral")
+        # Check what data was available
+        data_issues = []
+        if analysis_data.get("innovation_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing innovation metrics")
+        if analysis_data.get("growth_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing growth data")
+        if analysis_data.get("disruption_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing disruption assessment")
+        
+        if data_issues:
+            reason = f"Insufficient data for disruptive innovation analysis: {', '.join(data_issues)}. Cathie Wood methodology requires comprehensive growth and innovation metrics."
+        else:
+            reason = "LLM analysis failed. Unable to assess disruptive innovation potential. Check model configuration in Settings."
+        
+        return CathieWoodSignal(signal="neutral", confidence=0.0, reasoning=reason)
 
     return call_llm(
         prompt=prompt,

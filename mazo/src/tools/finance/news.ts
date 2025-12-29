@@ -1,7 +1,9 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { callApi } from './api.js';
+import { callApi, callApiWithFallback } from './api.js';
 import { formatToolResult } from '../types.js';
+import { getYahooNews } from './yahoo.js';
+import { getFmpNews } from './fmp.js';
 
 const NewsInputSchema = z.object({
   ticker: z
@@ -29,7 +31,50 @@ export const getNews = new DynamicStructuredTool({
       start_date: input.start_date,
       end_date: input.end_date,
     };
-    const { data, url } = await callApi('/news/', params);
-    return formatToolResult(data.news || [], [url]);
+    
+    try {
+      // Try primary API with Yahoo Finance and FMP fallbacks
+      const result = await callApiWithFallback(
+        async () => {
+          const { data, url } = await callApi('/news/', params);
+          return { data: { news: data.news || [] }, url };
+        },
+        // Yahoo Finance fallback
+        async () => {
+          const yahooResult = await getYahooNews(input.ticker, input.limit);
+          if (yahooResult) {
+            return { data: { news: yahooResult.news }, source: yahooResult.source };
+          }
+          return null;
+        },
+        // FMP fallback
+        async () => {
+          const fmpResult = await getFmpNews(input.ticker, input.limit);
+          if (fmpResult) {
+            return { data: { news: fmpResult.news }, source: fmpResult.source };
+          }
+          return null;
+        },
+        `/news/${input.ticker}`,
+        'news'
+      );
+      
+      let news = (result.data as Record<string, unknown>).news || [];
+      
+      // Add data source indicator
+      if (result.source && Array.isArray(news)) {
+        news = news.map((n: Record<string, unknown>) => ({
+          ...n,
+          _data_source: result.source,
+        }));
+      }
+      
+      return formatToolResult(news, [result.url]);
+    } catch (error) {
+      return formatToolResult(
+        { error: `Failed to fetch news for ${input.ticker}: ${error}` },
+        []
+      );
+    }
   },
 });

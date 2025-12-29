@@ -588,10 +588,24 @@ def generate_fisher_output(
     prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
 
     def create_default_signal():
+        # Check what data was available
+        data_issues = []
+        if analysis_data.get("management_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing management/governance data")
+        if analysis_data.get("scuttlebutt_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing qualitative data")
+        if analysis_data.get("growth_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing growth data")
+        
+        if data_issues:
+            reason = f"Insufficient data for Phil Fisher 'scuttlebutt' analysis: {', '.join(data_issues)}. Cannot assess qualitative factors without comprehensive data."
+        else:
+            reason = "LLM analysis failed. Unable to generate Phil Fisher-style quality growth assessment. Check model configuration."
+        
         return PhilFisherSignal(
             signal="neutral",
             confidence=0.0,
-            reasoning="Error in analysis, defaulting to neutral"
+            reasoning=reason
         )
 
     return call_llm(

@@ -37,7 +37,13 @@ def growth_analyst_agent(state: AgentState, agent_id: str = "growth_analyst_agen
             api_key=api_key,
         )
         if not financial_metrics or len(financial_metrics) < 4:
-            progress.update_status(agent_id, ticker, "Failed: Not enough financial metrics")
+            # Provide a neutral signal with explanation instead of silently skipping
+            growth_analysis[ticker] = {
+                "signal": "neutral",
+                "confidence": 50,
+                "reasoning": f"Insufficient historical data for growth analysis. Need at least 4 periods of financial metrics, but only got {len(financial_metrics) if financial_metrics else 0}. This typically happens when using fallback data sources (Yahoo Finance) which only provide current period data.",
+            }
+            progress.update_status(agent_id, ticker, "Neutral: Insufficient historical data")
             continue
         
         most_recent_metrics = financial_metrics[0]

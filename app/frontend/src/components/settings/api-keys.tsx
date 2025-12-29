@@ -18,9 +18,16 @@ const FINANCIAL_API_KEYS: ApiKey[] = [
   {
     key: 'FINANCIAL_DATASETS_API_KEY',
     label: 'Financial Datasets API',
-    description: 'For getting financial data to power the hedge fund',
+    description: 'Primary source for financial data (prices, metrics, news, insider trades)',
     url: 'https://financialdatasets.ai/',
     placeholder: 'your-financial-datasets-api-key'
+  },
+  {
+    key: 'FMP_API_KEY',
+    label: 'FMP (Financial Modeling Prep)',
+    description: 'Alternative data source with 100+ endpoints for stocks, financials, and news',
+    url: 'https://financialmodelingprep.com/',
+    placeholder: 'your-fmp-api-key'
   }
 ];
 
@@ -120,6 +127,100 @@ const WORKFLOW_TOGGLES: WorkflowToggle[] = [
     label: 'Pre-fetch Financial Data',
     description: 'Aggregate all financial data before agents run',
     detailedExplanation: 'When enabled, the system will fetch ALL financial data (prices, metrics, news, insider trades) for your tickers in a single batch BEFORE the AI agents start analyzing. This reduces duplicate API calls since each agent would otherwise fetch data independently. Recommended for multi-ticker analysis. Adds a brief initial delay but significantly reduces total API calls.'
+  }
+];
+
+interface FallbackToggle {
+  key: string;
+  label: string;
+  description: string;
+  detailedExplanation: string;
+  isMaster?: boolean;
+}
+
+const DATA_FALLBACK_TOGGLES: FallbackToggle[] = [
+  {
+    key: 'USE_YAHOO_FINANCE_FALLBACK',
+    label: 'Enable Yahoo Finance Fallback',
+    description: 'Use Yahoo Finance as backup when primary API fails',
+    detailedExplanation: 'When enabled, if the primary API fails, Yahoo Finance will be tried as a fallback. Yahoo Finance is free but has limited data.',
+    isMaster: true
+  },
+  {
+    key: 'YAHOO_FINANCE_FOR_PRICES',
+    label: 'Yahoo Finance → Price Data',
+    description: 'Historical and current prices',
+    detailedExplanation: 'OHLCV (Open, High, Low, Close, Volume) data including historical prices and current snapshots.'
+  },
+  {
+    key: 'YAHOO_FINANCE_FOR_METRICS',
+    label: 'Yahoo Finance → Financial Metrics',
+    description: 'Company metrics (P/E, market cap, etc.)',
+    detailedExplanation: 'Basic metrics like P/E ratio, market cap, 52-week high/low. Note: Some advanced metrics may not be available.'
+  },
+  {
+    key: 'YAHOO_FINANCE_FOR_NEWS',
+    label: 'Yahoo Finance → News',
+    description: 'Company news articles',
+    detailedExplanation: 'Recent news articles with titles, sources, and publication dates.'
+  }
+];
+
+const FMP_FALLBACK_TOGGLES: FallbackToggle[] = [
+  {
+    key: 'USE_FMP_FALLBACK',
+    label: 'Enable FMP Fallback',
+    description: 'Use Financial Modeling Prep as backup (requires API key)',
+    detailedExplanation: 'When enabled, FMP will be tried as a fallback. FMP provides comprehensive financial data with 100+ endpoints. Requires FMP API key.',
+    isMaster: true
+  },
+  {
+    key: 'FMP_FOR_PRICES',
+    label: 'FMP → Price Data',
+    description: 'Real-time and historical prices',
+    detailedExplanation: 'Real-time quotes and full historical price data including open, high, low, close, and volume.'
+  },
+  {
+    key: 'FMP_FOR_METRICS',
+    label: 'FMP → Financial Metrics',
+    description: 'Company profile and key metrics',
+    detailedExplanation: 'Detailed company profiles with market cap, P/E, sector, industry, and key financial ratios.'
+  },
+  {
+    key: 'FMP_FOR_NEWS',
+    label: 'FMP → News',
+    description: 'Stock news and press releases',
+    detailedExplanation: 'Latest news articles and press releases for stocks with sentiment analysis.'
+  },
+  {
+    key: 'FMP_FOR_FINANCIALS',
+    label: 'FMP → Financial Statements',
+    description: 'Income statements, balance sheets, cash flows',
+    detailedExplanation: 'Complete financial statements including income statements, balance sheets, and cash flow statements.'
+  }
+];
+
+interface DataSourceOption {
+  value: string;
+  label: string;
+  description: string;
+}
+
+const PRIMARY_DATA_SOURCES: DataSourceOption[] = [
+  {
+    value: 'financial_datasets',
+    label: 'Financial Datasets API',
+    description: 'Premium financial data (recommended)'
+  },
+  {
+    value: 'fmp',
+    label: 'FMP (Financial Modeling Prep)',
+    description: '100+ endpoints, requires API key'
+  },
+  {
+    value: 'yahoo_finance',
+    label: 'Yahoo Finance',
+    description: 'Free data source (limited features)'
   }
 ];
 
@@ -475,6 +576,169 @@ export function ApiKeysSettings() {
               </div>
             );
           })}
+        </CardContent>
+      </Card>
+
+      {/* Data Source Fallbacks */}
+      <Card className="bg-panel border-gray-700 dark:border-gray-700">
+        <CardHeader>
+          <CardTitle className="text-lg font-medium text-primary flex items-center gap-2">
+            <Globe className="h-4 w-4" />
+            Data Source Fallbacks
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Configure backup data sources when the primary Financial Datasets API is unavailable.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Primary Data Source Selector */}
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-primary">
+                Primary Data Source
+              </label>
+              <p className="text-xs text-muted-foreground">
+                Select the default source for financial data
+              </p>
+            </div>
+            <select
+              className="w-full bg-background border border-input rounded-md px-3 py-2 text-sm"
+              value={apiKeys['PRIMARY_DATA_SOURCE'] || 'financial_datasets'}
+              onChange={(e) => handleKeyChange('PRIMARY_DATA_SOURCE', e.target.value)}
+            >
+              {PRIMARY_DATA_SOURCES.map((source) => (
+                <option key={source.value} value={source.value}>
+                  {source.label} - {source.description}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Yahoo Finance Fallback */}
+          <div className="border-t border-gray-700 pt-4">
+            <p className="text-sm font-medium text-primary mb-2">Yahoo Finance (Free)</p>
+            <p className="text-xs text-muted-foreground mb-4">No API key required. Limited data availability.</p>
+            
+            {DATA_FALLBACK_TOGGLES.map((toggle) => {
+              const isEnabled = apiKeys[toggle.key]?.toLowerCase() === 'true';
+              const masterEnabled = apiKeys['USE_YAHOO_FINANCE_FALLBACK']?.toLowerCase() === 'true';
+              const isDisabled = !toggle.isMaster && !masterEnabled;
+              
+              return (
+                <div key={toggle.key} className={`space-y-2 mb-3 ${isDisabled ? 'opacity-50' : ''}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <label className={`text-sm font-medium ${toggle.isMaster ? 'text-blue-400' : 'text-primary'}`}>
+                        {toggle.label}
+                        {toggle.isMaster && <span className="ml-2 text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">Master</span>}
+                      </label>
+                      <p className="text-xs text-muted-foreground">
+                        {toggle.description}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={isEnabled}
+                      disabled={isDisabled}
+                      onCheckedChange={(checked) => {
+                        handleKeyChange(toggle.key, checked ? 'true' : 'false');
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          
+          {/* FMP Fallback */}
+          <div className="border-t border-gray-700 pt-4">
+            <p className="text-sm font-medium text-primary mb-2">FMP - Financial Modeling Prep</p>
+            <p className="text-xs text-muted-foreground mb-4">
+              Requires API key (see Financial Data APIs above). 100+ endpoints with comprehensive data.
+            </p>
+            
+            {FMP_FALLBACK_TOGGLES.map((toggle) => {
+              const isEnabled = apiKeys[toggle.key]?.toLowerCase() === 'true';
+              const masterEnabled = apiKeys['USE_FMP_FALLBACK']?.toLowerCase() === 'true';
+              const hasFmpKey = !!apiKeys['FMP_API_KEY'];
+              const isDisabled = !toggle.isMaster && (!masterEnabled || !hasFmpKey);
+              
+              return (
+                <div key={toggle.key} className={`space-y-2 mb-3 ${isDisabled ? 'opacity-50' : ''}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <label className={`text-sm font-medium ${toggle.isMaster ? 'text-orange-400' : 'text-primary'}`}>
+                        {toggle.label}
+                        {toggle.isMaster && <span className="ml-2 text-xs bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded">Master</span>}
+                      </label>
+                      <p className="text-xs text-muted-foreground">
+                        {toggle.description}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={isEnabled}
+                      disabled={isDisabled || (!toggle.isMaster && !hasFmpKey)}
+                      onCheckedChange={(checked) => {
+                        handleKeyChange(toggle.key, checked ? 'true' : 'false');
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+            
+            {!apiKeys['FMP_API_KEY'] && (
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2 mt-2">
+                <p className="text-xs text-amber-500">
+                  ⚠️ Add FMP API key in Financial Data APIs section to enable FMP fallback
+                </p>
+              </div>
+            )}
+          </div>
+          
+          {/* Fallback Status */}
+          <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 space-y-3 mt-4">
+            <p className="text-sm font-medium text-primary">Fallback Coverage Summary</p>
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <p className="font-medium text-blue-400 mb-1">Yahoo Finance</p>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className={apiKeys['YAHOO_FINANCE_FOR_PRICES']?.toLowerCase() === 'true' ? 'text-green-500' : 'text-gray-500'}>●</span>
+                    <span>Prices</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={apiKeys['YAHOO_FINANCE_FOR_METRICS']?.toLowerCase() === 'true' ? 'text-green-500' : 'text-gray-500'}>●</span>
+                    <span>Metrics</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={apiKeys['YAHOO_FINANCE_FOR_NEWS']?.toLowerCase() === 'true' ? 'text-green-500' : 'text-gray-500'}>●</span>
+                    <span>News</span>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <p className="font-medium text-orange-400 mb-1">FMP</p>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className={apiKeys['FMP_FOR_PRICES']?.toLowerCase() === 'true' && apiKeys['FMP_API_KEY'] ? 'text-green-500' : 'text-gray-500'}>●</span>
+                    <span>Prices</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={apiKeys['FMP_FOR_METRICS']?.toLowerCase() === 'true' && apiKeys['FMP_API_KEY'] ? 'text-green-500' : 'text-gray-500'}>●</span>
+                    <span>Metrics</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={apiKeys['FMP_FOR_NEWS']?.toLowerCase() === 'true' && apiKeys['FMP_API_KEY'] ? 'text-green-500' : 'text-gray-500'}>●</span>
+                    <span>News</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={apiKeys['FMP_FOR_FINANCIALS']?.toLowerCase() === 'true' && apiKeys['FMP_API_KEY'] ? 'text-green-500' : 'text-gray-500'}>●</span>
+                    <span>Financials</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
 

@@ -697,7 +697,21 @@ def generate_jhunjhunwala_output(
 
     # Default fallback signal in case parsing fails
     def create_default_rakesh_jhunjhunwala_signal():
-        return RakeshJhunjhunwalaSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis, defaulting to neutral")
+        # Check what data was available
+        data_issues = []
+        if analysis_data.get("india_growth_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing growth metrics")
+        if analysis_data.get("valuation_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing valuation data")
+        if analysis_data.get("management_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing management assessment")
+        
+        if data_issues:
+            reason = f"Insufficient data for Rakesh Jhunjhunwala-style analysis: {', '.join(data_issues)}. Cannot identify high-conviction growth opportunities without comprehensive data."
+        else:
+            reason = "LLM analysis failed. Unable to generate Jhunjhunwala-style bold conviction assessment. Check model configuration."
+        
+        return RakeshJhunjhunwalaSignal(signal="neutral", confidence=0.0, reasoning=reason)
 
     return call_llm(
         prompt=prompt,

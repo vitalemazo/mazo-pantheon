@@ -587,10 +587,25 @@ def generate_druckenmiller_output(
     prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
 
     def create_default_signal():
+        # Provide detailed context about what failed
+        ticker_data = analysis_data.get(ticker, {})
+        data_issues = []
+        if ticker_data.get("growth_momentum_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing growth/momentum data")
+        if ticker_data.get("risk_reward_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing risk/reward data")
+        if ticker_data.get("valuation_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing valuation data")
+        
+        if data_issues:
+            reason = f"Analysis incomplete for {ticker}: {', '.join(data_issues)}. Druckenmiller requires comprehensive data for asymmetric risk-reward assessment. Defaulting to neutral until sufficient data is available."
+        else:
+            reason = f"LLM analysis failed for {ticker}. Unable to generate Druckenmiller-style signal. Check LLM configuration and API keys in Settings."
+        
         return StanleyDruckenmillerSignal(
             signal="neutral",
             confidence=0.0,
-            reasoning="Error in analysis, defaulting to neutral"
+            reasoning=reason
         )
 
     return call_llm(

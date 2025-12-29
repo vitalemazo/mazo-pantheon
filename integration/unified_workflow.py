@@ -55,6 +55,9 @@ class AgentSignal:
     signal: str  # BULLISH, BEARISH, NEUTRAL
     confidence: float
     reasoning: str
+    ticker: Optional[str] = None
+    execution_time_ms: Optional[float] = None
+    timestamp: Optional[str] = None
 
 
 @dataclass
@@ -124,7 +127,8 @@ class UnifiedResult:
 |-------|--------|------------|-----------|
 """
             for agent in self.agent_signals:
-                reasoning_short = agent.reasoning[:50] + "..." if len(agent.reasoning) > 50 else agent.reasoning
+                reasoning_str = str(agent.reasoning) if agent.reasoning else ""
+                reasoning_short = reasoning_str[:50] + "..." if len(reasoning_str) > 50 else reasoning_str
                 md += f"| {agent.agent_name} | {agent.signal} | {agent.confidence:.0f}% | {reasoning_short} |\n"
 
         if self.research_report:
@@ -249,7 +253,10 @@ class UnifiedWorkflow:
                     agent_name=agent_key.replace('_agent', '').replace('_', ' ').title(),
                     signal=signal,
                     confidence=confidence,
-                    reasoning=reasoning
+                    reasoning=reasoning,
+                    ticker=ticker,
+                    execution_time_ms=None,  # Individual agent timing not currently tracked
+                    timestamp=datetime.now().isoformat()
                 ))
 
                 all_signals.append((signal, confidence))
@@ -287,7 +294,10 @@ class UnifiedWorkflow:
                 agent_name='Portfolio Manager',
                 signal=pm_signal,
                 confidence=float(decision.get('confidence', 50)),
-                reasoning=f"Action: {action} {decision.get('quantity', 0)} shares. {decision_reasoning}"
+                reasoning=f"Action: {action} {decision.get('quantity', 0)} shares. {decision_reasoning}",
+                ticker=ticker,
+                execution_time_ms=None,
+                timestamp=datetime.now().isoformat()
             ))
 
         return overall_signal, overall_confidence, agent_signals, result

@@ -146,6 +146,65 @@ ENV_KEYS_TO_SYNC = [
         "provider": "AGGREGATE_DATA",
         "description": "Pre-fetch all financial data before agents run. Reduces API calls but adds initial delay. (true/false)"
     },
+    
+    # Data Source Fallbacks
+    {
+        "env_key": "USE_YAHOO_FINANCE_FALLBACK",
+        "provider": "USE_YAHOO_FINANCE_FALLBACK",
+        "description": "Use Yahoo Finance as fallback when Financial Datasets API fails (true/false)"
+    },
+    {
+        "env_key": "YAHOO_FINANCE_FOR_PRICES",
+        "provider": "YAHOO_FINANCE_FOR_PRICES",
+        "description": "Enable Yahoo Finance fallback for price data (true/false)"
+    },
+    {
+        "env_key": "YAHOO_FINANCE_FOR_METRICS",
+        "provider": "YAHOO_FINANCE_FOR_METRICS",
+        "description": "Enable Yahoo Finance fallback for financial metrics (true/false)"
+    },
+    {
+        "env_key": "YAHOO_FINANCE_FOR_NEWS",
+        "provider": "YAHOO_FINANCE_FOR_NEWS",
+        "description": "Enable Yahoo Finance fallback for news (true/false)"
+    },
+    {
+        "env_key": "PRIMARY_DATA_SOURCE",
+        "provider": "PRIMARY_DATA_SOURCE",
+        "description": "Primary financial data source (financial_datasets, yahoo_finance, fmp)"
+    },
+    
+    # FMP (Financial Modeling Prep) API
+    {
+        "env_key": "FMP_API_KEY",
+        "provider": "FMP_API_KEY",
+        "description": "Financial Modeling Prep API key for stock data, financials, and news"
+    },
+    {
+        "env_key": "USE_FMP_FALLBACK",
+        "provider": "USE_FMP_FALLBACK",
+        "description": "Use FMP as fallback when primary API fails (true/false)"
+    },
+    {
+        "env_key": "FMP_FOR_PRICES",
+        "provider": "FMP_FOR_PRICES",
+        "description": "Enable FMP fallback for price data (true/false)"
+    },
+    {
+        "env_key": "FMP_FOR_METRICS",
+        "provider": "FMP_FOR_METRICS",
+        "description": "Enable FMP fallback for financial metrics (true/false)"
+    },
+    {
+        "env_key": "FMP_FOR_NEWS",
+        "provider": "FMP_FOR_NEWS",
+        "description": "Enable FMP fallback for news (true/false)"
+    },
+    {
+        "env_key": "FMP_FOR_FINANCIALS",
+        "provider": "FMP_FOR_FINANCIALS",
+        "description": "Enable FMP fallback for income statements, balance sheets, cash flows (true/false)"
+    },
 ]
 
 

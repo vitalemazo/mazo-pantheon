@@ -11,8 +11,8 @@
 
 import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
+import { TickerSearch } from '@/components/ticker-search';
 import { Badge } from '@/components/ui/badge';
 import { 
   Play, 
@@ -374,9 +374,11 @@ export function DetailedWorkflowView() {
         </h4>
         <div className="space-y-2 pl-4">
           {executions.map((exec, idx) => {
-            // Safely handle reasoning - always show full reasoning for transparency
+            // Safely handle reasoning - format objects as JSON for readability
             const reasoningText = exec.reasoning 
-              ? (typeof exec.reasoning === 'string' ? exec.reasoning : String(exec.reasoning))
+              ? (typeof exec.reasoning === 'string' 
+                  ? exec.reasoning 
+                  : JSON.stringify(exec.reasoning, null, 2))
               : null;
             
             return (
@@ -614,10 +616,10 @@ export function DetailedWorkflowView() {
             <div className="space-y-4">
               <div>
                 <label className="text-sm font-medium mb-2 block">Tickers</label>
-                <Input
+                <TickerSearch
                   value={tickers}
-                  onChange={(e) => setTickers(e.target.value)}
-                  placeholder="AAPL, MSFT, GOOGL"
+                  onChange={setTickers}
+                  placeholder="Search tickers (e.g., AAPL, MSFT)"
                   disabled={isRunning}
                 />
               </div>

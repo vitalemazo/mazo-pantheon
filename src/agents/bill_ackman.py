@@ -453,10 +453,24 @@ def generate_ackman_output(
     })
 
     def create_default_bill_ackman_signal():
+        # Check what data was available
+        data_issues = []
+        if analysis_data.get("business_quality_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing business quality metrics")
+        if analysis_data.get("valuation_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing valuation data")
+        if analysis_data.get("catalyst_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing catalyst assessment")
+        
+        if data_issues:
+            reason = f"Insufficient data for Bill Ackman-style activist analysis: {', '.join(data_issues)}. Cannot identify high-conviction concentrated bets without comprehensive data."
+        else:
+            reason = "LLM analysis failed. Unable to generate Ackman-style concentrated bet thesis. Check model configuration in Settings."
+        
         return BillAckmanSignal(
             signal="neutral",
             confidence=0.0,
-            reasoning="Error in analysis, defaulting to neutral"
+            reasoning=reason
         )
 
     return call_llm(

@@ -338,7 +338,7 @@ async def run_unified_workflow(
                             "method": "explain_signal",
                             "signal": signal,
                             "confidence": confidence,
-                            "reasoning": reasoning[:200] + "..." if reasoning and len(reasoning) > 200 else reasoning,
+                            "reasoning": str(reasoning)[:200] + "..." if reasoning and len(str(reasoning)) > 200 else str(reasoning) if reasoning else None,
                             "query": f"Explain {signal} signal for {ticker}",
                             "execution_time_ms": elapsed,
                             "success": result.success,
@@ -412,7 +412,8 @@ async def run_unified_workflow(
                         start_time = time.time()
                         try:
                             from src.tools.api import get_financial_metrics
-                            metrics, cache_hit = get_financial_metrics(ticker, end_date, period="ttm", limit=10, api_key=api_key, force_refresh=force_refresh)
+                            metrics = get_financial_metrics(ticker, end_date, period="ttm", limit=10, api_key=api_key)
+                            cache_hit = False  # Simple API doesn't track cache hits
                             elapsed = (time.time() - start_time) * 1000
                             detailed_results["cache_stats"]["total_calls"] += 1
                             if cache_hit:
@@ -457,7 +458,8 @@ async def run_unified_workflow(
                         start_time = time.time()
                         try:
                             from src.tools.api import get_prices
-                            prices, cache_hit = get_prices(ticker, start_date or (dt.fromisoformat(end_date) - timedelta(days=365)).date().isoformat(), end_date, api_key=api_key, force_refresh=force_refresh)
+                            prices = get_prices(ticker, start_date or (dt.fromisoformat(end_date) - timedelta(days=365)).date().isoformat(), end_date, api_key=api_key)
+                            cache_hit = False  # Simple API doesn't track cache hits
                             elapsed = (time.time() - start_time) * 1000
                             detailed_results["cache_stats"]["total_calls"] += 1
                             if cache_hit:
@@ -494,7 +496,8 @@ async def run_unified_workflow(
                         start_time = time.time()
                         try:
                             from src.tools.api import get_company_news
-                            news, cache_hit = get_company_news(ticker, end_date=end_date, start_date=start_date, limit=250, api_key=api_key, force_refresh=force_refresh)
+                            news = get_company_news(ticker, end_date=end_date, start_date=start_date, limit=250, api_key=api_key)
+                            cache_hit = False  # Simple API doesn't track cache hits
                             elapsed = (time.time() - start_time) * 1000
                             detailed_results["cache_stats"]["total_calls"] += 1
                             if cache_hit:
@@ -534,7 +537,8 @@ async def run_unified_workflow(
                         start_time = time.time()
                         try:
                             from src.tools.api import get_insider_trades
-                            trades, cache_hit = get_insider_trades(ticker, end_date=end_date, start_date=start_date, api_key=api_key, force_refresh=force_refresh)
+                            trades = get_insider_trades(ticker, end_date=end_date, start_date=start_date, api_key=api_key)
+                            cache_hit = False  # Simple API doesn't track cache hits
                             elapsed = (time.time() - start_time) * 1000
                             detailed_results["cache_stats"]["total_calls"] += 1
                             if cache_hit:
@@ -937,6 +941,19 @@ async def run_unified_workflow(
                             agent_execution_times = []
                             successful_agents = 0
                             failed_agents = 0
+                            failed_agent_details = []  # Track details about failed agents
+                            
+                            # Failure indicators in reasoning text
+                            FAILURE_INDICATORS = [
+                                "analysis failed",
+                                "rate limit exceeded",
+                                "llm error",
+                                "could not complete",
+                                "timeout",
+                                "invalid api key",
+                                "error:",
+                                "failed to"
+                            ]
                             
                             for result in results:
                                 if result.agent_signals:
@@ -945,11 +962,29 @@ async def run_unified_workflow(
                                         if exec_time:
                                             agent_execution_times.append(exec_time)
                                         
-                                        # Check if agent succeeded (has signal and confidence)
-                                        if agent_signal.signal and agent_signal.confidence is not None:
-                                            successful_agents += 1
-                                        else:
+                                        # Check if agent actually succeeded
+                                        # A failure is indicated by: 0 confidence + failure text in reasoning
+                                        # Reasoning can be a dict or a string
+                                        reasoning_text = agent_signal.reasoning
+                                        if isinstance(reasoning_text, dict):
+                                            reasoning_text = str(reasoning_text)
+                                        reasoning_lower = (reasoning_text or "").lower()
+                                        has_failure_indicator = any(ind in reasoning_lower for ind in FAILURE_INDICATORS)
+                                        
+                                        is_failed = (
+                                            has_failure_indicator or
+                                            (agent_signal.confidence == 0 and agent_signal.signal == "NEUTRAL")
+                                        )
+                                        
+                                        if is_failed:
                                             failed_agents += 1
+                                            failed_agent_details.append({
+                                                "agent_name": agent_signal.agent_name,
+                                                "ticker": result.ticker,
+                                                "reason": str(agent_signal.reasoning)[:200] if agent_signal.reasoning else "Unknown error"
+                                            })
+                                        else:
+                                            successful_agents += 1
                                         
                                         agent_executions.append({
                                             "agent_name": agent_signal.agent_name,
@@ -958,7 +993,8 @@ async def run_unified_workflow(
                                             "confidence": agent_signal.confidence,
                                             "reasoning": agent_signal.reasoning,  # Full reasoning - no truncation for transparency
                                             "timestamp": datetime.now().isoformat(),
-                                            "execution_time_ms": exec_time
+                                            "execution_time_ms": exec_time,
+                                            "status": "failed" if is_failed else "success"
                                         })
                             
                             # Calculate summary statistics
@@ -1053,7 +1089,9 @@ async def run_unified_workflow(
                                 "agent_performance": {
                                     "successful": successful_agents,
                                     "failed": failed_agents,
-                                    "success_rate": round((successful_agents / total_agents * 100), 1) if total_agents > 0 else 0
+                                    "success_rate": round((successful_agents / total_agents * 100), 1) if total_agents > 0 else 0,
+                                    "failed_agents": failed_agent_details if failed_agent_details else None,
+                                    "warning": f"{failed_agents} agent(s) failed due to errors. Results may be incomplete." if failed_agents > 0 else None
                                 },
                                 "api_usage": {
                                     "estimated_total_tokens": total_estimated_tokens,

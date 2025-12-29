@@ -38,6 +38,8 @@ def peter_lynch_agent(state: AgentState, agent_id: str = "peter_lynch_agent"):
     The result is a bullish/bearish/neutral signal, along with a
     confidence (0–100) and a textual reasoning explanation.
     """
+    import logging
+    logger = logging.getLogger(__name__)
 
     data = state["data"]
     end_date = data["end_date"]
@@ -45,6 +47,7 @@ def peter_lynch_agent(state: AgentState, agent_id: str = "peter_lynch_agent"):
     api_key = get_api_key_from_state(state, "FINANCIAL_DATASETS_API_KEY")
     analysis_data = {}
     lynch_analysis = {}
+    data_quality_issues = []  # Track data quality issues
 
     for ticker in tickers:
         progress.update_status(agent_id, ticker, "Gathering financial line items")
@@ -492,10 +495,24 @@ def generate_lynch_output(
     prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
 
     def create_default_signal():
+        # Provide detailed context about what failed
+        data_issues = []
+        if analysis_data.get("growth_analysis", {}).get("score", 0) == 0:
+            data_issues.append("insufficient growth data")
+        if analysis_data.get("valuation_analysis", {}).get("score", 0) == 0:
+            data_issues.append("insufficient valuation data")
+        if analysis_data.get("fundamentals_analysis", {}).get("score", 0) == 0:
+            data_issues.append("insufficient fundamentals data")
+        
+        if data_issues:
+            reason = f"Analysis incomplete due to: {', '.join(data_issues)}. Unable to apply Peter Lynch methodology without adequate financial data. Defaulting to neutral until data is available."
+        else:
+            reason = "LLM analysis failed. Unable to generate Peter Lynch-style investment signal. Please check LLM configuration and API keys."
+        
         return PeterLynchSignal(
             signal="neutral",
             confidence=0.0,
-            reasoning="Error in analysis; defaulting to neutral"
+            reasoning=reason
         )
 
     return call_llm(

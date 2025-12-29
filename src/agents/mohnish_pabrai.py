@@ -349,7 +349,21 @@ def generate_pabrai_output(
     })
 
     def create_default_pabrai_signal():
-        return MohnishPabraiSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis, defaulting to neutral")
+        # Check what data was available
+        data_issues = []
+        if analysis_data.get("moat_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing competitive moat data")
+        if analysis_data.get("valuation_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing valuation data")
+        if analysis_data.get("fundamentals_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing fundamentals data")
+        
+        if data_issues:
+            reason = f"Insufficient data for Mohnish Pabrai 'dhandho' analysis: {', '.join(data_issues)}. Cannot assess margin of safety without comprehensive financial data."
+        else:
+            reason = "LLM analysis failed. Unable to generate Pabrai-style 'heads I win, tails I don't lose much' assessment. Check model configuration."
+        
+        return MohnishPabraiSignal(signal="neutral", confidence=0.0, reasoning=reason)
 
     return call_llm(
         prompt=prompt,

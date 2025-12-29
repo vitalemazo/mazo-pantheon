@@ -1,7 +1,9 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { callApi } from './api.js';
+import { callApi, callApiWithFallback } from './api.js';
 import { formatToolResult } from '../types.js';
+import { getYahooFinancialMetrics } from './yahoo.js';
+import { getFmpFinancialMetrics } from './fmp.js';
 
 const FinancialMetricsSnapshotInputSchema = z.object({
   ticker: z
@@ -17,8 +19,46 @@ export const getFinancialMetricsSnapshot = new DynamicStructuredTool({
   schema: FinancialMetricsSnapshotInputSchema,
   func: async (input) => {
     const params = { ticker: input.ticker };
-    const { data, url } = await callApi('/financial-metrics/snapshot/', params);
-    return formatToolResult(data.snapshot || {}, [url]);
+    
+    try {
+      // Try primary API with Yahoo Finance and FMP fallbacks
+      const result = await callApiWithFallback(
+        async () => {
+          const { data, url } = await callApi('/financial-metrics/snapshot/', params);
+          return { data: { snapshot: data.snapshot || {} }, url };
+        },
+        // Yahoo Finance fallback
+        async () => {
+          const yahooResult = await getYahooFinancialMetrics(input.ticker);
+          if (yahooResult) {
+            return { data: { snapshot: yahooResult.metrics }, source: yahooResult.source };
+          }
+          return null;
+        },
+        // FMP fallback
+        async () => {
+          const fmpResult = await getFmpFinancialMetrics(input.ticker);
+          if (fmpResult) {
+            return { data: { snapshot: fmpResult.metrics }, source: fmpResult.source };
+          }
+          return null;
+        },
+        `/financial-metrics/snapshot/${input.ticker}`,
+        'metrics'
+      );
+      
+      const snapshot = (result.data as Record<string, unknown>).snapshot || {};
+      if (result.source) {
+        (snapshot as Record<string, unknown>)._data_source = result.source;
+      }
+      
+      return formatToolResult(snapshot, [result.url]);
+    } catch (error) {
+      return formatToolResult(
+        { error: `Failed to fetch financial metrics snapshot for ${input.ticker}: ${error}` },
+        []
+      );
+    }
   },
 });
 
@@ -79,8 +119,56 @@ export const getFinancialMetrics = new DynamicStructuredTool({
       report_period_lt: input.report_period_lt,
       report_period_lte: input.report_period_lte,
     };
-    const { data, url } = await callApi('/financial-metrics/', params);
-    return formatToolResult(data.financial_metrics || [], [url]);
+    
+    try {
+      // Try primary API with Yahoo Finance and FMP fallbacks
+      const result = await callApiWithFallback(
+        async () => {
+          const { data, url } = await callApi('/financial-metrics/', params);
+          return { data: { financial_metrics: data.financial_metrics || [] }, url };
+        },
+        // Yahoo Finance fallback (provides current metrics only)
+        async () => {
+          const yahooResult = await getYahooFinancialMetrics(input.ticker);
+          if (yahooResult) {
+            return { 
+              data: { financial_metrics: [yahooResult.metrics] }, 
+              source: yahooResult.source 
+            };
+          }
+          return null;
+        },
+        // FMP fallback
+        async () => {
+          const fmpResult = await getFmpFinancialMetrics(input.ticker);
+          if (fmpResult) {
+            return { 
+              data: { financial_metrics: [fmpResult.metrics] }, 
+              source: fmpResult.source 
+            };
+          }
+          return null;
+        },
+        `/financial-metrics/${input.ticker}`,
+        'metrics'
+      );
+      
+      let metrics = (result.data as Record<string, unknown>).financial_metrics || [];
+      
+      // Add data source indicator
+      if (result.source && Array.isArray(metrics)) {
+        metrics = metrics.map((m: Record<string, unknown>) => ({
+          ...m,
+          _data_source: result.source,
+        }));
+      }
+      
+      return formatToolResult(metrics, [result.url]);
+    } catch (error) {
+      return formatToolResult(
+        { error: `Failed to fetch financial metrics for ${input.ticker}: ${error}` },
+        []
+      );
+    }
   },
 });
-

@@ -1,11 +1,11 @@
 import { useLayoutContext } from '@/contexts/layout-context';
 import { useResizable } from '@/hooks/use-resizable';
 import { cn } from '@/lib/utils';
-import { FileText, Search, X } from 'lucide-react';
+import { FileText, Search, FileJson, X } from 'lucide-react';
 import { ReactNode, useEffect } from 'react';
 import { Button } from '../../ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../ui/tabs';
-import { OutputTab, ResearchTab } from './tabs';
+import { OutputTab, ResearchTab, RawJsonTab } from './tabs';
 
 interface BottomPanelProps {
   children?: ReactNode;
@@ -78,6 +78,13 @@ export function BottomPanel({
                 <Search size={14} />
                 Research
               </TabsTrigger>
+              <TabsTrigger
+                value="raw-json"
+                className="flex items-center gap-2 px-3 py-1.5 text-sm data-[state=active]:active-item text-muted-foreground"
+              >
+                <FileJson size={14} />
+                Raw JSON
+              </TabsTrigger>
             </TabsList>
             
             <Button
@@ -101,6 +108,9 @@ export function BottomPanel({
           </TabsContent>
           <TabsContent value="research" className="h-full m-0 p-4">
             <ResearchTab className="h-full" />
+          </TabsContent>
+          <TabsContent value="raw-json" className="h-full m-0 p-4">
+            <RawJsonTab className="h-full" />
           </TabsContent>
         </Tabs>
       </div>

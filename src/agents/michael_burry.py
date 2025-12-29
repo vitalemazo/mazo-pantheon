@@ -365,7 +365,21 @@ def _generate_burry_output(
 
     # Default fallback signal in case parsing fails
     def create_default_michael_burry_signal():
-        return MichaelBurrySignal(signal="neutral", confidence=0.0, reasoning="Parsing error – defaulting to neutral")
+        # Check what data was available
+        data_issues = []
+        if analysis_data.get("valuation_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing valuation data")
+        if analysis_data.get("solvency_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing solvency data")
+        if analysis_data.get("sentiment_analysis", {}).get("score", 0) == 0:
+            data_issues.append("missing sentiment data")
+        
+        if data_issues:
+            reason = f"Insufficient data for Michael Burry-style deep value analysis: {', '.join(data_issues)}. Cannot identify asymmetric opportunities without comprehensive financial data."
+        else:
+            reason = "LLM parsing error. Unable to generate contrarian analysis. Check model configuration in Settings."
+        
+        return MichaelBurrySignal(signal="neutral", confidence=0.0, reasoning=reason)
 
     return call_llm(
         prompt=prompt,
