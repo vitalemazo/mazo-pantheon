@@ -184,6 +184,108 @@ class UnifiedWorkflow:
         self.model_provider = model_provider
         self.api_keys = api_keys or {}
         self.mazo = MazoBridge()
+        self._alpaca = None  # Lazy-loaded Alpaca service
+
+    def _get_alpaca_service(self) -> Optional[AlpacaService]:
+        """Get or create Alpaca service instance."""
+        if self._alpaca is None:
+            try:
+                self._alpaca = AlpacaService(paper=True)
+                # Test connection
+                self._alpaca.get_account()
+                print("  [Alpaca] ✅ Connected to paper trading account")
+            except Exception as e:
+                print(f"  [Alpaca] ⚠️ Could not connect: {e}")
+                self._alpaca = None
+        return self._alpaca
+
+    def _get_alpaca_portfolio(self, ticker: str) -> Dict:
+        """
+        Get real portfolio state from Alpaca.
+        Falls back to default portfolio if Alpaca unavailable.
+        """
+        alpaca = self._get_alpaca_service()
+        
+        if alpaca:
+            try:
+                account = alpaca.get_account()
+                positions = alpaca.get_positions()
+                orders = alpaca.get_orders(status="open")
+                
+                # Build portfolio dict in the format run_hedge_fund expects
+                positions_dict = {}
+                for pos in positions:
+                    qty = float(pos.qty)
+                    positions_dict[pos.symbol] = {
+                        'long': qty if qty > 0 else 0,
+                        'short': abs(qty) if qty < 0 else 0,
+                        'long_cost_basis': float(pos.avg_entry_price) if qty > 0 else 0.0,
+                        'short_cost_basis': float(pos.avg_entry_price) if qty < 0 else 0.0,
+                        'short_margin_used': 0.0,
+                        'current_price': float(pos.current_price),
+                        'market_value': float(pos.market_value),
+                        'unrealized_pl': float(pos.unrealized_pl),
+                    }
+                
+                # Ensure the target ticker has an entry
+                if ticker not in positions_dict:
+                    positions_dict[ticker] = {
+                        'long': 0, 'short': 0,
+                        'long_cost_basis': 0.0, 'short_cost_basis': 0.0,
+                        'short_margin_used': 0.0
+                    }
+                
+                # Log pending orders
+                pending_orders = [o for o in orders if o.symbol == ticker]
+                if pending_orders:
+                    print(f"  [Alpaca] 📋 {len(pending_orders)} pending order(s) for {ticker}")
+                    for order in pending_orders:
+                        print(f"           - {order.side} {order.qty} @ {order.status}")
+                
+                portfolio = {
+                    'cash': float(account.cash),
+                    'buying_power': float(account.buying_power),
+                    'portfolio_value': float(account.portfolio_value),
+                    'margin_requirement': 0.5,
+                    'margin_used': float(account.initial_margin) if account.initial_margin else 0.0,
+                    'positions': positions_dict,
+                    'realized_gains': {ticker: {'long': 0.0, 'short': 0.0}},
+                    'pending_orders': [
+                        {
+                            'symbol': o.symbol,
+                            'side': o.side,
+                            'qty': float(o.qty),
+                            'status': o.status,
+                            'type': o.type,
+                            'submitted_at': o.submitted_at
+                        } for o in orders
+                    ]
+                }
+                
+                print(f"  [Alpaca] 💰 Portfolio: ${portfolio['portfolio_value']:,.2f} | Cash: ${portfolio['cash']:,.2f}")
+                if positions:
+                    print(f"  [Alpaca] 📊 {len(positions)} position(s): {', '.join([p.symbol for p in positions[:5]])}")
+                
+                return portfolio
+                
+            except Exception as e:
+                print(f"  [Alpaca] ⚠️ Error fetching portfolio: {e}")
+        
+        # Fallback to default portfolio
+        print("  [Portfolio] Using default $100,000 simulation portfolio")
+        return {
+            'cash': 100000,
+            'margin_requirement': 0.5,
+            'margin_used': 0.0,
+            'positions': {
+                ticker: {
+                    'long': 0, 'short': 0,
+                    'long_cost_basis': 0.0, 'short_cost_basis': 0.0,
+                    'short_margin_used': 0.0
+                }
+            },
+            'realized_gains': {ticker: {'long': 0.0, 'short': 0.0}}
+        }
 
     def _run_hedge_fund(
         self,
@@ -200,23 +302,11 @@ class UnifiedWorkflow:
         Returns:
             Tuple of (signal, confidence, agent_signals, raw_result)
         """
-        # Build portfolio for this ticker
         end_date = datetime.now().strftime('%Y-%m-%d')
         start_date = (datetime.now() - relativedelta(months=1)).strftime('%Y-%m-%d')
 
-        portfolio = {
-            'cash': 100000,
-            'margin_requirement': 0.5,
-            'margin_used': 0.0,
-            'positions': {
-                ticker: {
-                    'long': 0, 'short': 0,
-                    'long_cost_basis': 0.0, 'short_cost_basis': 0.0,
-                    'short_margin_used': 0.0
-                }
-            },
-            'realized_gains': {ticker: {'long': 0.0, 'short': 0.0}}
-        }
+        # Try to get real portfolio from Alpaca
+        portfolio = self._get_alpaca_portfolio(ticker)
 
         # Run the hedge fund
         result = run_hedge_fund(
