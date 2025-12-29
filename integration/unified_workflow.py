@@ -303,7 +303,8 @@ class UnifiedWorkflow:
     def _run_hedge_fund(
         self,
         ticker: str,
-        analysts: List[str] = None
+        analysts: List[str] = None,
+        mazo_research: str = None
     ) -> Tuple[str, float, List[AgentSignal], Dict]:
         """
         Run the AI Hedge Fund and extract signals.
@@ -311,6 +312,7 @@ class UnifiedWorkflow:
         Args:
             ticker: Stock ticker symbol
             analysts: List of analyst keys to use (None = all)
+            mazo_research: Optional Mazo research to pass to Portfolio Manager
 
         Returns:
             Tuple of (signal, confidence, agent_signals, raw_result)
@@ -331,6 +333,7 @@ class UnifiedWorkflow:
             selected_analysts=analysts or [],
             model_name=self.model_name,
             model_provider=self.model_provider,
+            mazo_research=mazo_research,  # Pass Mazo's research to Portfolio Manager
         )
 
         # Extract signals from agents
@@ -529,9 +532,14 @@ class UnifiedWorkflow:
         query = self._build_research_query(ticker, depth)
         research = self.mazo.research(query)
 
-        # Step 2: AI Hedge Fund with research context
-        print(f"  [AI Hedge Fund] Analyzing {ticker} with research context...")
-        signal, confidence, agent_signals, raw_result = self._run_hedge_fund(ticker, analysts)
+        # Step 2: AI Hedge Fund with Mazo research context
+        # Portfolio Manager will consider Mazo's analysis when making decisions
+        print(f"  [AI Hedge Fund] Analyzing {ticker} with Mazo research context...")
+        signal, confidence, agent_signals, raw_result = self._run_hedge_fund(
+            ticker, 
+            analysts,
+            mazo_research=research.answer if research else None
+        )
 
         # Build recommendations
         recommendations = []
@@ -623,9 +631,14 @@ class UnifiedWorkflow:
             portfolio_context=portfolio_context_str
         )
 
-        # Step 2: AI Hedge Fund with context
-        print(f"  [AI Hedge Fund] Analyzing {ticker}...")
-        signal, confidence, agent_signals, raw_result = self._run_hedge_fund(ticker, analysts)
+        # Step 2: AI Hedge Fund with Mazo's research as context
+        # This allows Portfolio Manager to consider Mazo's counter-arguments
+        print(f"  [AI Hedge Fund] Analyzing {ticker} with Mazo research context...")
+        signal, confidence, agent_signals, raw_result = self._run_hedge_fund(
+            ticker, 
+            analysts,
+            mazo_research=initial_research.answer if initial_research else None
+        )
 
         # Get the portfolio manager's reasoning for Mazo to explain
         decisions = raw_result.get('decisions', {})

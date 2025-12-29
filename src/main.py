@@ -52,6 +52,7 @@ def run_hedge_fund(
     selected_analysts: list[str] = [],
     model_name: str = "gpt-4.1",
     model_provider: str = "OpenAI",
+    mazo_research: str = None,  # Optional Mazo research for Portfolio Manager to consider
 ):
     # Start progress tracking
     progress.start()
@@ -74,6 +75,7 @@ def run_hedge_fund(
                     "start_date": start_date,
                     "end_date": end_date,
                     "analyst_signals": {},
+                    "mazo_research": mazo_research,  # Pass Mazo research to Portfolio Manager
                 },
                 "metadata": {
                     "show_reasoning": show_reasoning,

@@ -29,6 +29,9 @@ def portfolio_management_agent(state: AgentState, agent_id: str = "portfolio_man
     portfolio = state["data"]["portfolio"]
     analyst_signals = state["data"]["analyst_signals"]
     tickers = state["data"]["tickers"]
+    
+    # Get Mazo research if available (for counter-argument consideration)
+    mazo_research = state["data"].get("mazo_research", None)
 
     position_limits = {}
     current_prices = {}
@@ -266,6 +269,13 @@ def generate_trading_decision(
     # Check if paper trading mode (more aggressive)
     is_paper_trading = portfolio.get("paper_trading", True)  # Default to paper for safety
     
+    # Build Mazo research section if available
+    mazo_section = ""
+    if mazo_research:
+        # Truncate if too long to keep prompt efficient
+        research_summary = mazo_research[:2000] if len(mazo_research) > 2000 else mazo_research
+        mazo_section = f"\n\n=== INDEPENDENT RESEARCH (Mazo AI) ===\n{research_summary}\n\nIMPORTANT: Consider this research carefully. If it contradicts analyst signals, weigh both perspectives."
+    
     # Different prompts for paper vs live trading
     if is_paper_trading:
         system_prompt = (
@@ -275,9 +285,10 @@ def generate_trading_decision(
             "2. Don't be afraid to act on signals - this is paper money for learning\n"
             "3. If majority of analysts agree (even with moderate confidence), act on it\n"
             "4. Use reasonable position sizes (10-30% of buying power per trade)\n"
-            "5. Only HOLD if signals are truly contradictory (roughly equal bullish vs bearish)\n\n"
+            "5. Only HOLD if signals are truly contradictory (roughly equal bullish vs bearish)\n"
+            "6. If Mazo research disagrees with analysts, consider the counter-arguments before deciding\n\n"
             "GOAL: Generate trades to validate signals. Being wrong with paper money teaches more than doing nothing.\n\n"
-            "Inputs: analyst signals, current positions, and allowed actions with max qty.\n"
+            "Inputs: analyst signals, current positions, Mazo research (if any), and allowed actions with max qty.\n"
             "Pick one action per ticker. Quantity must be ≤ max shown.\n"
             "Keep reasoning concise (max 150 chars). Return JSON only."
         )
@@ -289,13 +300,14 @@ def generate_trading_decision(
             "2. If you have a profitable position, consider taking profits or letting it ride based on signals\n"
             "3. Check for pending orders - don't place conflicting trades\n"
             "4. Consider position sizing relative to portfolio value\n"
-            "5. If signals are mixed or low confidence, prefer HOLD to avoid overtrading\n\n"
-            "Inputs: analyst signals, current positions, and allowed actions with max qty.\n"
+            "5. If signals are mixed or low confidence, prefer HOLD to avoid overtrading\n"
+            "6. If Mazo research disagrees with analysts, carefully weigh the counter-arguments\n\n"
+            "Inputs: analyst signals, current positions, Mazo research (if any), and allowed actions with max qty.\n"
             "Pick one action per ticker. Quantity must be ≤ max shown.\n"
             "Keep reasoning concise (max 150 chars). Return JSON only."
         )
     
-    # Enhanced prompt with portfolio awareness
+    # Enhanced prompt with portfolio awareness and Mazo research
     template = ChatPromptTemplate.from_messages(
         [
             ("system", system_prompt),
@@ -303,6 +315,7 @@ def generate_trading_decision(
                 "human",
                 "=== PORTFOLIO STATE ===\n{portfolio_context}\n\n"
                 "=== ANALYST SIGNALS ===\n{signals}\n\n"
+                "{mazo_research}"
                 "=== ALLOWED ACTIONS (max qty validated) ===\n{allowed}\n\n"
                 "Format:\n"
                 "{{\n"
@@ -318,6 +331,7 @@ def generate_trading_decision(
         "portfolio_context": position_context,
         "signals": json.dumps(compact_signals, indent=2, ensure_ascii=False),
         "allowed": json.dumps(compact_allowed, indent=2, ensure_ascii=False),
+        "mazo_research": mazo_section,
     }
     prompt = template.invoke(prompt_data)
 
