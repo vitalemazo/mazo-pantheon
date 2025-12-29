@@ -79,6 +79,7 @@ def portfolio_management_agent(state: AgentState, agent_id: str = "portfolio_man
         portfolio=portfolio,
         agent_id=agent_id,
         state=state,
+        mazo_research=mazo_research,
     )
     message = HumanMessage(
         content=json.dumps({ticker: decision.model_dump() for ticker, decision in result.decisions.items()}),
@@ -237,6 +238,7 @@ def generate_trading_decision(
         portfolio: dict[str, float],
         agent_id: str,
         state: AgentState,
+        mazo_research: str = None,
 ) -> PortfolioManagerOutput:
     """Get decisions from the LLM with deterministic constraints and portfolio context."""
 
