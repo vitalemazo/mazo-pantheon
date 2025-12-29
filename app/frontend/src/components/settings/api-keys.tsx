@@ -1,8 +1,9 @@
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { apiKeysService } from '@/services/api-keys-api';
-import { Eye, EyeOff, Key, Trash2, Globe } from 'lucide-react';
+import { Eye, EyeOff, Key, Trash2, Globe, Zap, Info } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 interface ApiKey {
@@ -102,6 +103,23 @@ const SEARCH_API_KEYS: ApiKey[] = [
     description: 'For real-time web search in Mazo research',
     url: 'https://tavily.com/',
     placeholder: 'your-tavily-api-key'
+  }
+];
+
+// Workflow optimization toggles
+interface WorkflowToggle {
+  key: string;
+  label: string;
+  description: string;
+  detailedExplanation: string;
+}
+
+const WORKFLOW_TOGGLES: WorkflowToggle[] = [
+  {
+    key: 'AGGREGATE_DATA',
+    label: 'Pre-fetch Financial Data',
+    description: 'Aggregate all financial data before agents run',
+    detailedExplanation: 'When enabled, the system will fetch ALL financial data (prices, metrics, news, insider trades) for your tickers in a single batch BEFORE the AI agents start analyzing. This reduces duplicate API calls since each agent would otherwise fetch data independently. Recommended for multi-ticker analysis. Adds a brief initial delay but significantly reduces total API calls.'
   }
 ];
 
@@ -405,6 +423,60 @@ export function ApiKeysSettings() {
         MAZO_CONFIG,
         <Key className="h-4 w-4" />
       )}
+
+      {/* Workflow Optimization */}
+      <Card className="bg-panel border-gray-700 dark:border-gray-700">
+        <CardHeader>
+          <CardTitle className="text-lg font-medium text-primary flex items-center gap-2">
+            <Zap className="h-4 w-4" />
+            Workflow Optimization
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Performance settings that affect how the trading workflow executes.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {WORKFLOW_TOGGLES.map((toggle) => {
+            const isEnabled = apiKeys[toggle.key]?.toLowerCase() === 'true';
+            return (
+              <div key={toggle.key} className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium text-primary">
+                      {toggle.label}
+                    </label>
+                    <p className="text-xs text-muted-foreground">
+                      {toggle.description}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={isEnabled}
+                    onCheckedChange={(checked) => {
+                      handleKeyChange(toggle.key, checked ? 'true' : 'false');
+                    }}
+                  />
+                </div>
+                {/* Detailed explanation */}
+                <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-3">
+                  <div className="flex items-start gap-2">
+                    <Info className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                    <p className="text-xs text-muted-foreground">
+                      {toggle.detailedExplanation}
+                    </p>
+                  </div>
+                </div>
+                {isEnabled && (
+                  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-2">
+                    <p className="text-xs text-green-500 font-medium">
+                      ✓ Data Aggregation is enabled - you'll see the "Data Aggregation" step in your workflow
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
 
       {/* Security Note */}
       <Card className="bg-amber-500/5 border-amber-500/20">

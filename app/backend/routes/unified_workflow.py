@@ -584,10 +584,42 @@ async def run_unified_workflow(
                     """Run the workflow synchronously with detailed progress updates"""
                     import os
                     import time
+                    from app.backend.repositories.api_key_repository import ApiKeyRepository
+                    from app.backend.database.connection import SessionLocal
+                    
+                    # Helper to get AGGREGATE_DATA setting from DB or env
+                    def get_aggregate_data_setting() -> bool:
+                        """Check if AGGREGATE_DATA is enabled in DB or environment."""
+                        # First check environment variable
+                        env_value = os.getenv("AGGREGATE_DATA", "").lower()
+                        if env_value in ("true", "false"):
+                            # Also check database for override
+                            try:
+                                db = SessionLocal()
+                                repo = ApiKeyRepository(db)
+                                db_key = repo.get_api_key_by_provider("AGGREGATE_DATA")
+                                db.close()
+                                if db_key and db_key.key_value:
+                                    return db_key.key_value.lower() == "true"
+                            except Exception:
+                                pass
+                            return env_value == "true"
+                        # Fallback to database only
+                        try:
+                            db = SessionLocal()
+                            repo = ApiKeyRepository(db)
+                            db_key = repo.get_api_key_by_provider("AGGREGATE_DATA")
+                            db.close()
+                            if db_key and db_key.key_value:
+                                return db_key.key_value.lower() == "true"
+                        except Exception:
+                            pass
+                        return False
                     
                     try:
                         # Step 1: Data Aggregation with DETAILED tracking
-                        if os.getenv("AGGREGATE_DATA", "false").lower() == "true":
+                        aggregate_data_enabled = get_aggregate_data_setting()
+                        if aggregate_data_enabled:
                             progress_tracker.update_step("data_aggregation", {
                                 "status": "fetching",
                                 "tickers": request_data.tickers,

@@ -139,6 +139,13 @@ ENV_KEYS_TO_SYNC = [
         "provider": "DEFAULT_RESEARCH_DEPTH",
         "description": "Default research depth (quick, standard, deep)"
     },
+    
+    # Workflow Optimization
+    {
+        "env_key": "AGGREGATE_DATA",
+        "provider": "AGGREGATE_DATA",
+        "description": "Pre-fetch all financial data before agents run. Reduces API calls but adds initial delay. (true/false)"
+    },
 ]
 
 
