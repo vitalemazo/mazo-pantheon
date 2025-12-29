@@ -42,6 +42,8 @@ Thumbs.db
 
 # graph
 *.png
+# but allow docs screenshots
+!docs/screenshots/*.png
 
 # Txt files
 *.txt
