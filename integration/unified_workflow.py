@@ -750,6 +750,51 @@ def execute_trades(
             print(f"    → No trade needed (hold or zero quantity)")
             continue
         
+        # Check for conflicting pending orders (to avoid wash trade rejection)
+        try:
+            pending_orders = alpaca.get_orders(status="open")
+            conflicting = [o for o in pending_orders if o.symbol == ticker]
+            if conflicting:
+                print(f"    ⚠️ Found {len(conflicting)} conflicting order(s) for {ticker}")
+                for order in conflicting:
+                    cancel_result = alpaca.cancel_order(order.id)
+                    if cancel_result.success:
+                        print(f"      ↳ Cancelled: {order.side} {order.qty} shares ({order.id[:8]}...)")
+                    else:
+                        print(f"      ↳ Failed to cancel: {cancel_result.error}")
+        except Exception as e:
+            print(f"    ⚠️ Could not check pending orders: {e}")
+        
+        # Check for conflicting positions (can't SHORT if you have LONG, must close first)
+        try:
+            position = alpaca.get_position(ticker)
+            if position:
+                pos_qty = float(position.qty)
+                if action == "short" and pos_qty > 0:
+                    print(f"    ⚠️ You have a LONG position ({pos_qty} shares). Closing it first...")
+                    close_result = alpaca.close_position(ticker)
+                    if close_result.success:
+                        print(f"      ↳ Closed LONG position: {close_result.message}")
+                    else:
+                        print(f"      ↳ Failed to close: {close_result.error}")
+                        result.trade = TradeResult(
+                            action=action,
+                            quantity=quantity,
+                            executed=False,
+                            error=f"Cannot SHORT - failed to close existing LONG: {close_result.error}"
+                        )
+                        continue
+                elif action == "buy" and pos_qty < 0:
+                    print(f"    ⚠️ You have a SHORT position ({abs(pos_qty)} shares). Covering it first...")
+                    close_result = alpaca.close_position(ticker)
+                    if close_result.success:
+                        print(f"      ↳ Covered SHORT position: {close_result.message}")
+                    else:
+                        print(f"      ↳ Failed to cover: {close_result.error}")
+        except Exception as e:
+            # No position exists, which is fine
+            pass
+        
         if dry_run:
             # Simulate the trade
             result.trade = TradeResult(
@@ -780,13 +825,15 @@ def execute_trades(
                     )
                     print(f"    ✅ Order placed: {trade_result.message}")
                 else:
+                    # Include full error details
+                    full_error = trade_result.error or trade_result.message
                     result.trade = TradeResult(
                         action=action,
                         quantity=quantity,
                         executed=False,
-                        error=trade_result.message
+                        error=full_error
                     )
-                    print(f"    ❌ Order failed: {trade_result.message}")
+                    print(f"    ❌ Order failed: {full_error}")
             except Exception as e:
                 result.trade = TradeResult(
                     action=action,

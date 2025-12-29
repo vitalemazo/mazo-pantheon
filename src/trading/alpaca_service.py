@@ -440,10 +440,12 @@ class AlpacaService:
                 message=f"Order submitted: {side.value if isinstance(side, OrderSide) else side} {qty} {symbol}"
             )
         except Exception as e:
+            error_msg = str(e)
+            print(f"[Alpaca] ❌ Order error for {symbol}: {error_msg}")
             return TradeResult(
                 success=False,
-                error=str(e),
-                message=f"Failed to submit order: {symbol}"
+                error=error_msg,
+                message=f"Failed to submit order for {symbol}: {error_msg}"
             )
 
     def cancel_order(self, order_id: str) -> TradeResult:
