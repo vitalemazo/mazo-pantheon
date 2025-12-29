@@ -31,6 +31,7 @@ from integration.mazo_bridge import MazoBridge, MazoResponse
 from integration.config import config
 from src.main import run_hedge_fund
 from src.trading.alpaca_service import AlpacaService, OrderSide, OrderType
+from src.graph.portfolio_context import PortfolioContext
 
 
 class WorkflowMode(Enum):
@@ -185,6 +186,7 @@ class UnifiedWorkflow:
         self.api_keys = api_keys or {}
         self.mazo = MazoBridge()
         self._alpaca = None  # Lazy-loaded Alpaca service
+        self._portfolio_context: Optional[PortfolioContext] = None  # Rich portfolio context
 
     def _get_alpaca_service(self) -> Optional[AlpacaService]:
         """Get or create Alpaca service instance."""
@@ -203,6 +205,7 @@ class UnifiedWorkflow:
         """
         Get real portfolio state from Alpaca.
         Falls back to default portfolio if Alpaca unavailable.
+        Also creates a rich PortfolioContext for use by agents.
         """
         alpaca = self._get_alpaca_service()
         
@@ -211,6 +214,9 @@ class UnifiedWorkflow:
                 account = alpaca.get_account()
                 positions = alpaca.get_positions()
                 orders = alpaca.get_orders(status="open")
+                
+                # Create rich PortfolioContext for agents
+                self._portfolio_context = PortfolioContext.from_alpaca(account, positions, orders)
                 
                 # Build portfolio dict in the format run_hedge_fund expects
                 positions_dict = {}
@@ -273,6 +279,7 @@ class UnifiedWorkflow:
         
         # Fallback to default portfolio
         print("  [Portfolio] Using default $100,000 simulation portfolio")
+        self._portfolio_context = None
         return {
             'cash': 100000,
             'margin_requirement': 0.5,
@@ -546,6 +553,11 @@ class UnifiedWorkflow:
         depth: ResearchDepth
     ) -> UnifiedResult:
         """AI Hedge Fund first, then Mazo explains"""
+        # Get portfolio context for position-aware analysis
+        portfolio_context_str = None
+        if self._portfolio_context:
+            portfolio_context_str = self._portfolio_context.to_ticker_context(ticker)
+        
         # Step 1: AI Hedge Fund signal
         print(f"  [AI Hedge Fund] Generating signal for {ticker}...")
         signal, confidence, agent_signals, raw_result = self._run_hedge_fund(ticker, analysts)
@@ -556,13 +568,14 @@ class UnifiedWorkflow:
         if decisions and ticker in decisions:
             reasoning = decisions[ticker].get('reasoning', reasoning)
 
-        # Step 2: Mazo explains the signal
+        # Step 2: Mazo explains the signal (with portfolio context)
         print(f"  [Mazo] Explaining {signal} signal...")
         research = self.mazo.explain_signal(
             ticker=ticker,
             signal=signal,
             confidence=confidence,
-            reasoning=reasoning
+            reasoning=reasoning,
+            portfolio_context=portfolio_context_str
         )
 
         # Build recommendations
@@ -591,9 +604,18 @@ class UnifiedWorkflow:
         depth: ResearchDepth
     ) -> UnifiedResult:
         """Complete workflow: Pre-research → Signal → Post-research"""
-        # Step 1: Initial Mazo research
+        # Get portfolio context for position-aware analysis
+        portfolio_context_str = None
+        if self._portfolio_context:
+            portfolio_context_str = self._portfolio_context.to_ticker_context(ticker)
+            print(f"  [Portfolio] Providing context to Mazo...")
+        
+        # Step 1: Initial Mazo research (with portfolio awareness)
         print(f"  [Mazo] Initial research on {ticker}...")
-        initial_research = self.mazo.analyze_company(ticker)
+        initial_research = self.mazo.analyze_company(
+            ticker,
+            portfolio_context=portfolio_context_str
+        )
 
         # Step 2: AI Hedge Fund with context
         print(f"  [AI Hedge Fund] Analyzing {ticker}...")
@@ -605,13 +627,14 @@ class UnifiedWorkflow:
         if decisions and ticker in decisions:
             reasoning = decisions[ticker].get('reasoning', reasoning)
 
-        # Step 3: Mazo deep dive on signal
+        # Step 3: Mazo deep dive on signal (with portfolio awareness)
         print(f"  [Mazo] Deep dive on signal...")
         deep_research = self.mazo.explain_signal(
             ticker=ticker,
             signal=signal,
             confidence=confidence,
-            reasoning=reasoning
+            reasoning=reasoning,
+            portfolio_context=portfolio_context_str
         )
 
         # Combine research reports
@@ -704,9 +727,34 @@ def execute_trades(
         # Initialize Alpaca service (will use paper trading by default)
         alpaca = AlpacaService(paper=True)
         
-        # Verify connection
+        # Verify connection and show portfolio summary
         account = alpaca.get_account()
-        print(f"  Connected to Alpaca: ${float(account.buying_power):,.2f} buying power")
+        positions = alpaca.get_positions()
+        pending_orders = alpaca.get_orders(status="open")
+        
+        print(f"\n{'='*50}")
+        print(f"  PORTFOLIO STATE BEFORE EXECUTION")
+        print(f"{'='*50}")
+        print(f"  💰 Equity: ${float(account.portfolio_value):,.2f}")
+        print(f"  💵 Cash: ${float(account.cash):,.2f}")
+        print(f"  🔓 Buying Power: ${float(account.buying_power):,.2f}")
+        
+        if positions:
+            print(f"\n  📊 Current Positions ({len(positions)}):")
+            for pos in positions:
+                qty = float(pos.qty)
+                pl = float(pos.unrealized_pl)
+                pl_sign = "+" if pl >= 0 else ""
+                print(f"     • {pos.symbol}: {qty:.0f} shares ({pl_sign}${pl:,.2f})")
+        else:
+            print(f"\n  📊 No current positions")
+        
+        if pending_orders:
+            print(f"\n  📋 Pending Orders ({len(pending_orders)}):")
+            for order in pending_orders:
+                print(f"     • {order.symbol}: {order.side} {float(order.qty):.0f} shares ({order.status})")
+        
+        print(f"{'='*50}\n")
     except Exception as e:
         print(f"  ❌ Failed to connect to Alpaca: {e}")
         # Mark all results with error

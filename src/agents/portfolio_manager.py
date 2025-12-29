@@ -4,6 +4,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 
 from src.graph.state import AgentState, show_agent_reasoning
+from src.graph.portfolio_context import PortfolioContext
 from pydantic import BaseModel, Field
 from typing_extensions import Literal
 from src.utils.progress import progress
@@ -174,6 +175,57 @@ def _compact_signals(signals_by_ticker: dict[str, dict]) -> dict[str, dict]:
     return out
 
 
+def _build_position_context(portfolio: dict, tickers: list[str], current_prices: dict[str, float]) -> str:
+    """Build a rich position context string for the LLM."""
+    lines = []
+    
+    # Portfolio summary
+    cash = float(portfolio.get("cash", 0))
+    buying_power = float(portfolio.get("buying_power", cash))
+    portfolio_value = float(portfolio.get("portfolio_value", cash))
+    
+    lines.append(f"Portfolio: ${portfolio_value:,.0f} total | ${cash:,.0f} cash | ${buying_power:,.0f} buying power")
+    
+    # Current positions
+    positions = portfolio.get("positions", {})
+    position_lines = []
+    for ticker in tickers:
+        pos = positions.get(ticker, {})
+        long_shares = int(pos.get("long", 0) or 0)
+        short_shares = int(pos.get("short", 0) or 0)
+        
+        if long_shares > 0:
+            entry = float(pos.get("long_cost_basis", 0) or 0)
+            current = float(current_prices.get(ticker, entry))
+            pl = (current - entry) * long_shares if entry > 0 else 0
+            pl_pct = ((current / entry) - 1) * 100 if entry > 0 else 0
+            pl_sign = "+" if pl >= 0 else ""
+            position_lines.append(f"  {ticker}: LONG {long_shares} shares @ ${entry:.2f} → ${current:.2f} ({pl_sign}{pl_pct:.1f}%)")
+        elif short_shares > 0:
+            entry = float(pos.get("short_cost_basis", 0) or 0)
+            current = float(current_prices.get(ticker, entry))
+            pl = (entry - current) * short_shares if entry > 0 else 0
+            pl_pct = ((entry / current) - 1) * 100 if current > 0 else 0
+            pl_sign = "+" if pl >= 0 else ""
+            position_lines.append(f"  {ticker}: SHORT {short_shares} shares @ ${entry:.2f} → ${current:.2f} ({pl_sign}{pl_pct:.1f}%)")
+        else:
+            position_lines.append(f"  {ticker}: No position")
+    
+    if position_lines:
+        lines.append("Positions:")
+        lines.extend(position_lines)
+    
+    # Pending orders
+    pending = portfolio.get("pending_orders", [])
+    if pending:
+        order_lines = [f"  {o['symbol']}: {o['side'].upper()} {o['qty']} shares ({o['status']})" for o in pending if o['symbol'] in tickers]
+        if order_lines:
+            lines.append("Pending Orders:")
+            lines.extend(order_lines)
+    
+    return "\n".join(lines)
+
+
 def generate_trading_decision(
         tickers: list[str],
         signals_by_ticker: dict[str, dict],
@@ -183,7 +235,7 @@ def generate_trading_decision(
         agent_id: str,
         state: AgentState,
 ) -> PortfolioManagerOutput:
-    """Get decisions from the LLM with deterministic constraints and a minimal prompt."""
+    """Get decisions from the LLM with deterministic constraints and portfolio context."""
 
     # Deterministic constraints
     allowed_actions_full = compute_allowed_actions(tickers, current_prices, max_shares, portfolio)
@@ -207,25 +259,35 @@ def generate_trading_decision(
     # Build compact payloads only for tickers sent to LLM
     compact_signals = _compact_signals({t: signals_by_ticker.get(t, {}) for t in tickers_for_llm})
     compact_allowed = {t: allowed_actions_full[t] for t in tickers_for_llm}
+    
+    # Build rich position context
+    position_context = _build_position_context(portfolio, tickers_for_llm, current_prices)
 
-    # Minimal prompt template
+    # Enhanced prompt with portfolio awareness
     template = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
-                "You are a portfolio manager.\n"
-                "Inputs per ticker: analyst signals and allowed actions with max qty (already validated).\n"
-                "Pick one allowed action per ticker and a quantity ≤ the max. "
-                "Keep reasoning very concise (max 100 chars). No cash or margin math. Return JSON only."
+                "You are an intelligent portfolio manager making trading decisions.\n\n"
+                "IMPORTANT CONSIDERATIONS:\n"
+                "1. Consider existing positions - don't double-down on losing trades without strong conviction\n"
+                "2. If you have a profitable position, consider taking profits or letting it ride based on signals\n"
+                "3. Check for pending orders - don't place conflicting trades\n"
+                "4. Consider position sizing relative to portfolio value\n"
+                "5. If signals are mixed or low confidence, prefer HOLD to avoid overtrading\n\n"
+                "Inputs: analyst signals, current positions, and allowed actions with max qty.\n"
+                "Pick one action per ticker. Quantity must be ≤ max shown.\n"
+                "Keep reasoning concise (max 150 chars). Return JSON only."
             ),
             (
                 "human",
-                "Signals:\n{signals}\n\n"
-                "Allowed:\n{allowed}\n\n"
+                "=== PORTFOLIO STATE ===\n{portfolio_context}\n\n"
+                "=== ANALYST SIGNALS ===\n{signals}\n\n"
+                "=== ALLOWED ACTIONS (max qty validated) ===\n{allowed}\n\n"
                 "Format:\n"
                 "{{\n"
                 '  "decisions": {{\n'
-                '    "TICKER": {{"action":"...","quantity":int,"confidence":int,"reasoning":"..."}}\n'
+                '    "TICKER": {{"action":"buy|sell|short|cover|hold","quantity":int,"confidence":0-100,"reasoning":"..."}}\n'
                 "  }}\n"
                 "}}"
             ),
@@ -233,8 +295,9 @@ def generate_trading_decision(
     )
 
     prompt_data = {
-        "signals": json.dumps(compact_signals, separators=(",", ":"), ensure_ascii=False),
-        "allowed": json.dumps(compact_allowed, separators=(",", ":"), ensure_ascii=False),
+        "portfolio_context": position_context,
+        "signals": json.dumps(compact_signals, indent=2, ensure_ascii=False),
+        "allowed": json.dumps(compact_allowed, indent=2, ensure_ascii=False),
     }
     prompt = template.invoke(prompt_data)
 

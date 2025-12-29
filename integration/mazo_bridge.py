@@ -287,23 +287,40 @@ Note: Full non-interactive mode requires Mazo modifications.
 See docs/MAZO_INTEGRATION.md for implementation details.
 """
 
-    def analyze_company(self, ticker: str) -> MazoResponse:
+    def analyze_company(
+        self,
+        ticker: str,
+        portfolio_context: str = None
+    ) -> MazoResponse:
         """
-        Request comprehensive company analysis.
+        Request comprehensive company analysis with portfolio context.
 
         Args:
             ticker: Stock ticker symbol
+            portfolio_context: Optional portfolio context for position-aware analysis
 
         Returns:
             MazoResponse with company analysis
         """
-        query = f"""
-Provide a comprehensive analysis of {ticker} including:
+        portfolio_section = ""
+        if portfolio_context:
+            portfolio_section = f"""
+=== CURRENT PORTFOLIO CONTEXT ===
+{portfolio_context}
+=================================
+
+Consider the above portfolio context when providing analysis.
+If we already have a position, evaluate whether to add, hold, or reduce.
+
+"""
+        
+        query = f"""{portfolio_section}Provide a comprehensive analysis of {ticker} including:
 1. Recent financial performance and trends
 2. Competitive position and moat analysis
 3. Key risks and opportunities
 4. Management quality and strategy
 5. Valuation relative to peers and history
+6. {"Given our current position, should we add, hold, or reduce exposure?" if portfolio_context else "Is this a good entry point?"}
 """
         return self.research(query)
 
@@ -364,22 +381,38 @@ Please:
         ticker: str,
         signal: str,
         confidence: float,
-        reasoning: str
+        reasoning: str,
+        portfolio_context: str = None
     ) -> MazoResponse:
         """
-        Get Mazo to explain/expand on an AI Hedge Fund signal.
+        Get Mazo to explain/expand on an AI Hedge Fund signal with portfolio context.
 
         Args:
             ticker: Stock ticker symbol
             signal: The signal (BULLISH/BEARISH/NEUTRAL)
             confidence: Confidence percentage
             reasoning: Brief reasoning from AI Hedge Fund
+            portfolio_context: Optional portfolio context for position-aware analysis
 
         Returns:
             MazoResponse with expanded analysis
         """
-        query = f"""
-AI Hedge Fund generated a {signal} signal on {ticker} with
+        portfolio_section = ""
+        position_question = "6. Is this a good entry point?"
+        
+        if portfolio_context:
+            portfolio_section = f"""
+=== CURRENT PORTFOLIO CONTEXT ===
+{portfolio_context}
+=================================
+
+"""
+            position_question = """6. Given our current position:
+   - Should we add to it, hold, or reduce exposure?
+   - What's the optimal position size?
+   - Are there any pending orders we should modify?"""
+        
+        query = f"""{portfolio_section}AI Hedge Fund generated a {signal} signal on {ticker} with
 {confidence}% confidence. The reasoning was:
 
 "{reasoning}"
@@ -390,6 +423,7 @@ Please provide:
 3. What could invalidate this thesis
 4. Specific metrics/events to watch
 5. Timeline considerations
+{position_question}
 """
         return self.research(query)
 
