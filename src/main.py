@@ -93,34 +93,7 @@ def run_hedge_fund(
 
 
 def start(state: AgentState):
-    """
-    Initialize the workflow with the input message.
-    
-    Optionally aggregates financial data first to avoid duplicate API calls.
-    Set AGGREGATE_DATA=true in environment to enable.
-    """
-    import os
-    if os.getenv("AGGREGATE_DATA", "false").lower() == "true":
-        from src.utils.data_aggregator import aggregate_financial_data, add_aggregated_data_to_state
-        from datetime import timedelta
-        from dateutil.parser import parse as parse_date
-        
-        data = state["data"]
-        tickers = data["tickers"]
-        end_date = data["end_date"]
-        start_date = data.get("start_date")
-        
-        # Aggregate all financial data
-        aggregated = aggregate_financial_data(
-            state=state,
-            tickers=tickers,
-            end_date=end_date,
-            start_date=start_date,
-        )
-        
-        # Add to state
-        state = add_aggregated_data_to_state(state, aggregated)
-    
+    """Initialize the workflow with the input message."""
     return state
 
 

@@ -7,6 +7,7 @@ from app.backend.routes import api_router
 from app.backend.database.connection import engine
 from app.backend.database.models import Base
 from app.backend.services.ollama_service import ollama_service
+from app.backend.services.env_sync_service import sync_env_on_startup
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -31,7 +32,23 @@ app.include_router(api_router)
 
 @app.on_event("startup")
 async def startup_event():
-    """Startup event to check Ollama availability."""
+    """Startup event to sync env vars and check Ollama availability."""
+    
+    # Sync environment variables to database
+    try:
+        logger.info("=" * 50)
+        logger.info("AI Hedge Fund Backend Starting...")
+        logger.info("=" * 50)
+        
+        # Sync API keys from .env to database
+        sync_result = sync_env_on_startup()
+        if sync_result.get("synced"):
+            logger.info(f"✓ API keys synced from .env to Settings UI")
+        
+    except Exception as e:
+        logger.warning(f"Could not sync environment variables: {e}")
+    
+    # Check Ollama availability
     try:
         logger.info("Checking Ollama availability...")
         status = await ollama_service.check_ollama_status()
@@ -53,3 +70,7 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"Could not check Ollama status: {e}")
         logger.info("ℹ Ollama integration is available if you install it later")
+    
+    logger.info("=" * 50)
+    logger.info("Backend ready! Settings UI will show your .env API keys.")
+    logger.info("=" * 50)

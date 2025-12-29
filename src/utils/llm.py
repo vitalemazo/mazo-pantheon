@@ -1,11 +1,9 @@
 """Helper functions for LLM"""
 
 import json
-import asyncio
 from pydantic import BaseModel
 from src.llm.models import get_model, get_model_info
 from src.utils.progress import progress
-from src.utils.rate_limiter import get_rate_limiter
 from src.graph.state import AgentState
 
 
@@ -57,60 +55,19 @@ def call_llm(
             method="json_mode",
         )
 
-    # Get rate limiter (configurable via env vars)
-    import os
-    max_concurrent = int(os.getenv("LLM_MAX_CONCURRENT", "3"))
-    requests_per_minute = int(os.getenv("LLM_REQUESTS_PER_MINUTE", "60"))
-    rate_limiter = get_rate_limiter(
-        max_concurrent=max_concurrent,
-        requests_per_minute=requests_per_minute,
-    )
-    
-    # Call the LLM with retries and rate limiting
+    # Call the LLM with retries
     for attempt in range(max_retries):
         try:
-            # Acquire rate limiter permission (synchronous)
-            if not rate_limiter.acquire(blocking=True, timeout=300):  # 5 min max wait
-                if agent_name:
-                    progress.update_status(agent_name, None, "Rate limiter timeout")
-                if attempt == max_retries - 1:
-                    if default_factory:
-                        return default_factory()
-                    return create_default_response(pydantic_model)
-                continue
-            
-            try:
-                # Call the LLM
-                result = llm.invoke(prompt)
-                
-                # Record success
-                rate_limiter.record_success()
+            # Call the LLM
+            result = llm.invoke(prompt)
 
-                # For non-JSON support models, we need to extract and parse the JSON manually
-                if model_info and not model_info.has_json_mode():
-                    parsed_result = extract_json_from_response(result.content)
-                    if parsed_result:
-                        return pydantic_model(**parsed_result)
-                else:
-                    return result
-                    
-            except Exception as llm_error:
-                # Check if it's a 429 error
-                error_str = str(llm_error).lower()
-                if "429" in error_str or "rate limit" in error_str:
-                    rate_limiter.record_429_error()
-                    if agent_name:
-                        progress.update_status(agent_name, None, f"Rate limited - retry {attempt + 1}/{max_retries}")
-                    # Calculate backoff
-                    backoff = rate_limiter._calculate_backoff()
-                    if backoff > 0:
-                        import time
-                        time.sleep(backoff)
-                    continue
-                raise llm_error
-            finally:
-                # Always release semaphore
-                rate_limiter.release()
+            # For non-JSON support models, we need to extract and parse the JSON manually
+            if model_info and not model_info.has_json_mode():
+                parsed_result = extract_json_from_response(result.content)
+                if parsed_result:
+                    return pydantic_model(**parsed_result)
+            else:
+                return result
 
         except Exception as e:
             if agent_name:

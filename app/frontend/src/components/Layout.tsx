@@ -7,6 +7,7 @@ import { SidebarProvider } from '@/components/ui/sidebar';
 import { FlowProvider, useFlowContext } from '@/contexts/flow-context';
 import { LayoutProvider, useLayoutContext } from '@/contexts/layout-context';
 import { TabsProvider, useTabsContext } from '@/contexts/tabs-context';
+import { WorkflowProvider } from '@/contexts/workflow-context';
 import { useLayoutKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts';
 import { cn } from '@/lib/utils';
 import { SidebarStorageService } from '@/services/sidebar-storage';
@@ -38,6 +39,11 @@ function LayoutContent({ children: _children }: { children: ReactNode }) {
 
   const handleSettingsClick = () => {
     const tabData = TabService.createSettingsTab();
+    openTab(tabData);
+  };
+
+  const handleUnifiedWorkflowClick = () => {
+    const tabData = TabService.createUnifiedWorkflowTab();
     openTab(tabData);
   };
 
@@ -92,6 +98,7 @@ function LayoutContent({ children: _children }: { children: ReactNode }) {
         onToggleRight={() => setIsRightCollapsed(!isRightCollapsed)}
         onToggleBottom={toggleBottomPanel}
         onSettingsClick={handleSettingsClick}
+        onUnifiedWorkflowClick={handleUnifiedWorkflowClick}
       />
 
       {/* Tab Bar - positioned absolutely like bottom panel */}
@@ -181,9 +188,11 @@ export function Layout({ children }: LayoutProps) {
       <ReactFlowProvider>
         <FlowProvider>
           <TabsProvider>
-            <LayoutProvider>
-              <LayoutContent>{children}</LayoutContent>
-            </LayoutProvider>
+            <WorkflowProvider>
+              <LayoutProvider>
+                <LayoutContent>{children}</LayoutContent>
+              </LayoutProvider>
+            </WorkflowProvider>
           </TabsProvider>
         </FlowProvider>
       </ReactFlowProvider>

@@ -6,7 +6,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings } from 'lucide-react';
+import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings, Workflow } from 'lucide-react';
 import { useState } from 'react';
 import { KeyboardShortcutsDialog } from './keyboard-shortcuts-dialog';
 
@@ -18,6 +18,7 @@ interface TopBarProps {
   onToggleRight: () => void;
   onToggleBottom: () => void;
   onSettingsClick: () => void;
+  onUnifiedWorkflowClick: () => void;
 }
 
 export function TopBar({
@@ -28,6 +29,7 @@ export function TopBar({
   onToggleRight,
   onToggleBottom,
   onSettingsClick,
+  onUnifiedWorkflowClick,
 }: TopBarProps) {
   const [showShortcuts, setShowShortcuts] = useState(false);
 
@@ -108,6 +110,25 @@ export function TopBar({
 
         {/* Divider */}
         <div className="w-px h-5 bg-ramp-grey-700 mx-1" />
+
+        {/* Unified Workflow */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onUnifiedWorkflowClick}
+              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-ramp-grey-700 transition-colors"
+              aria-label="Open unified workflow"
+            >
+              <Workflow size={16} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="flex flex-col gap-0.5">
+            <span className="font-medium">Unified Workflow</span>
+            <span className="text-xs text-muted-foreground">AI Hedge Fund + Mazo research</span>
+          </TooltipContent>
+        </Tooltip>
 
         {/* Keyboard Shortcuts */}
         <Tooltip>

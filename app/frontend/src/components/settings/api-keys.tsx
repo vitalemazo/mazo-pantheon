@@ -33,6 +33,78 @@ const API_ENDPOINTS: ApiKey[] = [
   }
 ];
 
+const TRADING_API_KEYS: ApiKey[] = [
+  {
+    key: 'ALPACA_API_KEY',
+    label: 'Alpaca API Key',
+    description: 'For paper or live trading via Alpaca',
+    url: 'https://app.alpaca.markets/',
+    placeholder: 'your-alpaca-api-key'
+  },
+  {
+    key: 'ALPACA_SECRET_KEY',
+    label: 'Alpaca Secret Key',
+    description: 'Secret key for Alpaca trading API',
+    url: 'https://app.alpaca.markets/',
+    placeholder: 'your-alpaca-secret-key'
+  },
+  {
+    key: 'ALPACA_BASE_URL',
+    label: 'Alpaca Base URL',
+    description: 'API endpoint (paper-api.alpaca.markets for testing, api.alpaca.markets for live)',
+    url: 'https://alpaca.markets/docs/api-references/',
+    placeholder: 'https://paper-api.alpaca.markets/v2'
+  },
+  {
+    key: 'ALPACA_TRADING_MODE',
+    label: 'Trading Mode',
+    description: 'Set to "paper" for testing or "live" for real trading',
+    url: 'https://alpaca.markets/docs/',
+    placeholder: 'paper'
+  }
+];
+
+const MAZO_CONFIG: ApiKey[] = [
+  {
+    key: 'MAZO_PATH',
+    label: 'Mazo Path',
+    description: 'Absolute path to the Mazo research agent directory',
+    url: 'https://github.com/virattt/mazo',
+    placeholder: '/path/to/mazo-pantheon/mazo'
+  },
+  {
+    key: 'MAZO_TIMEOUT',
+    label: 'Mazo Timeout',
+    description: 'Timeout for Mazo queries in seconds',
+    url: 'https://github.com/virattt/mazo',
+    placeholder: '300'
+  },
+  {
+    key: 'DEFAULT_WORKFLOW_MODE',
+    label: 'Default Workflow Mode',
+    description: 'Default mode: signal, research, pre-research, post-research, full',
+    url: '#',
+    placeholder: 'full'
+  },
+  {
+    key: 'DEFAULT_RESEARCH_DEPTH',
+    label: 'Default Research Depth',
+    description: 'Default depth: quick, standard, deep',
+    url: '#',
+    placeholder: 'standard'
+  }
+];
+
+const SEARCH_API_KEYS: ApiKey[] = [
+  {
+    key: 'TAVILY_API_KEY',
+    label: 'Tavily API',
+    description: 'For real-time web search in Mazo research',
+    url: 'https://tavily.com/',
+    placeholder: 'your-tavily-api-key'
+  }
+];
+
 const LLM_API_KEYS: ApiKey[] = [
   {
     key: 'ANTHROPIC_API_KEY',
@@ -308,6 +380,30 @@ export function ApiKeysSettings() {
         'Configure custom API endpoints for OpenAI-compatible providers.',
         API_ENDPOINTS,
         <Globe className="h-4 w-4" />
+      )}
+
+      {/* Search API Keys */}
+      {renderApiKeySection(
+        'Web Search',
+        'API keys for real-time web search capabilities.',
+        SEARCH_API_KEYS,
+        <Globe className="h-4 w-4" />
+      )}
+
+      {/* Trading API Keys */}
+      {renderApiKeySection(
+        'Trading Integration',
+        'Configure Alpaca for paper or live trading.',
+        TRADING_API_KEYS,
+        <Key className="h-4 w-4" />
+      )}
+
+      {/* Mazo Configuration */}
+      {renderApiKeySection(
+        'Mazo Research Agent',
+        'Configuration for the Mazo research agent integration.',
+        MAZO_CONFIG,
+        <Key className="h-4 w-4" />
       )}
 
       {/* Security Note */}

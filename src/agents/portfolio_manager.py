@@ -256,7 +256,56 @@ def generate_trading_decision(
         default_factory=create_default_portfolio_output,
     )
 
-    # Merge prefilled holds with LLM results
+    # CRITICAL FIX: Validate and convert decisions immediately after call_llm returns
+    # Pydantic's with_structured_output can create a model with invalid data types
+    # (e.g., decisions as a list instead of dict[str, PortfolioDecision]).
+    # We must validate and convert BEFORE any serialization occurs.
+    validated_decisions = {}
+    
+    if isinstance(llm_out.decisions, list):
+        # Convert list to dict - assume list items are dicts with ticker keys
+        for item in llm_out.decisions:
+            if isinstance(item, dict):
+                ticker = item.get("ticker") or item.get("TICKER")
+                if ticker:
+                    try:
+                        validated_decisions[ticker] = PortfolioDecision(**item)
+                    except Exception:
+                        validated_decisions[ticker] = PortfolioDecision(
+                            action="hold", quantity=0, confidence=50, reasoning="Validation error"
+                        )
+    elif isinstance(llm_out.decisions, dict):
+        # Validate each decision value
+        for ticker, decision in llm_out.decisions.items():
+            if isinstance(decision, list):
+                if len(decision) > 0 and isinstance(decision[0], dict):
+                    try:
+                        validated_decisions[ticker] = PortfolioDecision(**decision[0])
+                    except Exception:
+                        validated_decisions[ticker] = PortfolioDecision(
+                            action="hold", quantity=0, confidence=50, reasoning="List conversion error"
+                        )
+                else:
+                    validated_decisions[ticker] = PortfolioDecision(
+                        action="hold", quantity=0, confidence=50, reasoning="Invalid list format"
+                    )
+            elif isinstance(decision, dict) and not isinstance(decision, PortfolioDecision):
+                try:
+                    validated_decisions[ticker] = PortfolioDecision(**decision)
+                except Exception:
+                    validated_decisions[ticker] = PortfolioDecision(
+                        action="hold", quantity=0, confidence=50, reasoning="Validation error"
+                    )
+            elif isinstance(decision, PortfolioDecision):
+                validated_decisions[ticker] = decision
+            else:
+                validated_decisions[ticker] = PortfolioDecision(
+                    action="hold", quantity=0, confidence=50, reasoning="Invalid decision type"
+                )
+    else:
+        validated_decisions = dict(prefilled_decisions)
+
+    # Merge prefilled holds with validated LLM results
     merged = dict(prefilled_decisions)
-    merged.update(llm_out.decisions)
+    merged.update(validated_decisions)
     return PortfolioManagerOutput(decisions=merged)

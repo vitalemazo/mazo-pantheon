@@ -30,7 +30,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from integration.mazo_bridge import MazoBridge, MazoResponse
 from integration.config import config
 from src.main import run_hedge_fund
-from src.trading.alpaca_service import AlpacaService, TradeResult
 
 
 class WorkflowMode(Enum):
@@ -59,17 +58,6 @@ class AgentSignal:
 
 
 @dataclass
-class TradeExecution:
-    """Trade execution result"""
-    action: str
-    quantity: int
-    executed: bool = False
-    order_id: Optional[str] = None
-    filled_price: Optional[float] = None
-    error: Optional[str] = None
-
-
-@dataclass
 class UnifiedResult:
     """Combined result from both systems"""
     ticker: str
@@ -78,14 +66,13 @@ class UnifiedResult:
     agent_signals: List[AgentSignal] = field(default_factory=list)
     research_report: Optional[str] = None
     recommendations: List[str] = field(default_factory=list)
-    trade: Optional[TradeExecution] = None
     workflow_mode: str = "full"
     execution_time: float = 0.0
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
-        result = {
+        return {
             "ticker": self.ticker,
             "signal": self.signal,
             "confidence": self.confidence,
@@ -96,9 +83,6 @@ class UnifiedResult:
             "execution_time": self.execution_time,
             "timestamp": self.timestamp,
         }
-        if self.trade:
-            result["trade"] = asdict(self.trade)
-        return result
 
     def to_markdown(self) -> str:
         """Convert to markdown report"""
@@ -583,131 +567,6 @@ Analyze {ticker} covering:
         ]
 
 
-def execute_trades(results: List[UnifiedResult], dry_run: bool = False) -> List[UnifiedResult]:
-    """
-    Execute trades based on analysis results.
-
-    Args:
-        results: List of UnifiedResult with trading decisions
-        dry_run: If True, show what would be traded without executing
-
-    Returns:
-        Updated results with trade execution details
-    """
-    try:
-        alpaca = AlpacaService()
-        account = alpaca.get_account()
-
-        print(f"\n{'='*60}")
-        print("ALPACA TRADING EXECUTION")
-        print(f"{'='*60}")
-        print(f"Account Status: {account.status}")
-        print(f"Mode: {'PAPER' if alpaca.paper else 'LIVE'}")
-        # Handle both string and numeric types for buying_power and cash
-        buying_power = float(account.buying_power) if isinstance(account.buying_power, str) else account.buying_power
-        cash = float(account.cash) if isinstance(account.cash, str) else account.cash
-        print(f"Buying Power: ${buying_power:,.2f}")
-        print(f"Cash: ${cash:,.2f}")
-        print(f"{'='*60}\n")
-
-        for result in results:
-            # Extract trading decision from recommendations
-            action = "hold"
-            quantity = 0
-
-            for rec in result.recommendations:
-                if rec.lower().startswith("recommended action:"):
-                    parts = rec.split(":")
-                    if len(parts) > 1:
-                        action_parts = parts[1].strip().split()
-                        if len(action_parts) >= 2:
-                            action = action_parts[0].lower()
-                            try:
-                                quantity = int(action_parts[1])
-                            except ValueError:
-                                pass
-
-            if action == "hold" or quantity <= 0:
-                print(f"[{result.ticker}] HOLD - No trade executed")
-                result.trade = TradeExecution(
-                    action="hold",
-                    quantity=0,
-                    executed=False
-                )
-                continue
-
-            if dry_run:
-                print(f"[{result.ticker}] DRY RUN: Would {action.upper()} {quantity} shares")
-                result.trade = TradeExecution(
-                    action=action,
-                    quantity=quantity,
-                    executed=False,
-                    error="Dry run - no trade executed"
-                )
-                continue
-
-            # Execute the trade
-            print(f"[{result.ticker}] Executing: {action.upper()} {quantity} shares...")
-            trade_result = alpaca.execute_decision(
-                symbol=result.ticker,
-                action=action,
-                quantity=quantity
-            )
-
-            if trade_result.success:
-                order = trade_result.order
-                print(f"[{result.ticker}] SUCCESS: Order {order.id if order else 'submitted'}")
-                result.trade = TradeExecution(
-                    action=action,
-                    quantity=quantity,
-                    executed=True,
-                    order_id=order.id if order else None,
-                    filled_price=order.filled_avg_price if order else None
-                )
-            else:
-                print(f"[{result.ticker}] FAILED: {trade_result.error}")
-                result.trade = TradeExecution(
-                    action=action,
-                    quantity=quantity,
-                    executed=False,
-                    error=trade_result.error
-                )
-
-        # Show final positions
-        print(f"\n{'='*60}")
-        print("CURRENT POSITIONS")
-        print(f"{'='*60}")
-        positions = alpaca.get_positions()
-        if positions:
-            for pos in positions:
-                # Handle both string and numeric types
-                qty = float(pos.qty) if isinstance(pos.qty, str) else pos.qty
-                avg_entry = float(pos.avg_entry_price) if isinstance(pos.avg_entry_price, str) else pos.avg_entry_price
-                current_price = float(pos.current_price) if isinstance(pos.current_price, str) else pos.current_price
-                unrealized_pl = float(pos.unrealized_pl) if isinstance(pos.unrealized_pl, str) else pos.unrealized_pl
-                unrealized_plpc = float(pos.unrealized_plpc) if isinstance(pos.unrealized_plpc, str) else pos.unrealized_plpc
-                
-                pl_pct = unrealized_plpc * 100
-                pl_sign = "+" if unrealized_pl >= 0 else ""
-                print(f"  {pos.symbol}: {qty} shares @ ${avg_entry:.2f}")
-                print(f"    Current: ${current_price:.2f} | P/L: {pl_sign}${unrealized_pl:.2f} ({pl_sign}{pl_pct:.1f}%)")
-        else:
-            print("  No open positions")
-        print(f"{'='*60}\n")
-
-    except Exception as e:
-        print(f"\nERROR connecting to Alpaca: {e}")
-        for result in results:
-            result.trade = TradeExecution(
-                action="error",
-                quantity=0,
-                executed=False,
-                error=str(e)
-            )
-
-    return results
-
-
 def main():
     """CLI entry point"""
     parser = argparse.ArgumentParser(
@@ -747,16 +606,6 @@ def main():
         default=None,
         help="Output file path (optional)"
     )
-    parser.add_argument(
-        "--execute",
-        action="store_true",
-        help="Execute trades on Alpaca (paper trading by default)"
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what trades would be executed without actually trading"
-    )
 
     args = parser.parse_args()
 
@@ -769,10 +618,6 @@ def main():
         mode=WorkflowMode(args.mode),
         research_depth=ResearchDepth(args.depth)
     )
-
-    # Execute trades if requested
-    if args.execute or args.dry_run:
-        results = execute_trades(results, dry_run=args.dry_run)
 
     # Output results
     if args.output == "json":
@@ -792,21 +637,6 @@ def main():
                 print(f"\nAGENT SIGNALS:")
                 for agent in result.agent_signals:
                     print(f"  - {agent.agent_name}: {agent.signal} ({agent.confidence:.0f}%)")
-
-            if result.trade:
-                print(f"\nTRADE EXECUTION:")
-                if result.trade.executed:
-                    print(f"  Status: EXECUTED")
-                    print(f"  Action: {result.trade.action.upper()} {result.trade.quantity} shares")
-                    if result.trade.order_id:
-                        print(f"  Order ID: {result.trade.order_id}")
-                    if result.trade.filled_price:
-                        print(f"  Filled Price: ${result.trade.filled_price:.2f}")
-                else:
-                    print(f"  Status: NOT EXECUTED")
-                    print(f"  Action: {result.trade.action.upper()} {result.trade.quantity} shares")
-                    if result.trade.error:
-                        print(f"  Reason: {result.trade.error}")
 
             if result.research_report:
                 print(f"\nRESEARCH REPORT:")
