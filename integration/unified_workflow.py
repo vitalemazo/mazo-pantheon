@@ -58,6 +58,17 @@ class AgentSignal:
 
 
 @dataclass
+class TradeResult:
+    """Result of a trade execution"""
+    action: str  # buy, sell, hold
+    quantity: int = 0
+    executed: bool = False
+    order_id: Optional[str] = None
+    filled_price: Optional[float] = None
+    error: Optional[str] = None
+
+
+@dataclass
 class UnifiedResult:
     """Combined result from both systems"""
     ticker: str
@@ -66,6 +77,7 @@ class UnifiedResult:
     agent_signals: List[AgentSignal] = field(default_factory=list)
     research_report: Optional[str] = None
     recommendations: List[str] = field(default_factory=list)
+    trade: Optional[TradeResult] = None
     workflow_mode: str = "full"
     execution_time: float = 0.0
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -79,6 +91,7 @@ class UnifiedResult:
             "agent_signals": [asdict(s) for s in self.agent_signals],
             "research_report": self.research_report,
             "recommendations": self.recommendations,
+            "trade": asdict(self.trade) if self.trade else None,
             "workflow_mode": self.workflow_mode,
             "execution_time": self.execution_time,
             "timestamp": self.timestamp,
