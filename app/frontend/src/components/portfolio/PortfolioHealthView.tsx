@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { usePortfolioHealth } from '@/contexts/portfolio-health-context';
 import { 
   RefreshCw, 
   TrendingUp, 
@@ -17,44 +18,6 @@ import {
   Target,
   Zap
 } from 'lucide-react';
-
-interface Position {
-  symbol: string;
-  qty: number;
-  market_value: number;
-  unrealized_pl: number;
-  unrealized_plpc: number;
-  avg_entry_price: number;
-  current_price: number;
-}
-
-interface PendingOrder {
-  id: string;
-  symbol: string;
-  side: string;
-  qty: number;
-  type: string;
-  status: string;
-  created_at: string;
-}
-
-interface PortfolioData {
-  equity: number;
-  cash: number;
-  buying_power: number;
-  portfolio_value: number;
-}
-
-interface HealthCheckResult {
-  success: boolean;
-  execution_time_ms: number;
-  portfolio: PortfolioData;
-  positions: Position[];
-  pending_orders: PendingOrder[];
-  analysis: string;
-  confidence: number;
-  error: string | null;
-}
 
 function getGradeColor(grade: string): string {
   if (grade.startsWith('A')) return 'text-emerald-400';
@@ -100,40 +63,21 @@ function formatPercent(value: number): string {
 }
 
 export function PortfolioHealthView() {
-  const [healthData, setHealthData] = useState<HealthCheckResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  // Use the context - data persists across tab switches!
+  const { 
+    healthData, 
+    loading, 
+    error, 
+    lastRefresh, 
+    runHealthCheck 
+  } = usePortfolioHealth();
 
-  const runHealthCheck = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    
-    try {
-      const response = await fetch('http://localhost:8000/unified-workflow/portfolio-health-check', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Health check failed: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      setHealthData(data);
-      setLastRefresh(new Date());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to run health check');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // Auto-run on mount
+  // Only auto-run if we don't have cached data
   useEffect(() => {
-    runHealthCheck();
-  }, [runHealthCheck]);
+    if (!healthData && !loading) {
+      runHealthCheck();
+    }
+  }, []); // Empty deps - only run once on initial mount if no data
 
   const grade = healthData ? extractGrade(healthData.analysis) : '?';
   const riskLevel = healthData ? extractRiskLevel(healthData.analysis) : 'UNKNOWN';
@@ -155,6 +99,10 @@ export function PortfolioHealthView() {
             {lastRefresh && (
               <span className="text-xs text-slate-500">
                 Last updated: {lastRefresh.toLocaleTimeString()}
+                {/* Show how long ago the data was fetched */}
+                <span className="ml-2 text-slate-600">
+                  (cached - click refresh to update)
+                </span>
               </span>
             )}
             <Button 

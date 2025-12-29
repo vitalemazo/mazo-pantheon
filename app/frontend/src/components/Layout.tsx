@@ -8,6 +8,7 @@ import { FlowProvider, useFlowContext } from '@/contexts/flow-context';
 import { LayoutProvider, useLayoutContext } from '@/contexts/layout-context';
 import { TabsProvider, useTabsContext } from '@/contexts/tabs-context';
 import { WorkflowProvider } from '@/contexts/workflow-context';
+import { PortfolioHealthProvider } from '@/contexts/portfolio-health-context';
 import { useLayoutKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts';
 import { cn } from '@/lib/utils';
 import { SidebarStorageService } from '@/services/sidebar-storage';
@@ -201,9 +202,11 @@ export function Layout({ children }: LayoutProps) {
         <FlowProvider>
           <TabsProvider>
             <WorkflowProvider>
-              <LayoutProvider>
-                <LayoutContent>{children}</LayoutContent>
-              </LayoutProvider>
+              <PortfolioHealthProvider>
+                <LayoutProvider>
+                  <LayoutContent>{children}</LayoutContent>
+                </LayoutProvider>
+              </PortfolioHealthProvider>
             </WorkflowProvider>
           </TabsProvider>
         </FlowProvider>
