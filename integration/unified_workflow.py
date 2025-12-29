@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from integration.mazo_bridge import MazoBridge, MazoResponse
 from integration.config import config
 from src.main import run_hedge_fund
+from src.trading.alpaca_service import AlpacaService, OrderSide, OrderType
 
 
 class WorkflowMode(Enum):
@@ -588,6 +589,124 @@ Analyze {ticker} covering:
             "Review Mazo research report for detailed analysis",
             "Consider the key risks and opportunities identified"
         ]
+
+
+def execute_trades(
+    results: List[UnifiedResult],
+    dry_run: bool = True
+) -> List[UnifiedResult]:
+    """
+    Execute trades based on workflow results using Alpaca.
+    
+    Args:
+        results: List of UnifiedResult objects with trading recommendations
+        dry_run: If True, don't actually execute trades (just simulate)
+    
+    Returns:
+        Updated list of UnifiedResult with trade execution details
+    """
+    if dry_run:
+        print("[Trade Execution] DRY RUN - No actual trades will be placed")
+    else:
+        print("[Trade Execution] LIVE MODE - Placing trades on Alpaca")
+    
+    try:
+        # Initialize Alpaca service (will use paper trading by default)
+        alpaca = AlpacaService(paper=True)
+        
+        # Verify connection
+        account = alpaca.get_account()
+        print(f"  Connected to Alpaca: ${float(account.buying_power):,.2f} buying power")
+    except Exception as e:
+        print(f"  ❌ Failed to connect to Alpaca: {e}")
+        # Mark all results with error
+        for result in results:
+            result.trade = TradeResult(
+                action="none",
+                quantity=0,
+                executed=False,
+                error=f"Alpaca connection failed: {str(e)}"
+            )
+        return results
+    
+    for result in results:
+        ticker = result.ticker
+        
+        # Extract trading decision from recommendations
+        action = "hold"
+        quantity = 0
+        
+        for rec in result.recommendations:
+            if "Recommended action:" in rec:
+                parts = rec.replace("Recommended action:", "").strip().split()
+                if parts:
+                    action = parts[0].lower()
+                    if len(parts) >= 2:
+                        try:
+                            quantity = int(parts[1])
+                        except ValueError:
+                            quantity = 0
+                break
+        
+        print(f"  [{ticker}] Action: {action.upper()} {quantity} shares")
+        
+        if action == "hold" or quantity == 0:
+            result.trade = TradeResult(
+                action=action,
+                quantity=quantity,
+                executed=False,
+                error=None
+            )
+            print(f"    → No trade needed (hold or zero quantity)")
+            continue
+        
+        if dry_run:
+            # Simulate the trade
+            result.trade = TradeResult(
+                action=action,
+                quantity=quantity,
+                executed=False,
+                order_id=f"DRY_RUN_{ticker}_{action}_{quantity}",
+                error=None
+            )
+            print(f"    → DRY RUN: Would {action} {quantity} shares of {ticker}")
+        else:
+            # Execute the actual trade
+            try:
+                trade_result = alpaca.execute_decision(
+                    symbol=ticker,
+                    action=action,
+                    quantity=quantity
+                )
+                
+                if trade_result.success:
+                    result.trade = TradeResult(
+                        action=action,
+                        quantity=quantity,
+                        executed=True,
+                        order_id=trade_result.order.id if trade_result.order else None,
+                        filled_price=float(trade_result.order.filled_avg_price) if trade_result.order and trade_result.order.filled_avg_price else None,
+                        error=None
+                    )
+                    print(f"    ✅ Order placed: {trade_result.message}")
+                else:
+                    result.trade = TradeResult(
+                        action=action,
+                        quantity=quantity,
+                        executed=False,
+                        error=trade_result.message
+                    )
+                    print(f"    ❌ Order failed: {trade_result.message}")
+            except Exception as e:
+                result.trade = TradeResult(
+                    action=action,
+                    quantity=quantity,
+                    executed=False,
+                    error=str(e)
+                )
+                print(f"    ❌ Exception: {e}")
+    
+    return results
 
 
 def main():
