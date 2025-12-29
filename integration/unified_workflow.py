@@ -65,12 +65,17 @@ class AgentSignal:
 @dataclass
 class TradeResult:
     """Result of a trade execution"""
-    action: str  # buy, sell, hold
+    action: str  # buy, sell, hold, short, cover, reduce_long, reduce_short
     quantity: int = 0
     executed: bool = False
     order_id: Optional[str] = None
     filled_price: Optional[float] = None
     error: Optional[str] = None
+    # Risk management targets
+    stop_loss_pct: Optional[float] = None
+    take_profit_pct: Optional[float] = None
+    stop_loss_price: Optional[float] = None  # Calculated from entry price
+    take_profit_price: Optional[float] = None  # Calculated from entry price
 
 
 @dataclass
@@ -86,6 +91,8 @@ class UnifiedResult:
     workflow_mode: str = "full"
     execution_time: float = 0.0
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    # Raw PM decision for trade execution
+    pm_decision: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -100,6 +107,7 @@ class UnifiedResult:
             "workflow_mode": self.workflow_mode,
             "execution_time": self.execution_time,
             "timestamp": self.timestamp,
+            "pm_decision": self.pm_decision,
         }
 
     def to_markdown(self) -> str:
@@ -487,9 +495,11 @@ class UnifiedWorkflow:
 
         # Build recommendations from the decision
         recommendations = []
+        pm_decision = None
         decisions = raw_result.get('decisions', {})
         if decisions and ticker in decisions:
             decision = decisions[ticker]
+            pm_decision = decision  # Store full decision for trade execution
             action = decision.get('action', 'hold')
             quantity = decision.get('quantity', 0)
             recommendations.append(f"Recommended action: {action.upper()} {quantity} shares")
@@ -500,7 +510,8 @@ class UnifiedWorkflow:
             signal=signal,
             confidence=confidence,
             agent_signals=agent_signals,
-            recommendations=recommendations
+            recommendations=recommendations,
+            pm_decision=pm_decision
         )
 
     def _research_only(
@@ -543,9 +554,11 @@ class UnifiedWorkflow:
 
         # Build recommendations
         recommendations = []
+        pm_decision = None
         decisions = raw_result.get('decisions', {})
         if decisions and ticker in decisions:
             decision = decisions[ticker]
+            pm_decision = decision  # Store full decision for trade execution
             action = decision.get('action', 'hold')
             quantity = decision.get('quantity', 0)
             recommendations.append(f"Recommended action: {action.upper()} {quantity} shares")
@@ -557,7 +570,8 @@ class UnifiedWorkflow:
             confidence=confidence,
             agent_signals=agent_signals,
             research_report=research.answer,
-            recommendations=recommendations
+            recommendations=recommendations,
+            pm_decision=pm_decision
         )
 
     def _post_research_flow(
@@ -594,8 +608,10 @@ class UnifiedWorkflow:
 
         # Build recommendations
         recommendations = []
+        pm_decision = None
         if decisions and ticker in decisions:
             decision = decisions[ticker]
+            pm_decision = decision  # Store full decision for trade execution
             action = decision.get('action', 'hold')
             quantity = decision.get('quantity', 0)
             recommendations.append(f"Recommended action: {action.upper()} {quantity} shares")
@@ -608,7 +624,8 @@ class UnifiedWorkflow:
             confidence=confidence,
             agent_signals=agent_signals,
             research_report=research.answer,
-            recommendations=recommendations
+            recommendations=recommendations,
+            pm_decision=pm_decision
         )
 
     def _full_flow(
@@ -669,10 +686,12 @@ class UnifiedWorkflow:
 {deep_research.answer}
 """
 
-        # Build recommendations
+        # Build recommendations and extract PM decision
         recommendations = []
+        pm_decision = None
         if decisions and ticker in decisions:
             decision = decisions[ticker]
+            pm_decision = decision  # Store full decision for trade execution
             action = decision.get('action', 'hold')
             quantity = decision.get('quantity', 0)
             recommendations.append(f"Recommended action: {action.upper()} {quantity} shares")
@@ -685,7 +704,8 @@ class UnifiedWorkflow:
             confidence=confidence,
             agent_signals=agent_signals,
             research_report=full_report,
-            recommendations=recommendations
+            recommendations=recommendations,
+            pm_decision=pm_decision
         )
 
     def _build_research_query(self, ticker: str, depth: ResearchDepth) -> str:
@@ -789,23 +809,38 @@ def execute_trades(
     for result in results:
         ticker = result.ticker
         
-        # Extract trading decision from recommendations
+        # Extract trading decision from pm_decision if available, else from recommendations
         action = "hold"
         quantity = 0
+        stop_loss_pct = None
+        take_profit_pct = None
         
-        for rec in result.recommendations:
-            if "Recommended action:" in rec:
-                parts = rec.replace("Recommended action:", "").strip().split()
-                if parts:
-                    action = parts[0].lower()
-                    if len(parts) >= 2:
-                        try:
-                            quantity = int(parts[1])
-                        except ValueError:
-                            quantity = 0
-                break
+        if result.pm_decision:
+            # Use structured PM decision data
+            action = result.pm_decision.get("action", "hold").lower()
+            quantity = result.pm_decision.get("quantity", 0)
+            stop_loss_pct = result.pm_decision.get("stop_loss_pct")
+            take_profit_pct = result.pm_decision.get("take_profit_pct")
+        else:
+            # Fallback: parse from recommendations string
+            for rec in result.recommendations:
+                if "Recommended action:" in rec:
+                    parts = rec.replace("Recommended action:", "").strip().split()
+                    if parts:
+                        action = parts[0].lower()
+                        if len(parts) >= 2:
+                            try:
+                                quantity = int(parts[1])
+                            except ValueError:
+                                quantity = 0
+                    break
         
-        print(f"  [{ticker}] Action: {action.upper()} {quantity} shares")
+        # Log the decision with risk targets
+        risk_info = ""
+        if stop_loss_pct or take_profit_pct:
+            risk_info = f" | SL: {stop_loss_pct}%" if stop_loss_pct else ""
+            risk_info += f" | TP: {take_profit_pct}%" if take_profit_pct else ""
+        print(f"  [{ticker}] Action: {action.upper()} {quantity} shares{risk_info}")
         
         # Handle CANCEL action - cancel all pending orders for this ticker
         if action == "cancel":
@@ -1035,6 +1070,33 @@ def execute_trades(
             # No position exists, which is fine
             pass
         
+        # Get current price for stop/take profit calculations
+        current_price = None
+        try:
+            quote = alpaca.get_quote(ticker)
+            if quote:
+                current_price = float(quote.ask_price) if action in ["buy", "cover"] else float(quote.bid_price)
+        except:
+            pass
+        
+        # Calculate stop-loss and take-profit prices
+        stop_loss_price = None
+        take_profit_price = None
+        if current_price and stop_loss_pct:
+            if action in ["buy", "long"]:
+                stop_loss_price = current_price * (1 - stop_loss_pct / 100)
+            elif action in ["short"]:
+                stop_loss_price = current_price * (1 + stop_loss_pct / 100)
+        if current_price and take_profit_pct:
+            if action in ["buy", "long"]:
+                take_profit_price = current_price * (1 + take_profit_pct / 100)
+            elif action in ["short"]:
+                take_profit_price = current_price * (1 - take_profit_pct / 100)
+        
+        if stop_loss_price or take_profit_price:
+            print(f"    📊 Risk targets: SL=${stop_loss_price:.2f}" if stop_loss_price else "", end="")
+            print(f" | TP=${take_profit_price:.2f}" if take_profit_price else "")
+        
         if dry_run:
             # Simulate the trade
             result.trade = TradeResult(
@@ -1042,7 +1104,11 @@ def execute_trades(
                 quantity=quantity,
                 executed=False,
                 order_id=f"DRY_RUN_{ticker}_{action}_{quantity}",
-                error=None
+                error=None,
+                stop_loss_pct=stop_loss_pct,
+                take_profit_pct=take_profit_pct,
+                stop_loss_price=stop_loss_price,
+                take_profit_price=take_profit_price
             )
             print(f"    → DRY RUN: Would {action} {quantity} shares of {ticker}")
         else:
@@ -1055,15 +1121,30 @@ def execute_trades(
                 )
                 
                 if trade_result.success:
+                    filled_price = float(trade_result.order.filled_avg_price) if trade_result.order and trade_result.order.filled_avg_price else current_price
+                    
+                    # Recalculate risk prices based on actual fill price
+                    if filled_price:
+                        if stop_loss_pct:
+                            stop_loss_price = filled_price * (1 - stop_loss_pct / 100) if action in ["buy"] else filled_price * (1 + stop_loss_pct / 100)
+                        if take_profit_pct:
+                            take_profit_price = filled_price * (1 + take_profit_pct / 100) if action in ["buy"] else filled_price * (1 - take_profit_pct / 100)
+                    
                     result.trade = TradeResult(
                         action=action,
                         quantity=quantity,
                         executed=True,
                         order_id=trade_result.order.id if trade_result.order else None,
-                        filled_price=float(trade_result.order.filled_avg_price) if trade_result.order and trade_result.order.filled_avg_price else None,
-                        error=None
+                        filled_price=filled_price,
+                        error=None,
+                        stop_loss_pct=stop_loss_pct,
+                        take_profit_pct=take_profit_pct,
+                        stop_loss_price=stop_loss_price,
+                        take_profit_price=take_profit_price
                     )
                     print(f"    ✅ Order placed: {trade_result.message}")
+                    if stop_loss_price or take_profit_price:
+                        print(f"    📊 Risk targets set: SL=${stop_loss_price:.2f if stop_loss_price else 'N/A'} | TP=${take_profit_price:.2f if take_profit_price else 'N/A'}")
                 else:
                     # Include full error details
                     full_error = trade_result.error or trade_result.message

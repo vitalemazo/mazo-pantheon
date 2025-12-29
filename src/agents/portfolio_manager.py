@@ -18,6 +18,9 @@ class PortfolioDecision(BaseModel):
     reasoning: str = Field(description="Reasoning for the decision")
     # Optional rebalancing context
     rebalance_target: str | None = Field(default=None, description="If reducing to make room for another ticker")
+    # Risk management targets (optional)
+    stop_loss_pct: float | None = Field(default=None, description="Stop loss as % from entry (e.g., 5.0 = 5% loss)")
+    take_profit_pct: float | None = Field(default=None, description="Take profit as % from entry (e.g., 10.0 = 10% gain)")
 
 
 class PortfolioManagerOutput(BaseModel):
@@ -385,7 +388,12 @@ def generate_trading_decision(
             "- reduce_short: PARTIAL cover of short (keep some shares, reduce concentration)\n"
             "- hold: NO TRADE (only use if truly 50/50 split)\n"
             "- cancel: Cancel pending orders\n\n"
-            "Return JSON only. For reduce_long/reduce_short, quantity = shares to REMOVE from position."
+            "RISK MANAGEMENT (for new positions):\n"
+            "- stop_loss_pct: Set a stop loss as % from entry (typically 3-8% for paper trading)\n"
+            "- take_profit_pct: Set a profit target as % from entry (typically 5-15%)\n"
+            "- For SHORTS: stop_loss triggers if price goes UP by X%, take_profit if price goes DOWN\n"
+            "- For LONGS: stop_loss triggers if price goes DOWN by X%, take_profit if price goes UP\n\n"
+            "Return JSON only. Include stop_loss_pct and take_profit_pct for new positions."
         )
     else:
         system_prompt = (
@@ -407,8 +415,12 @@ def generate_trading_decision(
             "- reduce_short: PARTIAL cover (keep some shares)\n"
             "- hold: No action\n"
             "- cancel: Cancel pending orders\n\n"
+            "RISK MANAGEMENT (REQUIRED for new positions with real money):\n"
+            "- stop_loss_pct: Set a stop loss as % from entry (typically 2-5% for real money)\n"
+            "- take_profit_pct: Set a profit target as % from entry (typically 5-10%)\n"
+            "- Always set these for new buy/short positions to limit downside risk\n\n"
             "Inputs: analyst signals, current positions, Mazo research (if any), and allowed actions with max qty.\n"
-            "Pick one action per ticker. Quantity must be ≤ max shown (0 for cancel/hold).\n"
+            "Pick one action per ticker. Include stop_loss_pct and take_profit_pct for new positions.\n"
             "Keep reasoning concise (max 150 chars). Return JSON only."
         )
     
@@ -429,11 +441,11 @@ def generate_trading_decision(
                 "3. If majority BULLISH + no position → 'buy'\n"
                 "4. If position exists + signal agrees → hold or add\n"
                 "5. quantity=0 only for hold/cancel\n\n"
-                "JSON Format (include rebalance_target if reducing to fund another ticker):\n"
+                "JSON Format (include risk targets for new positions):\n"
                 "{{\n"
                 '  "decisions": {{\n'
-                '    "AAPL": {{"action":"reduce_short","quantity":5,"confidence":70,"reasoning":"50%→25% to fund MSFT","rebalance_target":"MSFT"}},\n'
-                '    "MSFT": {{"action":"short","quantity":3,"confidence":65,"reasoning":"10/18 bearish - testing thesis","rebalance_target":null}}\n'
+                '    "AAPL": {{"action":"reduce_short","quantity":5,"confidence":70,"reasoning":"50%→25% to fund MSFT","rebalance_target":"MSFT","stop_loss_pct":null,"take_profit_pct":null}},\n'
+                '    "MSFT": {{"action":"short","quantity":3,"confidence":65,"reasoning":"bearish thesis","rebalance_target":null,"stop_loss_pct":5.0,"take_profit_pct":10.0}}\n'
                 "  }}\n"
                 "}}"
             ),
