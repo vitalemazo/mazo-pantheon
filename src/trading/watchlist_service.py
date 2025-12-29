@@ -5,7 +5,7 @@ Manages trading watchlists with entry targets, stop-losses, and automatic monito
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 
@@ -112,7 +112,9 @@ class WatchlistService:
         """
         # Get current price if no entry target
         if entry_target is None:
-            prices = get_prices(ticker, limit=1)
+            end = date.today()
+            start = end - timedelta(days=5)
+            prices = get_prices(ticker, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
             if prices:
                 current_price = prices[-1].close
                 # Default to 2% below current for buying
@@ -250,7 +252,9 @@ class WatchlistService:
             
             try:
                 # Get current price
-                prices = get_prices(item.ticker, limit=1)
+                end = date.today()
+                start = end - timedelta(days=5)
+                prices = get_prices(item.ticker, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
                 if not prices:
                     continue
                 
@@ -269,8 +273,10 @@ class WatchlistService:
                         
                 elif item.entry_condition == "breakout":
                     # Check for 20-day high breakout
-                    prices_20 = get_prices(item.ticker, limit=20)
+                    start_20 = end - timedelta(days=30)
+                    prices_20 = get_prices(item.ticker, start_20.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
                     if prices_20:
+                        prices_20 = prices_20[-20:]  # Get last 20
                         high_20 = max(p.high for p in prices_20[:-1])
                         if current_price > high_20:
                             is_triggered = True
@@ -303,7 +309,9 @@ class WatchlistService:
                 signals = self.strategy_engine.analyze_ticker(item.ticker)
                 
                 # Get current price
-                prices = get_prices(item.ticker, limit=1)
+                end = date.today()
+                start = end - timedelta(days=5)
+                prices = get_prices(item.ticker, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
                 current_price = prices[-1].close if prices else None
                 
                 results.append({

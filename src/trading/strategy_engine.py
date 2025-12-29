@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 import statistics
 
+from datetime import date
 from src.tools.api import get_prices, get_financial_metrics
 from src.trading.alpaca_service import AlpacaService
 
@@ -106,10 +107,13 @@ class BaseStrategy:
     
     def _get_price_data(self, ticker: str, days: int = 20) -> List[float]:
         """Get recent closing prices."""
-        prices = get_prices(ticker, limit=days)
+        end = date.today()
+        start = end - timedelta(days=days + 10)  # Extra buffer for weekends/holidays
+        prices = get_prices(ticker, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
         if not prices:
             return []
-        return [p.close for p in prices]
+        # Return most recent 'days' prices
+        return [p.close for p in prices[-days:]]
     
     def _calculate_sma(self, prices: List[float], period: int) -> Optional[float]:
         """Calculate Simple Moving Average."""
@@ -181,9 +185,12 @@ class BaseStrategy:
     
     def _calculate_atr(self, ticker: str, period: int = 14) -> Optional[float]:
         """Calculate Average True Range for volatility."""
-        prices = get_prices(ticker, limit=period + 1)
+        end = date.today()
+        start = end - timedelta(days=period + 15)  # Extra buffer
+        prices = get_prices(ticker, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
         if not prices or len(prices) < period + 1:
             return None
+        prices = prices[-(period + 1):]  # Take most recent
         
         true_ranges = []
         for i in range(1, len(prices)):
@@ -229,10 +236,13 @@ class MomentumStrategy(BaseStrategy):
     
     def analyze(self, ticker: str) -> Optional[TradingSignal]:
         """Analyze ticker for momentum signals."""
-        prices = get_prices(ticker, limit=self.lookback_period + 5)
+        end = date.today()
+        start = end - timedelta(days=self.lookback_period + 15)
+        prices = get_prices(ticker, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
         
         if not prices or len(prices) < self.lookback_period:
             return None
+        prices = prices[-(self.lookback_period + 5):]  # Take most recent
         
         # Calculate momentum
         current_price = prices[-1].close
@@ -349,10 +359,13 @@ class MeanReversionStrategy(BaseStrategy):
     
     def analyze(self, ticker: str) -> Optional[TradingSignal]:
         """Analyze ticker for mean reversion signals."""
-        prices_data = get_prices(ticker, limit=self.bb_period + 5)
+        end = date.today()
+        start = end - timedelta(days=self.bb_period + 15)
+        prices_data = get_prices(ticker, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
         
         if not prices_data or len(prices_data) < self.bb_period:
             return None
+        prices_data = prices_data[-(self.bb_period + 5):]  # Take most recent
         
         prices = [p.close for p in prices_data]
         current_price = prices[-1]
@@ -461,10 +474,13 @@ class TrendFollowingStrategy(BaseStrategy):
     
     def analyze(self, ticker: str) -> Optional[TradingSignal]:
         """Analyze ticker for trend following signals."""
-        prices_data = get_prices(ticker, limit=self.long_ma_period + 10)
+        end = date.today()
+        start = end - timedelta(days=self.long_ma_period + 30)
+        prices_data = get_prices(ticker, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
         
         if not prices_data or len(prices_data) < self.long_ma_period:
             return None
+        prices_data = prices_data[-(self.long_ma_period + 10):]  # Take most recent
         
         prices = [p.close for p in prices_data]
         current_price = prices[-1]
