@@ -48,7 +48,7 @@ export function TabContent({ className }: TabContentProps) {
         <div className="text-center space-y-4">
           <FolderOpen size={48} className="mx-auto text-muted-foreground/50" />
           <div>
-            <div className="text-xl font-medium mb-2">Welcome to the AI Hedge Fund</div>
+            <div className="text-xl font-medium mb-2">Welcome to Mazo Pantheon</div>
             <div className="text-sm max-w-md">
               Create a flow from the left sidebar (⌘B) to open it in a tab, or open settings (⌘,) to configure your preferences.
             </div>

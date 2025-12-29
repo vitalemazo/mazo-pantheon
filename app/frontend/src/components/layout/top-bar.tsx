@@ -126,7 +126,7 @@ export function TopBar({
           </TooltipTrigger>
           <TooltipContent side="bottom" className="flex flex-col gap-0.5">
             <span className="font-medium">Unified Workflow</span>
-            <span className="text-xs text-muted-foreground">AI Hedge Fund + Mazo research</span>
+            <span className="text-xs text-muted-foreground">Mazo Pantheon</span>
           </TooltipContent>
         </Tooltip>
 
