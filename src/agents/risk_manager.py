@@ -15,6 +15,11 @@ def risk_management_agent(state: AgentState, agent_id: str = "risk_management_ag
     tickers = data["tickers"]
     api_key = get_api_key_from_state(state, "FINANCIAL_DATASETS_API_KEY")
     
+    # Check if we're in paper trading mode (more aggressive position sizing)
+    paper_trading = portfolio.get("paper_trading", False)
+    if paper_trading:
+        progress.update_status(agent_id, None, "📝 PAPER MODE: Using aggressive position limits")
+    
     # Initialize risk analysis for each ticker
     risk_analysis = {}
     current_prices = {}  # Store prices here to avoid redundant API calls
@@ -126,9 +131,10 @@ def risk_management_agent(state: AgentState, agent_id: str = "risk_management_ag
         short_value = position.get("short", 0) * current_price
         current_position_value = abs(long_value - short_value)  # Use absolute exposure
         
-        # Volatility-adjusted limit pct
+        # Volatility-adjusted limit pct (more aggressive for paper trading)
         vol_adjusted_limit_pct = calculate_volatility_adjusted_limit(
-            vol_data.get("annualized_volatility", 0.25)
+            vol_data.get("annualized_volatility", 0.25),
+            paper_trading=paper_trading
         )
 
         # Correlation adjustment
@@ -267,33 +273,52 @@ def calculate_volatility_metrics(prices_df: pd.DataFrame, lookback_days: int = 6
     }
 
 
-def calculate_volatility_adjusted_limit(annualized_volatility: float) -> float:
+def calculate_volatility_adjusted_limit(annualized_volatility: float, paper_trading: bool = False) -> float:
     """
     Calculate position limit as percentage of portfolio based on volatility.
     
-    Logic:
+    For LIVE Trading:
     - Low volatility (<15%): Up to 25% allocation
     - Medium volatility (15-30%): 15-20% allocation  
     - High volatility (>30%): 10-15% allocation
     - Very high volatility (>50%): Max 10% allocation
+    
+    For PAPER Trading (more aggressive):
+    - Low volatility (<15%): Up to 50% allocation
+    - Medium volatility (15-30%): 35-40% allocation  
+    - High volatility (>30%): 25-30% allocation
+    - Very high volatility (>50%): Max 20% allocation
     """
-    base_limit = 0.20  # 20% baseline
-    
-    if annualized_volatility < 0.15:  # Low volatility
-        # Allow higher allocation for stable stocks
-        vol_multiplier = 1.25  # Up to 25%
-    elif annualized_volatility < 0.30:  # Medium volatility  
-        # Standard allocation with slight adjustment based on volatility
-        vol_multiplier = 1.0 - (annualized_volatility - 0.15) * 0.5  # 20% -> 12.5%
-    elif annualized_volatility < 0.50:  # High volatility
-        # Reduce allocation significantly
-        vol_multiplier = 0.75 - (annualized_volatility - 0.30) * 0.5  # 15% -> 5%
-    else:  # Very high volatility (>50%)
-        # Minimum allocation for very risky stocks
-        vol_multiplier = 0.50  # Max 10%
-    
-    # Apply bounds to ensure reasonable limits
-    vol_multiplier = max(0.25, min(1.25, vol_multiplier))  # 5% to 25% range
+    if paper_trading:
+        # PAPER TRADING: More aggressive limits for learning/testing
+        base_limit = 0.40  # 40% baseline (2x live)
+        
+        if annualized_volatility < 0.15:  # Low volatility
+            vol_multiplier = 1.25  # Up to 50%
+        elif annualized_volatility < 0.30:  # Medium volatility  
+            vol_multiplier = 1.0 - (annualized_volatility - 0.15) * 0.3  # 40% -> 35%
+        elif annualized_volatility < 0.50:  # High volatility
+            vol_multiplier = 0.75 - (annualized_volatility - 0.30) * 0.25  # 30% -> 25%
+        else:  # Very high volatility (>50%)
+            vol_multiplier = 0.50  # Max 20%
+        
+        # Paper trading bounds: 15% to 50% range
+        vol_multiplier = max(0.375, min(1.25, vol_multiplier))
+    else:
+        # LIVE TRADING: Conservative limits
+        base_limit = 0.20  # 20% baseline
+        
+        if annualized_volatility < 0.15:  # Low volatility
+            vol_multiplier = 1.25  # Up to 25%
+        elif annualized_volatility < 0.30:  # Medium volatility  
+            vol_multiplier = 1.0 - (annualized_volatility - 0.15) * 0.5  # 20% -> 12.5%
+        elif annualized_volatility < 0.50:  # High volatility
+            vol_multiplier = 0.75 - (annualized_volatility - 0.30) * 0.5  # 15% -> 5%
+        else:  # Very high volatility (>50%)
+            vol_multiplier = 0.50  # Max 10%
+        
+        # Live trading bounds: 5% to 25% range
+        vol_multiplier = max(0.25, min(1.25, vol_multiplier))
     
     return base_limit * vol_multiplier
 
