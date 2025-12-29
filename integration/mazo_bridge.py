@@ -427,6 +427,122 @@ Please provide:
 """
         return self.research(query)
 
+    def analyze_portfolio(
+        self,
+        portfolio_data: Dict[str, Any],
+        positions: List[Dict[str, Any]],
+        pending_orders: List[Dict[str, Any]] = None
+    ) -> MazoResponse:
+        """
+        Analyze the entire portfolio for risks, opportunities, and health.
+        
+        This is a holistic analysis that looks at:
+        - Overall portfolio composition and concentration
+        - Correlation risks between positions
+        - Individual position health
+        - Rebalancing opportunities
+        - Risk/reward assessment
+        
+        Args:
+            portfolio_data: Portfolio summary (equity, cash, buying_power)
+            positions: List of current positions with P&L
+            pending_orders: Optional list of pending orders
+            
+        Returns:
+            MazoResponse with portfolio health analysis
+        """
+        # Build position summary
+        position_lines = []
+        total_long_value = 0
+        total_short_value = 0
+        equity = float(portfolio_data.get("equity", 0))
+        
+        for pos in positions:
+            ticker = pos.get("symbol", "???")
+            qty = float(pos.get("qty", 0))
+            market_value = float(pos.get("market_value", 0))
+            unrealized_pl = float(pos.get("unrealized_pl", 0))
+            unrealized_plpc = float(pos.get("unrealized_plpc", 0)) * 100
+            avg_entry = float(pos.get("avg_entry_price", 0))
+            current_price = float(pos.get("current_price", 0))
+            
+            concentration = (abs(market_value) / equity * 100) if equity > 0 else 0
+            pl_sign = "+" if unrealized_pl >= 0 else ""
+            side = "LONG" if qty > 0 else "SHORT"
+            
+            position_lines.append(
+                f"  {ticker}: {side} {abs(qty):.0f} shares @ ${avg_entry:.2f} → ${current_price:.2f} "
+                f"({pl_sign}{unrealized_plpc:.1f}%) | ${abs(market_value):,.0f} ({concentration:.1f}% of portfolio)"
+            )
+            
+            if qty > 0:
+                total_long_value += market_value
+            else:
+                total_short_value += abs(market_value)
+        
+        # Build pending orders summary
+        order_lines = []
+        if pending_orders:
+            for order in pending_orders:
+                order_lines.append(
+                    f"  {order.get('symbol')}: {order.get('side', '?').upper()} "
+                    f"{order.get('qty', '?')} shares ({order.get('status', 'unknown')})"
+                )
+        
+        # Build the analysis query
+        query = f"""
+=== PORTFOLIO HEALTH CHECK REQUEST ===
+
+PORTFOLIO SUMMARY:
+  Total Equity: ${equity:,.2f}
+  Cash: ${float(portfolio_data.get('cash', 0)):,.2f}
+  Buying Power: ${float(portfolio_data.get('buying_power', 0)):,.2f}
+  Long Exposure: ${total_long_value:,.2f} ({(total_long_value/equity*100) if equity > 0 else 0:.1f}%)
+  Short Exposure: ${total_short_value:,.2f} ({(total_short_value/equity*100) if equity > 0 else 0:.1f}%)
+
+CURRENT POSITIONS ({len(positions)}):
+{chr(10).join(position_lines) if position_lines else '  No positions'}
+
+PENDING ORDERS ({len(pending_orders) if pending_orders else 0}):
+{chr(10).join(order_lines) if order_lines else '  No pending orders'}
+
+=== ANALYSIS REQUESTED ===
+
+Please provide a comprehensive portfolio health check:
+
+1. CONCENTRATION RISK
+   - Which positions are over-concentrated (>25% of portfolio)?
+   - What is the recommended position sizing for each?
+   - Are there any correlation risks (e.g., multiple tech shorts)?
+
+2. POSITION-BY-POSITION ANALYSIS
+   For each position, assess:
+   - Is the thesis still valid?
+   - Should we add, hold, or reduce?
+   - What are the key risk factors?
+
+3. REBALANCING RECOMMENDATIONS
+   - Which positions should be trimmed?
+   - Which positions could be added to?
+   - What trades would improve portfolio balance?
+
+4. PENDING ORDER REVIEW
+   - Are the pending orders still aligned with current analysis?
+   - Should any be cancelled or modified?
+
+5. OVERALL PORTFOLIO HEALTH SCORE
+   - Grade the portfolio (A/B/C/D/F)
+   - Key strengths
+   - Key weaknesses
+   - Immediate action items (priority ordered)
+
+6. RISK ASSESSMENT
+   - Maximum drawdown potential in adverse scenario
+   - Portfolio beta estimate
+   - Recommended hedges or protective positions
+"""
+        return self.research(query)
+
     def get_agent_context(
         self,
         ticker: str,
@@ -511,3 +627,9 @@ def compare_companies(tickers: List[str], **kwargs) -> MazoResponse:
     """Quick company comparison"""
     bridge = MazoBridge(**kwargs)
     return bridge.compare_companies(tickers)
+
+
+def analyze_portfolio(portfolio_data: Dict[str, Any], positions: List[Dict[str, Any]], pending_orders: List[Dict[str, Any]] = None, **kwargs) -> MazoResponse:
+    """Portfolio health check analysis"""
+    bridge = MazoBridge(**kwargs)
+    return bridge.analyze_portfolio(portfolio_data, positions, pending_orders)

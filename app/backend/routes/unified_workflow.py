@@ -1408,3 +1408,108 @@ async def run_unified_workflow(
             status_code=500,
             detail=f"Error running unified workflow: {str(e)}"
         )
+
+
+class PortfolioHealthCheckRequest(BaseModel):
+    """Request for portfolio health check"""
+    pass  # No parameters needed - we fetch from Alpaca
+
+
+@router.post("/portfolio-health-check")
+async def portfolio_health_check(
+    request: PortfolioHealthCheckRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Run a comprehensive portfolio health check using Mazo.
+    
+    Fetches current portfolio from Alpaca and asks Mazo to analyze:
+    - Concentration risks
+    - Position-by-position assessment
+    - Rebalancing recommendations
+    - Pending order review
+    - Overall health score
+    """
+    try:
+        # Import here to avoid circular imports
+        from src.trading.alpaca_service import AlpacaService
+        from integration.mazo_bridge import MazoBridge
+        
+        # Connect to Alpaca
+        alpaca = AlpacaService(paper=True)
+        
+        # Get portfolio data
+        account = alpaca.get_account()
+        positions = alpaca.get_positions()
+        pending_orders = alpaca.get_orders(status="open")
+        
+        # Build portfolio data dict
+        portfolio_data = {
+            "equity": float(account.portfolio_value),
+            "cash": float(account.cash),
+            "buying_power": float(account.buying_power),
+            "portfolio_value": float(account.portfolio_value)
+        }
+        
+        # Build positions list
+        positions_list = []
+        for pos in positions:
+            positions_list.append({
+                "symbol": pos.symbol,
+                "qty": float(pos.qty),
+                "market_value": float(pos.market_value),
+                "unrealized_pl": float(pos.unrealized_pl),
+                "unrealized_plpc": float(pos.unrealized_plpc),
+                "avg_entry_price": float(pos.avg_entry_price),
+                "current_price": float(pos.current_price)
+            })
+        
+        # Build pending orders list
+        orders_list = []
+        for order in pending_orders:
+            orders_list.append({
+                "symbol": order.symbol,
+                "side": order.side,
+                "qty": float(order.qty),
+                "status": order.status
+            })
+        
+        # If no positions, return early
+        if not positions_list:
+            return {
+                "success": True,
+                "message": "No positions to analyze",
+                "portfolio": portfolio_data,
+                "positions": [],
+                "pending_orders": orders_list,
+                "analysis": "Your portfolio is empty. Consider researching some tickers to start building positions."
+            }
+        
+        # Run Mazo portfolio analysis
+        mazo = MazoBridge()
+        start_time = time.time()
+        
+        result = mazo.analyze_portfolio(
+            portfolio_data=portfolio_data,
+            positions=positions_list,
+            pending_orders=orders_list
+        )
+        
+        execution_time = time.time() - start_time
+        
+        return {
+            "success": result.success,
+            "execution_time_ms": execution_time * 1000,
+            "portfolio": portfolio_data,
+            "positions": positions_list,
+            "pending_orders": orders_list,
+            "analysis": result.answer,
+            "confidence": result.confidence,
+            "error": result.error
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Portfolio health check failed: {str(e)}"
+        )
