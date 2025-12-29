@@ -259,18 +259,19 @@ async def run_unified_workflow(
                         })
                         raise
                 
-                def tracked_analyze_company(ticker: str):
+                def tracked_analyze_company(ticker: str, portfolio_context: str = None):
                     """Track Mazo analyze_company with detailed information"""
                     start_time = time.time()
                     progress_tracker.update_step("mazo_initial_research", {
                         "status": "running",
                         "ticker": ticker,
                         "method": "analyze_company",
-                        "message": f"Analyzing {ticker} with Mazo..."
+                        "message": f"Analyzing {ticker} with Mazo...",
+                        "has_portfolio_context": portfolio_context is not None
                     })
                     
                     try:
-                        result = original_mazo_analyze(ticker)
+                        result = original_mazo_analyze(ticker, portfolio_context=portfolio_context)
                         elapsed = (time.time() - start_time) * 1000
                         
                         detail = {
@@ -317,7 +318,7 @@ async def run_unified_workflow(
                         })
                         raise
                 
-                def tracked_explain_signal(ticker: str, signal: str, confidence: float, reasoning: str):
+                def tracked_explain_signal(ticker: str, signal: str, confidence: float, reasoning: str, portfolio_context: str = None):
                     """Track Mazo explain_signal with detailed information"""
                     start_time = time.time()
                     progress_tracker.update_step("mazo_deep_dive", {
@@ -326,11 +327,12 @@ async def run_unified_workflow(
                         "signal": signal,
                         "confidence": confidence,
                         "method": "explain_signal",
-                        "message": f"Explaining {signal} signal for {ticker}..."
+                        "message": f"Explaining {signal} signal for {ticker}...",
+                        "has_portfolio_context": portfolio_context is not None
                     })
                     
                     try:
-                        result = original_mazo_explain(ticker, signal, confidence, reasoning)
+                        result = original_mazo_explain(ticker, signal, confidence, reasoning, portfolio_context=portfolio_context)
                         elapsed = (time.time() - start_time) * 1000
                         
                         detail = {
@@ -774,17 +776,18 @@ async def run_unified_workflow(
                                 })
                                 raise
                         
-                        def tracked_analyze_company(ticker: str):
+                        def tracked_analyze_company(ticker: str, portfolio_context: str = None):
                             """Track Mazo analyze_company with detailed information"""
                             start_time = time.time()
                             progress_tracker.update_step("mazo_initial_research", {
                                 "status": "running",
                                 "ticker": ticker,
-                                "method": "analyze_company"
+                                "method": "analyze_company",
+                                "has_portfolio_context": portfolio_context is not None
                             })
                             
                             try:
-                                result = original_mazo_analyze(ticker)
+                                result = original_mazo_analyze(ticker, portfolio_context=portfolio_context)
                                 elapsed = (time.time() - start_time) * 1000
                                 
                                 detail = {
@@ -847,7 +850,7 @@ async def run_unified_workflow(
                                 })
                                 raise
                         
-                        def tracked_explain_signal(ticker: str, signal: str, confidence: float, reasoning: str):
+                        def tracked_explain_signal(ticker: str, signal: str, confidence: float, reasoning: str, portfolio_context: str = None):
                             """Track Mazo explain_signal with detailed information"""
                             start_time = time.time()
                             progress_tracker.update_step("mazo_deep_dive", {
@@ -855,11 +858,12 @@ async def run_unified_workflow(
                                 "ticker": ticker,
                                 "signal": signal,
                                 "confidence": confidence,
-                                "method": "explain_signal"
+                                "method": "explain_signal",
+                                "has_portfolio_context": portfolio_context is not None
                             })
                             
                             try:
-                                result = original_mazo_explain(ticker, signal, confidence, reasoning)
+                                result = original_mazo_explain(ticker, signal, confidence, reasoning, portfolio_context=portfolio_context)
                                 elapsed = (time.time() - start_time) * 1000
                                 
                                 detail = {
