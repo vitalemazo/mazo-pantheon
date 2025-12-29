@@ -846,6 +846,140 @@ def execute_trades(
                 print(f"    ❌ Error cancelling orders: {e}")
             continue
         
+        # Handle REDUCE_LONG action - partial sell of long position
+        if action == "reduce_long":
+            try:
+                position = alpaca.get_position(ticker)
+                if position and float(position.qty) > 0:
+                    current_qty = float(position.qty)
+                    shares_to_sell = min(quantity, int(current_qty) - 1)  # Keep at least 1 share
+                    if shares_to_sell > 0:
+                        print(f"    🔄 Reducing LONG position: selling {shares_to_sell} of {int(current_qty)} shares")
+                        if not dry_run:
+                            trade_result = alpaca.execute_decision(
+                                symbol=ticker,
+                                action="sell",
+                                quantity=shares_to_sell
+                            )
+                            if trade_result.success:
+                                result.trade = TradeResult(
+                                    action="reduce_long",
+                                    quantity=shares_to_sell,
+                                    executed=True,
+                                    order_id=trade_result.order.id if trade_result.order else None,
+                                    error=None
+                                )
+                                print(f"    ✅ Reduced position: {int(current_qty)} → {int(current_qty) - shares_to_sell} shares")
+                            else:
+                                result.trade = TradeResult(
+                                    action="reduce_long",
+                                    quantity=shares_to_sell,
+                                    executed=False,
+                                    error=trade_result.error
+                                )
+                                print(f"    ❌ Reduce failed: {trade_result.error}")
+                        else:
+                            result.trade = TradeResult(
+                                action="reduce_long",
+                                quantity=shares_to_sell,
+                                executed=False,
+                                order_id=f"DRY_RUN_{ticker}_reduce_long_{shares_to_sell}",
+                                error=None
+                            )
+                            print(f"    → DRY RUN: Would sell {shares_to_sell} shares to reduce position")
+                    else:
+                        result.trade = TradeResult(
+                            action="reduce_long",
+                            quantity=0,
+                            executed=False,
+                            error="Position too small to reduce further"
+                        )
+                        print(f"    → Position too small to reduce (only {int(current_qty)} shares)")
+                else:
+                    result.trade = TradeResult(
+                        action="reduce_long",
+                        quantity=0,
+                        executed=False,
+                        error="No long position to reduce"
+                    )
+                    print(f"    → No long position to reduce")
+            except Exception as e:
+                result.trade = TradeResult(
+                    action="reduce_long",
+                    quantity=0,
+                    executed=False,
+                    error=str(e)
+                )
+                print(f"    ❌ Error reducing long: {e}")
+            continue
+        
+        # Handle REDUCE_SHORT action - partial cover of short position
+        if action == "reduce_short":
+            try:
+                position = alpaca.get_position(ticker)
+                if position and float(position.qty) < 0:
+                    current_qty = abs(float(position.qty))
+                    shares_to_cover = min(quantity, int(current_qty) - 1)  # Keep at least 1 share
+                    if shares_to_cover > 0:
+                        print(f"    🔄 Reducing SHORT position: covering {shares_to_cover} of {int(current_qty)} shares")
+                        if not dry_run:
+                            trade_result = alpaca.execute_decision(
+                                symbol=ticker,
+                                action="cover",
+                                quantity=shares_to_cover
+                            )
+                            if trade_result.success:
+                                result.trade = TradeResult(
+                                    action="reduce_short",
+                                    quantity=shares_to_cover,
+                                    executed=True,
+                                    order_id=trade_result.order.id if trade_result.order else None,
+                                    error=None
+                                )
+                                print(f"    ✅ Reduced position: {int(current_qty)} → {int(current_qty) - shares_to_cover} shares short")
+                            else:
+                                result.trade = TradeResult(
+                                    action="reduce_short",
+                                    quantity=shares_to_cover,
+                                    executed=False,
+                                    error=trade_result.error
+                                )
+                                print(f"    ❌ Reduce failed: {trade_result.error}")
+                        else:
+                            result.trade = TradeResult(
+                                action="reduce_short",
+                                quantity=shares_to_cover,
+                                executed=False,
+                                order_id=f"DRY_RUN_{ticker}_reduce_short_{shares_to_cover}",
+                                error=None
+                            )
+                            print(f"    → DRY RUN: Would cover {shares_to_cover} shares to reduce short position")
+                    else:
+                        result.trade = TradeResult(
+                            action="reduce_short",
+                            quantity=0,
+                            executed=False,
+                            error="Position too small to reduce further"
+                        )
+                        print(f"    → Position too small to reduce (only {int(current_qty)} shares short)")
+                else:
+                    result.trade = TradeResult(
+                        action="reduce_short",
+                        quantity=0,
+                        executed=False,
+                        error="No short position to reduce"
+                    )
+                    print(f"    → No short position to reduce")
+            except Exception as e:
+                result.trade = TradeResult(
+                    action="reduce_short",
+                    quantity=0,
+                    executed=False,
+                    error=str(e)
+                )
+                print(f"    ❌ Error reducing short: {e}")
+            continue
+        
         if action == "hold" or quantity == 0:
             result.trade = TradeResult(
                 action=action,

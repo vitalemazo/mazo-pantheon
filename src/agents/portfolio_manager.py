@@ -12,10 +12,12 @@ from src.utils.llm import call_llm
 
 
 class PortfolioDecision(BaseModel):
-    action: Literal["buy", "sell", "short", "cover", "hold", "cancel"]
+    action: Literal["buy", "sell", "short", "cover", "hold", "cancel", "reduce_long", "reduce_short"]
     quantity: int = Field(description="Number of shares to trade (0 for cancel/hold)")
     confidence: int = Field(description="Confidence 0-100")
     reasoning: str = Field(description="Reasoning for the decision")
+    # Optional rebalancing context
+    rebalance_target: str | None = Field(default=None, description="If reducing to make room for another ticker")
 
 
 class PortfolioManagerOutput(BaseModel):
@@ -165,6 +167,14 @@ def compute_allowed_actions(
         # COVER: Can cover whatever short position we have  
         actions["cover"] = short_shares if short_shares > 0 else 0
 
+        # REDUCE_LONG: Partial sell of long position (for rebalancing)
+        if long_shares > 1:
+            actions["reduce_long"] = long_shares - 1  # Can reduce down to 1 share
+        
+        # REDUCE_SHORT: Partial cover of short position (for rebalancing)
+        if short_shares > 1:
+            actions["reduce_short"] = short_shares - 1  # Can reduce down to 1 share
+
         # HOLD: Always available
         actions["hold"] = 0
         
@@ -175,6 +185,47 @@ def compute_allowed_actions(
         allowed[ticker] = actions
 
     return allowed
+
+
+def compute_portfolio_concentration(portfolio: dict, current_prices: dict[str, float]) -> dict:
+    """Compute portfolio concentration metrics for rebalancing decisions."""
+    positions = portfolio.get("positions", {}) or {}
+    equity = float(portfolio.get("equity", portfolio.get("cash", 0)))
+    
+    if equity <= 0:
+        return {"concentrations": {}, "total_long_pct": 0, "total_short_pct": 0}
+    
+    concentrations = {}
+    total_long_value = 0
+    total_short_value = 0
+    
+    for ticker, pos in positions.items():
+        long_shares = int(pos.get("long", 0) or 0)
+        short_shares = int(pos.get("short", 0) or 0)
+        price = float(current_prices.get(ticker, 0))
+        
+        if price > 0:
+            long_value = long_shares * price
+            short_value = short_shares * price
+            total_value = long_value + short_value
+            
+            if total_value > 0:
+                concentrations[ticker] = {
+                    "value": total_value,
+                    "pct": (total_value / equity) * 100,
+                    "long_shares": long_shares,
+                    "short_shares": short_shares,
+                    "side": "long" if long_shares > 0 else "short"
+                }
+                total_long_value += long_value
+                total_short_value += short_value
+    
+    return {
+        "concentrations": concentrations,
+        "total_long_pct": (total_long_value / equity) * 100 if equity > 0 else 0,
+        "total_short_pct": (total_short_value / equity) * 100 if equity > 0 else 0,
+        "equity": equity
+    }
 
 
 def _compact_signals(signals_by_ticker: dict[str, dict]) -> dict[str, dict]:
@@ -195,23 +246,32 @@ def _compact_signals(signals_by_ticker: dict[str, dict]) -> dict[str, dict]:
 
 
 def _build_position_context(portfolio: dict, tickers: list[str], current_prices: dict[str, float]) -> str:
-    """Build a rich position context string for the LLM."""
+    """Build a rich position context string for the LLM with concentration analysis."""
     lines = []
     
     # Portfolio summary
     cash = float(portfolio.get("cash", 0))
     buying_power = float(portfolio.get("buying_power", cash))
     portfolio_value = float(portfolio.get("portfolio_value", cash))
+    equity = float(portfolio.get("equity", portfolio_value))
     
     lines.append(f"Portfolio: ${portfolio_value:,.0f} total | ${cash:,.0f} cash | ${buying_power:,.0f} buying power")
     
-    # Current positions
+    # Compute concentration metrics
+    concentration_data = compute_portfolio_concentration(portfolio, current_prices)
+    concentrations = concentration_data["concentrations"]
+    
+    # Current positions with concentration %
     positions = portfolio.get("positions", {})
     position_lines = []
+    concentration_warnings = []
+    
     for ticker in tickers:
         pos = positions.get(ticker, {})
         long_shares = int(pos.get("long", 0) or 0)
         short_shares = int(pos.get("short", 0) or 0)
+        conc = concentrations.get(ticker, {})
+        conc_pct = conc.get("pct", 0)
         
         if long_shares > 0:
             entry = float(pos.get("long_cost_basis", 0) or 0)
@@ -219,14 +279,18 @@ def _build_position_context(portfolio: dict, tickers: list[str], current_prices:
             pl = (current - entry) * long_shares if entry > 0 else 0
             pl_pct = ((current / entry) - 1) * 100 if entry > 0 else 0
             pl_sign = "+" if pl >= 0 else ""
-            position_lines.append(f"  {ticker}: LONG {long_shares} shares @ ${entry:.2f} → ${current:.2f} ({pl_sign}{pl_pct:.1f}%)")
+            position_lines.append(f"  {ticker}: LONG {long_shares} @ ${entry:.2f}→${current:.2f} ({pl_sign}{pl_pct:.1f}%) | {conc_pct:.1f}% of portfolio")
+            if conc_pct > 25:
+                concentration_warnings.append(f"  ⚠️ {ticker}: {conc_pct:.1f}% concentration is HIGH (>25%)")
         elif short_shares > 0:
             entry = float(pos.get("short_cost_basis", 0) or 0)
             current = float(current_prices.get(ticker, entry))
             pl = (entry - current) * short_shares if entry > 0 else 0
             pl_pct = ((entry / current) - 1) * 100 if current > 0 else 0
             pl_sign = "+" if pl >= 0 else ""
-            position_lines.append(f"  {ticker}: SHORT {short_shares} shares @ ${entry:.2f} → ${current:.2f} ({pl_sign}{pl_pct:.1f}%)")
+            position_lines.append(f"  {ticker}: SHORT {short_shares} @ ${entry:.2f}→${current:.2f} ({pl_sign}{pl_pct:.1f}%) | {conc_pct:.1f}% of portfolio")
+            if conc_pct > 25:
+                concentration_warnings.append(f"  ⚠️ {ticker}: {conc_pct:.1f}% concentration is HIGH (>25%)")
         else:
             position_lines.append(f"  {ticker}: No position")
     
@@ -234,13 +298,24 @@ def _build_position_context(portfolio: dict, tickers: list[str], current_prices:
         lines.append("Positions:")
         lines.extend(position_lines)
     
+    # Show concentration warnings
+    if concentration_warnings:
+        lines.append("\nCONCENTRATION WARNINGS:")
+        lines.extend(concentration_warnings)
+        lines.append("Consider using 'reduce_long' or 'reduce_short' to rebalance before adding new positions.")
+    
     # Pending orders
     pending = portfolio.get("pending_orders", [])
     if pending:
         order_lines = [f"  {o['symbol']}: {o['side'].upper()} {o['qty']} shares ({o['status']})" for o in pending if o['symbol'] in tickers]
         if order_lines:
-            lines.append("Pending Orders:")
+            lines.append("\nPending Orders:")
             lines.extend(order_lines)
+    
+    # Rebalancing opportunity check
+    if len(tickers) > 1 and concentration_warnings:
+        lines.append("\nREBALANCING OPPORTUNITY:")
+        lines.append("You can reduce an over-concentrated position to free up capital for other tickers.")
     
     return "\n".join(lines)
 
@@ -297,31 +372,41 @@ def generate_trading_decision(
             "5. Ignore Mazo's timing advice ('wait for pullback') - act on the signal direction\n"
             "6. Position size: Use 20-40% of buying power per trade (be aggressive!)\n"
             "7. Even 40-50% confidence is enough to act in paper trading\n\n"
-            "ACTION MEANINGS (be precise):\n"
-            "- buy: Open a LONG position (betting stock goes UP)\n"
-            "- sell: Close a LONG position\n"
-            "- short: Open a SHORT position (betting stock goes DOWN)\n"
-            "- cover: Close a SHORT position\n"
-            "- hold: DO NOTHING - NO TRADE EXECUTED (only use if truly 50/50 split)\n"
-            "- cancel: Cancel pending orders if analysis changed\n\n"
-            "EXAMPLE: If 10 analysts say BEARISH and you have no position → SHORT immediately!\n\n"
-            "Return JSON only. Quantity must be > 0 for buy/sell/short/cover."
+            "PORTFOLIO REBALANCING (when you see concentration warnings):\n"
+            "- If a position is >25% of portfolio, consider using 'reduce_long' or 'reduce_short'\n"
+            "- Reduce over-concentrated positions to free up capital for new opportunities\n"
+            "- Example: AAPL at 50% → reduce_short 5 shares, then short MSFT with freed capital\n\n"
+            "AVAILABLE ACTIONS:\n"
+            "- buy: Open LONG (stock goes UP)\n"
+            "- sell: Close entire LONG position\n"
+            "- short: Open SHORT (stock goes DOWN)\n"
+            "- cover: Close entire SHORT position\n"
+            "- reduce_long: PARTIAL sell of long (keep some shares, reduce concentration)\n"
+            "- reduce_short: PARTIAL cover of short (keep some shares, reduce concentration)\n"
+            "- hold: NO TRADE (only use if truly 50/50 split)\n"
+            "- cancel: Cancel pending orders\n\n"
+            "Return JSON only. For reduce_long/reduce_short, quantity = shares to REMOVE from position."
         )
     else:
         system_prompt = (
             "You are an intelligent portfolio manager making trading decisions with REAL MONEY.\n\n"
-            "IMPORTANT CONSIDERATIONS:\n"
-            "1. Consider existing positions - don't double-down on losing trades without strong conviction\n"
-            "2. If you have a profitable position, consider taking profits or letting it ride based on signals\n"
-            "3. Check for pending orders - if new analysis contradicts them, CANCEL them\n"
-            "4. Consider position sizing relative to portfolio value\n"
-            "5. If signals are mixed or low confidence, prefer HOLD to avoid overtrading\n"
-            "6. If Mazo research disagrees with analysts, carefully weigh the counter-arguments\n\n"
+            "RISK MANAGEMENT:\n"
+            "1. Single position should not exceed 25% of portfolio\n"
+            "2. If you see CONCENTRATION WARNINGS, prioritize rebalancing\n"
+            "3. Use 'reduce_long' or 'reduce_short' to trim over-concentrated positions\n"
+            "4. Consider existing positions before adding new ones\n"
+            "5. Check pending orders - cancel if analysis changed\n\n"
+            "PORTFOLIO REBALANCING:\n"
+            "- If a position is >25% of portfolio, reduce it before adding new positions\n"
+            "- Example: AAPL short at 50% → reduce_short 5 shares to bring to ~25%\n"
+            "- Then use freed capital for new opportunities\n\n"
             "AVAILABLE ACTIONS:\n"
-            "- buy/sell: For long positions\n"
-            "- short/cover: For short positions\n"
-            "- hold: Keep current state, no action\n"
-            "- cancel: CANCEL all pending orders for this ticker (use when analysis changed since order was placed)\n\n"
+            "- buy/sell: For long positions (full close)\n"
+            "- short/cover: For short positions (full close)\n"
+            "- reduce_long: PARTIAL sell (keep some shares)\n"
+            "- reduce_short: PARTIAL cover (keep some shares)\n"
+            "- hold: No action\n"
+            "- cancel: Cancel pending orders\n\n"
             "Inputs: analyst signals, current positions, Mazo research (if any), and allowed actions with max qty.\n"
             "Pick one action per ticker. Quantity must be ≤ max shown (0 for cancel/hold).\n"
             "Keep reasoning concise (max 150 chars). Return JSON only."
@@ -338,13 +423,17 @@ def generate_trading_decision(
                 "{mazo_research}"
                 "=== ALLOWED ACTIONS (max qty per action) ===\n{allowed}\n\n"
                 "DECISION REQUIRED: For each ticker, pick ONE action.\n"
-                "- If majority BEARISH → use 'short' with quantity > 0\n"
-                "- If majority BULLISH → use 'buy' with quantity > 0\n"
-                "- quantity=0 means NO TRADE (avoid unless 50/50 split)\n\n"
-                "JSON Format:\n"
+                "Priority order:\n"
+                "1. If CONCENTRATION WARNING: use reduce_long/reduce_short first to free capital\n"
+                "2. If majority BEARISH + no position → 'short'\n"
+                "3. If majority BULLISH + no position → 'buy'\n"
+                "4. If position exists + signal agrees → hold or add\n"
+                "5. quantity=0 only for hold/cancel\n\n"
+                "JSON Format (include rebalance_target if reducing to fund another ticker):\n"
                 "{{\n"
                 '  "decisions": {{\n'
-                '    "TICKER": {{"action":"short","quantity":5,"confidence":65,"reasoning":"10/18 bearish - testing thesis"}}\n'
+                '    "AAPL": {{"action":"reduce_short","quantity":5,"confidence":70,"reasoning":"50%→25% to fund MSFT","rebalance_target":"MSFT"}},\n'
+                '    "MSFT": {{"action":"short","quantity":3,"confidence":65,"reasoning":"10/18 bearish - testing thesis","rebalance_target":null}}\n'
                 "  }}\n"
                 "}}"
             ),
