@@ -263,22 +263,42 @@ def generate_trading_decision(
     # Build rich position context
     position_context = _build_position_context(portfolio, tickers_for_llm, current_prices)
 
+    # Check if paper trading mode (more aggressive)
+    is_paper_trading = portfolio.get("paper_trading", True)  # Default to paper for safety
+    
+    # Different prompts for paper vs live trading
+    if is_paper_trading:
+        system_prompt = (
+            "You are an intelligent portfolio manager making trading decisions in PAPER TRADING mode.\n\n"
+            "PAPER TRADING STRATEGY (be more aggressive to learn from the market):\n"
+            "1. If you have NO position and signals lean in any direction, TAKE A POSITION to test the thesis\n"
+            "2. Don't be afraid to act on signals - this is paper money for learning\n"
+            "3. If majority of analysts agree (even with moderate confidence), act on it\n"
+            "4. Use reasonable position sizes (10-30% of buying power per trade)\n"
+            "5. Only HOLD if signals are truly contradictory (roughly equal bullish vs bearish)\n\n"
+            "GOAL: Generate trades to validate signals. Being wrong with paper money teaches more than doing nothing.\n\n"
+            "Inputs: analyst signals, current positions, and allowed actions with max qty.\n"
+            "Pick one action per ticker. Quantity must be ≤ max shown.\n"
+            "Keep reasoning concise (max 150 chars). Return JSON only."
+        )
+    else:
+        system_prompt = (
+            "You are an intelligent portfolio manager making trading decisions with REAL MONEY.\n\n"
+            "IMPORTANT CONSIDERATIONS:\n"
+            "1. Consider existing positions - don't double-down on losing trades without strong conviction\n"
+            "2. If you have a profitable position, consider taking profits or letting it ride based on signals\n"
+            "3. Check for pending orders - don't place conflicting trades\n"
+            "4. Consider position sizing relative to portfolio value\n"
+            "5. If signals are mixed or low confidence, prefer HOLD to avoid overtrading\n\n"
+            "Inputs: analyst signals, current positions, and allowed actions with max qty.\n"
+            "Pick one action per ticker. Quantity must be ≤ max shown.\n"
+            "Keep reasoning concise (max 150 chars). Return JSON only."
+        )
+    
     # Enhanced prompt with portfolio awareness
     template = ChatPromptTemplate.from_messages(
         [
-            (
-                "system",
-                "You are an intelligent portfolio manager making trading decisions.\n\n"
-                "IMPORTANT CONSIDERATIONS:\n"
-                "1. Consider existing positions - don't double-down on losing trades without strong conviction\n"
-                "2. If you have a profitable position, consider taking profits or letting it ride based on signals\n"
-                "3. Check for pending orders - don't place conflicting trades\n"
-                "4. Consider position sizing relative to portfolio value\n"
-                "5. If signals are mixed or low confidence, prefer HOLD to avoid overtrading\n\n"
-                "Inputs: analyst signals, current positions, and allowed actions with max qty.\n"
-                "Pick one action per ticker. Quantity must be ≤ max shown.\n"
-                "Keep reasoning concise (max 150 chars). Return JSON only."
-            ),
+            ("system", system_prompt),
             (
                 "human",
                 "=== PORTFOLIO STATE ===\n{portfolio_context}\n\n"

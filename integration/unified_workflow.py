@@ -265,12 +265,18 @@ class UnifiedWorkflow:
                             'type': o.type,
                             'submitted_at': o.submitted_at
                         } for o in orders
-                    ]
+                    ],
+                    'paper_trading': alpaca.paper,  # Pass paper trading mode to Portfolio Manager
                 }
                 
+                mode_emoji = "📝" if alpaca.paper else "💵"
+                mode_label = "PAPER" if alpaca.paper else "LIVE"
+                print(f"  [Alpaca] {mode_emoji} {mode_label} Trading Mode")
                 print(f"  [Alpaca] 💰 Portfolio: ${portfolio['portfolio_value']:,.2f} | Cash: ${portfolio['cash']:,.2f}")
                 if positions:
                     print(f"  [Alpaca] 📊 {len(positions)} position(s): {', '.join([p.symbol for p in positions[:5]])}")
+                else:
+                    print(f"  [Alpaca] 📊 No positions - Portfolio Manager will be more aggressive")
                 
                 return portfolio
                 
