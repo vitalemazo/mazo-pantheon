@@ -12,8 +12,8 @@ from src.utils.llm import call_llm
 
 
 class PortfolioDecision(BaseModel):
-    action: Literal["buy", "sell", "short", "cover", "hold"]
-    quantity: int = Field(description="Number of shares to trade")
+    action: Literal["buy", "sell", "short", "cover", "hold", "cancel"]
+    quantity: int = Field(description="Number of shares to trade (0 for cancel/hold)")
     confidence: int = Field(description="Confidence 0-100")
     reasoning: str = Field(description="Reasoning for the decision")
 
@@ -288,10 +288,16 @@ def generate_trading_decision(
             "3. If majority of analysts agree (even with moderate confidence), act on it\n"
             "4. Use reasonable position sizes (10-30% of buying power per trade)\n"
             "5. Only HOLD if signals are truly contradictory (roughly equal bullish vs bearish)\n"
-            "6. If Mazo research disagrees with analysts, consider the counter-arguments before deciding\n\n"
+            "6. If Mazo research disagrees with analysts, consider the counter-arguments before deciding\n"
+            "7. CANCEL pending orders if new analysis contradicts them (e.g., pending SELL but new signals are bullish)\n\n"
+            "AVAILABLE ACTIONS:\n"
+            "- buy/sell: For long positions\n"
+            "- short/cover: For short positions\n"
+            "- hold: Keep current state, no action\n"
+            "- cancel: CANCEL all pending orders for this ticker (use when analysis changed since order was placed)\n\n"
             "GOAL: Generate trades to validate signals. Being wrong with paper money teaches more than doing nothing.\n\n"
             "Inputs: analyst signals, current positions, Mazo research (if any), and allowed actions with max qty.\n"
-            "Pick one action per ticker. Quantity must be ≤ max shown.\n"
+            "Pick one action per ticker. Quantity must be ≤ max shown (0 for cancel/hold).\n"
             "Keep reasoning concise (max 150 chars). Return JSON only."
         )
     else:
@@ -300,12 +306,17 @@ def generate_trading_decision(
             "IMPORTANT CONSIDERATIONS:\n"
             "1. Consider existing positions - don't double-down on losing trades without strong conviction\n"
             "2. If you have a profitable position, consider taking profits or letting it ride based on signals\n"
-            "3. Check for pending orders - don't place conflicting trades\n"
+            "3. Check for pending orders - if new analysis contradicts them, CANCEL them\n"
             "4. Consider position sizing relative to portfolio value\n"
             "5. If signals are mixed or low confidence, prefer HOLD to avoid overtrading\n"
             "6. If Mazo research disagrees with analysts, carefully weigh the counter-arguments\n\n"
+            "AVAILABLE ACTIONS:\n"
+            "- buy/sell: For long positions\n"
+            "- short/cover: For short positions\n"
+            "- hold: Keep current state, no action\n"
+            "- cancel: CANCEL all pending orders for this ticker (use when analysis changed since order was placed)\n\n"
             "Inputs: analyst signals, current positions, Mazo research (if any), and allowed actions with max qty.\n"
-            "Pick one action per ticker. Quantity must be ≤ max shown.\n"
+            "Pick one action per ticker. Quantity must be ≤ max shown (0 for cancel/hold).\n"
             "Keep reasoning concise (max 150 chars). Return JSON only."
         )
     
@@ -322,7 +333,7 @@ def generate_trading_decision(
                 "Format:\n"
                 "{{\n"
                 '  "decisions": {{\n'
-                '    "TICKER": {{"action":"buy|sell|short|cover|hold","quantity":int,"confidence":0-100,"reasoning":"..."}}\n'
+                '    "TICKER": {{"action":"buy|sell|short|cover|hold|cancel","quantity":int,"confidence":0-100,"reasoning":"..."}}\n'
                 "  }}\n"
                 "}}"
             ),

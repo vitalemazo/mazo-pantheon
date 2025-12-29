@@ -807,6 +807,45 @@ def execute_trades(
         
         print(f"  [{ticker}] Action: {action.upper()} {quantity} shares")
         
+        # Handle CANCEL action - cancel all pending orders for this ticker
+        if action == "cancel":
+            try:
+                pending_orders = alpaca.get_orders(status="open")
+                ticker_orders = [o for o in pending_orders if o.symbol == ticker]
+                if ticker_orders:
+                    cancelled_count = 0
+                    for order in ticker_orders:
+                        cancel_result = alpaca.cancel_order(order.id)
+                        if cancel_result.success:
+                            print(f"    ✅ Cancelled {order.side} order for {order.qty} shares")
+                            cancelled_count += 1
+                        else:
+                            print(f"    ❌ Failed to cancel: {cancel_result.error}")
+                    result.trade = TradeResult(
+                        action="cancel",
+                        quantity=cancelled_count,
+                        executed=True,
+                        error=None
+                    )
+                    print(f"    → Cancelled {cancelled_count}/{len(ticker_orders)} pending order(s)")
+                else:
+                    result.trade = TradeResult(
+                        action="cancel",
+                        quantity=0,
+                        executed=False,
+                        error="No pending orders to cancel"
+                    )
+                    print(f"    → No pending orders to cancel")
+            except Exception as e:
+                result.trade = TradeResult(
+                    action="cancel",
+                    quantity=0,
+                    executed=False,
+                    error=str(e)
+                )
+                print(f"    ❌ Error cancelling orders: {e}")
+            continue
+        
         if action == "hold" or quantity == 0:
             result.trade = TradeResult(
                 action=action,
