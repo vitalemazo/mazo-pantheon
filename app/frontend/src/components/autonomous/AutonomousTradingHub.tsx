@@ -764,7 +764,166 @@ export function AutonomousTradingHub() {
           </Card>
         </div>
 
+        {/* Quick Analysis Section */}
+        <Card className="bg-slate-800/50 border-slate-700">
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between text-white">
+              <div className="flex items-center gap-2">
+                <Eye className="w-5 h-5 text-cyan-400" />
+                Quick Analysis
+              </div>
+              <Badge variant="outline" className="border-slate-500 text-slate-400">
+                Manual Mode
+              </Badge>
+            </CardTitle>
+            <CardDescription>
+              Run a targeted analysis on specific tickers without waiting for the autonomous cycle
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <QuickAnalysisForm 
+              onComplete={(result) => {
+                addActivity({
+                  type: 'analyze',
+                  message: `Manual analysis complete for ${result.ticker}`,
+                  ticker: result.ticker,
+                  status: 'complete',
+                  details: result,
+                });
+              }}
+            />
+          </CardContent>
+        </Card>
+
       </div>
+    </div>
+  );
+}
+
+// Quick Analysis Form Component
+function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }) {
+  const [ticker, setTicker] = useState('');
+  const [isRunning, setIsRunning] = useState(false);
+  const [result, setResult] = useState<any>(null);
+
+  const runAnalysis = async () => {
+    if (!ticker.trim()) {
+      toast.error('Please enter a ticker symbol');
+      return;
+    }
+
+    setIsRunning(true);
+    setResult(null);
+
+    try {
+      const response = await fetch('http://localhost:8000/unified-workflow/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tickers: [ticker.toUpperCase()],
+          mode: 'full',
+          depth: 'quick',
+          execute_trades: false,
+          dry_run: true,
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (data.results && data.results.length > 0) {
+        setResult(data.results[0]);
+        onComplete({ ticker: ticker.toUpperCase(), ...data.results[0] });
+        toast.success(`Analysis complete for ${ticker.toUpperCase()}`);
+      } else {
+        toast.info('Analysis complete but no actionable signal found');
+        setResult({ signal: 'NEUTRAL', message: 'No strong signal' });
+      }
+    } catch (error: any) {
+      toast.error(`Analysis failed: ${error.message}`);
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-3">
+        <input
+          type="text"
+          value={ticker}
+          onChange={(e) => setTicker(e.target.value.toUpperCase())}
+          placeholder="Enter ticker (e.g., AAPL)"
+          disabled={isRunning}
+          className="flex-1 px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:border-cyan-500 focus:outline-none"
+          onKeyDown={(e) => e.key === 'Enter' && runAnalysis()}
+        />
+        <Button
+          onClick={runAnalysis}
+          disabled={isRunning || !ticker.trim()}
+          className="bg-cyan-600 hover:bg-cyan-700"
+        >
+          {isRunning ? (
+            <>
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              Analyzing...
+            </>
+          ) : (
+            <>
+              <Zap className="w-4 h-4 mr-2" />
+              Analyze
+            </>
+          )}
+        </Button>
+      </div>
+
+      {result && (
+        <div className="p-4 bg-slate-700/30 rounded-lg border border-slate-600/50">
+          <div className="flex items-center justify-between mb-3">
+            <span className="font-bold text-white text-lg">{ticker}</span>
+            <Badge className={
+              result.signal === 'BULLISH' 
+                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50'
+                : result.signal === 'BEARISH'
+                ? 'bg-red-500/20 text-red-400 border-red-500/50'
+                : 'bg-slate-500/20 text-slate-400 border-slate-500/50'
+            }>
+              {result.signal || 'NEUTRAL'}
+              {result.confidence && ` (${result.confidence}%)`}
+            </Badge>
+          </div>
+          
+          {result.agent_signals && result.agent_signals.length > 0 && (
+            <div className="mb-3">
+              <div className="text-xs text-slate-400 mb-2">Agent Signals:</div>
+              <div className="flex flex-wrap gap-1">
+                {result.agent_signals.slice(0, 8).map((sig: any, i: number) => (
+                  <span 
+                    key={i}
+                    className={`text-xs px-2 py-0.5 rounded ${
+                      sig.signal === 'BULLISH' ? 'bg-emerald-500/20 text-emerald-400' :
+                      sig.signal === 'BEARISH' ? 'bg-red-500/20 text-red-400' :
+                      'bg-slate-500/20 text-slate-400'
+                    }`}
+                  >
+                    {sig.agent_name?.split(' ')[0] || 'Agent'}: {sig.signal}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {result.recommendations && result.recommendations.length > 0 && (
+            <div>
+              <div className="text-xs text-slate-400 mb-1">Top Recommendation:</div>
+              <p className="text-sm text-slate-300">{result.recommendations[0]}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      <p className="text-xs text-slate-500">
+        Quick analysis runs in dry-run mode. Enable autonomous trading for live execution.
+      </p>
     </div>
   );
 }
