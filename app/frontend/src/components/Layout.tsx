@@ -64,6 +64,11 @@ function LayoutContent({ children: _children }: { children: ReactNode }) {
     openTab(tabData);
   };
 
+  const handleMonitoringClick = () => {
+    const tabData = TabService.createMonitoringTab();
+    openTab(tabData);
+  };
+
   // Add keyboard shortcuts for toggling sidebars and fit view
   useLayoutKeyboardShortcuts(
     () => setIsRightCollapsed(!isRightCollapsed), // Cmd+I for right sidebar
@@ -119,6 +124,7 @@ function LayoutContent({ children: _children }: { children: ReactNode }) {
         onPortfolioClick={handlePortfolioClick}
         onTradingClick={handleTradingClick}
         onCommandCenterClick={handleCommandCenterClick}
+        onMonitoringClick={handleMonitoringClick}
       />
 
       {/* Tab Bar - positioned absolutely like bottom panel */}

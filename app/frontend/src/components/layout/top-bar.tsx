@@ -6,7 +6,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings, Bot, Activity, BarChart3, Crosshair, Sparkles } from 'lucide-react';
+import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings, Bot, Activity, BarChart3, Crosshair, Sparkles, Gauge } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { KeyboardShortcutsDialog } from './keyboard-shortcuts-dialog';
 import { API_BASE_URL } from '@/lib/api-config';
@@ -23,6 +23,7 @@ interface TopBarProps {
   onPortfolioClick: () => void;
   onTradingClick: () => void;
   onCommandCenterClick: () => void;
+  onMonitoringClick: () => void;
 }
 
 export function TopBar({
@@ -37,6 +38,7 @@ export function TopBar({
   onPortfolioClick,
   onTradingClick,
   onCommandCenterClick,
+  onMonitoringClick,
 }: TopBarProps) {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [isAutonomousActive, setIsAutonomousActive] = useState(false);
@@ -237,6 +239,25 @@ export function TopBar({
           <TooltipContent side="bottom" className="flex flex-col gap-0.5">
             <span className="font-medium">Command Center</span>
             <span className="text-xs text-muted-foreground">Unified view • Trade history • Agent leaderboard</span>
+          </TooltipContent>
+        </Tooltip>
+
+        {/* Monitoring Dashboard */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onMonitoringClick}
+              className="h-8 w-8 p-0 text-cyan-400 hover:text-cyan-300 hover:bg-ramp-grey-700 transition-colors"
+              aria-label="Open monitoring dashboard"
+            >
+              <Gauge size={16} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="flex flex-col gap-0.5">
+            <span className="font-medium">Monitoring</span>
+            <span className="text-xs text-muted-foreground">System health • Alerts • Performance metrics</span>
           </TooltipContent>
         </Tooltip>
 
