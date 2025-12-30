@@ -1,5 +1,6 @@
 import json
 import time
+import uuid
 from datetime import datetime, date
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
@@ -10,6 +11,21 @@ from pydantic import BaseModel, Field
 from typing_extensions import Literal
 from src.utils.progress import progress
 from src.utils.llm import call_llm
+
+# Lazy import for monitoring
+_event_logger = None
+
+
+def _get_event_logger():
+    """Get event logger lazily."""
+    global _event_logger
+    if _event_logger is None:
+        try:
+            from src.monitoring import get_event_logger
+            _event_logger = get_event_logger()
+        except ImportError:
+            pass
+    return _event_logger
 
 
 class PortfolioDecision(BaseModel):
@@ -608,12 +624,28 @@ def generate_trading_decision(
             )
         return PortfolioManagerOutput(decisions=decisions)
 
+    # Track start time for PM decision latency
+    pm_start_time = time.time()
+    
     llm_out = call_llm(
         prompt=prompt,
         pydantic_model=PortfolioManagerOutput,
         agent_name=agent_id,
         state=state,
         default_factory=create_default_portfolio_output,
+    )
+    
+    pm_latency_ms = int((time.time() - pm_start_time) * 1000)
+    
+    # Log PM decision to monitoring system
+    _log_pm_decisions(
+        tickers=tickers_for_llm,
+        signals_by_ticker=signals_by_ticker,
+        llm_out=llm_out,
+        mazo_research=mazo_research,
+        portfolio=portfolio,
+        state=state,
+        latency_ms=pm_latency_ms,
     )
 
     # CRITICAL FIX: Validate and convert decisions immediately after call_llm returns
@@ -669,3 +701,165 @@ def generate_trading_decision(
     merged = dict(prefilled_decisions)
     merged.update(validated_decisions)
     return PortfolioManagerOutput(decisions=merged)
+
+
+def _log_pm_decisions(
+    tickers: list[str],
+    signals_by_ticker: dict[str, dict],
+    llm_out: PortfolioManagerOutput,
+    mazo_research: str,
+    portfolio: dict,
+    state: AgentState,
+    latency_ms: int,
+):
+    """Log PM decisions to monitoring system with full transparency."""
+    event_logger = _get_event_logger()
+    if not event_logger:
+        return
+    
+    # Extract workflow_id from state if available
+    workflow_id = state.get("metadata", {}).get("workflow_id")
+    if not workflow_id:
+        workflow_id = uuid.uuid4()
+    
+    # Extract Mazo sentiment if available
+    mazo_sentiment = None
+    mazo_received = mazo_research is not None and len(mazo_research.strip()) > 0
+    if mazo_received:
+        mazo_lower = mazo_research.lower()
+        if "bullish" in mazo_lower or "positive" in mazo_lower or "buy" in mazo_lower:
+            mazo_sentiment = "bullish"
+        elif "bearish" in mazo_lower or "negative" in mazo_lower or "sell" in mazo_lower:
+            mazo_sentiment = "bearish"
+        else:
+            mazo_sentiment = "neutral"
+    
+    # Log decision for each ticker
+    for ticker in tickers:
+        decision = llm_out.decisions.get(ticker)
+        if not decision:
+            continue
+        
+        ticker_signals = signals_by_ticker.get(ticker, {})
+        
+        # Count bullish/bearish/neutral signals
+        bullish_count = 0
+        bearish_count = 0
+        neutral_count = 0
+        
+        agents_received = {}
+        for agent_name, signal_data in ticker_signals.items():
+            sig = signal_data.get("sig", "").lower()
+            conf = signal_data.get("conf", 0)
+            
+            agents_received[agent_name] = {
+                "signal": sig,
+                "confidence": conf,
+            }
+            
+            if "bullish" in sig or "buy" in sig or "long" in sig:
+                bullish_count += 1
+            elif "bearish" in sig or "sell" in sig or "short" in sig:
+                bearish_count += 1
+            else:
+                neutral_count += 1
+        
+        # Determine consensus
+        if bullish_count > bearish_count:
+            consensus_direction = "bullish"
+        elif bearish_count > bullish_count:
+            consensus_direction = "bearish"
+        else:
+            consensus_direction = "neutral"
+        
+        # Calculate consensus score (0-100)
+        total_signals = bullish_count + bearish_count + neutral_count
+        if total_signals > 0:
+            consensus_score = max(bullish_count, bearish_count) / total_signals * 100
+        else:
+            consensus_score = 0
+        
+        # Determine if PM action matches consensus
+        action = decision.action if isinstance(decision, PortfolioDecision) else decision.get("action", "hold")
+        action_is_bullish = action in ["buy", "cover", "reduce_short"]
+        action_is_bearish = action in ["sell", "short", "reduce_long"]
+        
+        if action == "hold" or action == "cancel":
+            action_matches_consensus = True  # Neutral actions always "match"
+        elif consensus_direction == "bullish":
+            action_matches_consensus = action_is_bullish
+        elif consensus_direction == "bearish":
+            action_matches_consensus = action_is_bearish
+        else:
+            action_matches_consensus = True  # Neutral consensus matches anything
+        
+        # Determine if PM followed Mazo
+        mazo_considered = mazo_received
+        if mazo_received and mazo_sentiment:
+            mazo_is_bullish = mazo_sentiment == "bullish"
+            mazo_is_bearish = mazo_sentiment == "bearish"
+            
+            if mazo_is_bullish and action_is_bullish:
+                pm_followed_mazo = True
+            elif mazo_is_bearish and action_is_bearish:
+                pm_followed_mazo = True
+            elif mazo_sentiment == "neutral" and action == "hold":
+                pm_followed_mazo = True
+            else:
+                pm_followed_mazo = False
+        else:
+            pm_followed_mazo = None
+        
+        # Get portfolio context
+        portfolio_equity = float(portfolio.get("equity", 0))
+        portfolio_cash = float(portfolio.get("cash", 0))
+        positions = portfolio.get("positions", {})
+        existing_qty = 0
+        if ticker in positions:
+            pos = positions[ticker]
+            existing_qty = float(pos.get("long", 0) or 0) - float(pos.get("short", 0) or 0)
+        
+        # Extract decision fields
+        if isinstance(decision, PortfolioDecision):
+            quantity = decision.quantity
+            stop_loss_pct = decision.stop_loss_pct
+            take_profit_pct = decision.take_profit_pct
+            confidence = decision.confidence
+            reasoning_raw = decision.reasoning
+        else:
+            quantity = decision.get("quantity", 0)
+            stop_loss_pct = decision.get("stop_loss_pct")
+            take_profit_pct = decision.get("take_profit_pct")
+            confidence = decision.get("confidence", 0)
+            reasoning_raw = decision.get("reasoning", "")
+        
+        # Log to monitoring
+        try:
+            event_logger.log_pm_decision(
+                workflow_id=workflow_id,
+                ticker=ticker,
+                action=action,
+                quantity=quantity,
+                stop_loss_pct=stop_loss_pct,
+                take_profit_pct=take_profit_pct,
+                agents_received=agents_received,
+                bullish_count=bullish_count,
+                bearish_count=bearish_count,
+                neutral_count=neutral_count,
+                consensus_direction=consensus_direction,
+                consensus_score=consensus_score,
+                mazo_received=mazo_received,
+                mazo_considered=mazo_considered,
+                mazo_sentiment=mazo_sentiment,
+                mazo_bypass_reason=None if mazo_received else "not_available",
+                action_matches_consensus=action_matches_consensus,
+                override_reason=reasoning_raw if not action_matches_consensus else None,
+                reasoning_raw=reasoning_raw,
+                confidence=confidence,
+                portfolio_equity=portfolio_equity,
+                portfolio_cash=portfolio_cash,
+                latency_ms=latency_ms,
+            )
+        except Exception as e:
+            # Don't let logging errors break trading
+            pass

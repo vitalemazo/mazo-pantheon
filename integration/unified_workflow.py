@@ -17,6 +17,8 @@ import argparse
 import json
 import sys
 import os
+import time
+import uuid
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from typing import List, Optional, Dict, Any, Tuple
@@ -32,6 +34,78 @@ from integration.config import config
 from src.main import run_hedge_fund
 from src.trading.alpaca_service import AlpacaService, OrderSide, OrderType
 from src.graph.portfolio_context import PortfolioContext
+
+# Lazy import for monitoring
+_event_logger = None
+
+
+def _get_event_logger():
+    """Get event logger lazily."""
+    global _event_logger
+    if _event_logger is None:
+        try:
+            from src.monitoring import get_event_logger
+            _event_logger = get_event_logger()
+        except ImportError:
+            pass
+    return _event_logger
+
+
+def _log_mazo_research(
+    workflow_id: uuid.UUID,
+    ticker: str,
+    query: str,
+    mode: str,
+    research: Optional[MazoResponse],
+    latency_ms: int,
+    error: str = None,
+):
+    """Log Mazo research to monitoring system."""
+    event_logger = _get_event_logger()
+    if not event_logger:
+        return
+    
+    try:
+        # Extract sentiment from response
+        sentiment = None
+        sentiment_confidence = None
+        key_points = None
+        
+        if research and research.answer:
+            answer_lower = research.answer.lower()
+            if "bullish" in answer_lower or "positive" in answer_lower:
+                sentiment = "bullish"
+            elif "bearish" in answer_lower or "negative" in answer_lower:
+                sentiment = "bearish"
+            else:
+                sentiment = "neutral"
+            
+            # Try to extract key points (first 3 bullet points or sentences)
+            key_points = []
+            for line in research.answer.split('\n')[:10]:
+                line = line.strip()
+                if line.startswith('-') or line.startswith('•') or line.startswith('*'):
+                    key_points.append(line[:200])
+                    if len(key_points) >= 3:
+                        break
+        
+        event_logger.log_mazo_research(
+            workflow_id=workflow_id,
+            ticker=ticker,
+            query=query[:500] if query else "",
+            mode=mode,
+            response=research.answer if research else None,
+            sources=[{"source": s} for s in (research.sources or [])] if research else None,
+            sentiment=sentiment,
+            sentiment_confidence=sentiment_confidence,
+            key_points=key_points,
+            success=research is not None and research.answer is not None,
+            error=error,
+            latency_ms=latency_ms,
+        )
+    except Exception as e:
+        # Don't let logging errors break the workflow
+        pass
 
 
 class WorkflowMode(Enum):
@@ -517,31 +591,79 @@ class UnifiedWorkflow:
     def _research_only(
         self,
         ticker: str,
-        depth: ResearchDepth
+        depth: ResearchDepth,
+        workflow_id: uuid.UUID = None,
     ) -> UnifiedResult:
         """Just run Mazo research"""
+        if not workflow_id:
+            workflow_id = uuid.uuid4()
+        
         print(f"  [Mazo] Researching {ticker} (depth: {depth.value})...")
 
         query = self._build_research_query(ticker, depth)
-        research = self.mazo.research(query)
+        
+        mazo_start = time.time()
+        research = None
+        mazo_error = None
+        try:
+            research = self.mazo.research(query)
+        except Exception as e:
+            mazo_error = str(e)[:200]
+            print(f"  [Mazo] Research error: {mazo_error}")
+        mazo_latency_ms = int((time.time() - mazo_start) * 1000)
+        
+        # Log Mazo research
+        _log_mazo_research(
+            workflow_id=workflow_id,
+            ticker=ticker,
+            query=query,
+            mode="research_only",
+            research=research,
+            latency_ms=mazo_latency_ms,
+            error=mazo_error,
+        )
 
         return UnifiedResult(
             ticker=ticker,
-            research_report=research.answer,
-            recommendations=self._extract_research_recommendations(research)
+            research_report=research.answer if research else "Research failed",
+            recommendations=self._extract_research_recommendations(research) if research else []
         )
 
     def _pre_research_flow(
         self,
         ticker: str,
         analysts: List[str],
-        depth: ResearchDepth
+        depth: ResearchDepth,
+        workflow_id: uuid.UUID = None,
     ) -> UnifiedResult:
         """Mazo research first, then AI Hedge Fund with context"""
+        if not workflow_id:
+            workflow_id = uuid.uuid4()
+        
         # Step 1: Mazo research
         print(f"  [Mazo] Pre-signal research on {ticker}...")
         query = self._build_research_query(ticker, depth)
-        research = self.mazo.research(query)
+        
+        mazo_start = time.time()
+        research = None
+        mazo_error = None
+        try:
+            research = self.mazo.research(query)
+        except Exception as e:
+            mazo_error = str(e)[:200]
+            print(f"  [Mazo] Research error: {mazo_error}")
+        mazo_latency_ms = int((time.time() - mazo_start) * 1000)
+        
+        # Log Mazo research
+        _log_mazo_research(
+            workflow_id=workflow_id,
+            ticker=ticker,
+            query=query,
+            mode="pre_research",
+            research=research,
+            latency_ms=mazo_latency_ms,
+            error=mazo_error,
+        )
 
         # Step 2: AI Hedge Fund with Mazo research context
         # Portfolio Manager will consider Mazo's analysis when making decisions
@@ -578,14 +700,18 @@ class UnifiedWorkflow:
         self,
         ticker: str,
         analysts: List[str],
-        depth: ResearchDepth
+        depth: ResearchDepth,
+        workflow_id: uuid.UUID = None,
     ) -> UnifiedResult:
         """AI Hedge Fund first, then Mazo explains"""
+        if not workflow_id:
+            workflow_id = uuid.uuid4()
+        
         # Get portfolio context for position-aware analysis
         portfolio_context_str = None
         if self._portfolio_context:
             portfolio_context_str = self._portfolio_context.to_ticker_context(ticker)
-        
+
         # Step 1: AI Hedge Fund signal
         print(f"  [AI Hedge Fund] Generating signal for {ticker}...")
         signal, confidence, agent_signals, raw_result = self._run_hedge_fund(ticker, analysts)
@@ -598,12 +724,31 @@ class UnifiedWorkflow:
 
         # Step 2: Mazo explains the signal (with portfolio context)
         print(f"  [Mazo] Explaining {signal} signal...")
-        research = self.mazo.explain_signal(
+        mazo_start = time.time()
+        research = None
+        mazo_error = None
+        try:
+            research = self.mazo.explain_signal(
+                ticker=ticker,
+                signal=signal,
+                confidence=confidence,
+                reasoning=reasoning,
+                portfolio_context=portfolio_context_str
+            )
+        except Exception as e:
+            mazo_error = str(e)[:200]
+            print(f"  [Mazo] Explain signal error: {mazo_error}")
+        mazo_latency_ms = int((time.time() - mazo_start) * 1000)
+        
+        # Log Mazo research
+        _log_mazo_research(
+            workflow_id=workflow_id,
             ticker=ticker,
-            signal=signal,
-            confidence=confidence,
-            reasoning=reasoning,
-            portfolio_context=portfolio_context_str
+            query=f"Explain {signal} signal for {ticker}",
+            mode="post_research",
+            research=research,
+            latency_ms=mazo_latency_ms,
+            error=mazo_error,
         )
 
         # Build recommendations
@@ -632,9 +777,13 @@ class UnifiedWorkflow:
         self,
         ticker: str,
         analysts: List[str],
-        depth: ResearchDepth
+        depth: ResearchDepth,
+        workflow_id: uuid.UUID = None,
     ) -> UnifiedResult:
         """Complete workflow: Pre-research → Signal → Post-research"""
+        if not workflow_id:
+            workflow_id = uuid.uuid4()
+        
         # Get portfolio context for position-aware analysis
         portfolio_context_str = None
         if self._portfolio_context:
@@ -643,9 +792,28 @@ class UnifiedWorkflow:
         
         # Step 1: Initial Mazo research (with portfolio awareness)
         print(f"  [Mazo] Initial research on {ticker}...")
-        initial_research = self.mazo.analyze_company(
-            ticker,
-            portfolio_context=portfolio_context_str
+        mazo_start = time.time()
+        initial_research = None
+        mazo_error = None
+        try:
+            initial_research = self.mazo.analyze_company(
+                ticker,
+                portfolio_context=portfolio_context_str
+            )
+        except Exception as e:
+            mazo_error = str(e)[:200]
+            print(f"  [Mazo] Initial research error: {mazo_error}")
+        mazo_latency_ms = int((time.time() - mazo_start) * 1000)
+        
+        # Log initial Mazo research
+        _log_mazo_research(
+            workflow_id=workflow_id,
+            ticker=ticker,
+            query=f"Analyze company: {ticker}",
+            mode="full_initial",
+            research=initial_research,
+            latency_ms=mazo_latency_ms,
+            error=mazo_error,
         )
 
         # Step 2: AI Hedge Fund with Mazo's research as context
@@ -665,12 +833,31 @@ class UnifiedWorkflow:
 
         # Step 3: Mazo deep dive on signal (with portfolio awareness)
         print(f"  [Mazo] Deep dive on signal...")
-        deep_research = self.mazo.explain_signal(
+        mazo_deep_start = time.time()
+        deep_research = None
+        deep_error = None
+        try:
+            deep_research = self.mazo.explain_signal(
+                ticker=ticker,
+                signal=signal,
+                confidence=confidence,
+                reasoning=reasoning,
+                portfolio_context=portfolio_context_str
+            )
+        except Exception as e:
+            deep_error = str(e)[:200]
+            print(f"  [Mazo] Deep dive error: {deep_error}")
+        deep_latency_ms = int((time.time() - mazo_deep_start) * 1000)
+        
+        # Log deep dive research
+        _log_mazo_research(
+            workflow_id=workflow_id,
             ticker=ticker,
-            signal=signal,
-            confidence=confidence,
-            reasoning=reasoning,
-            portfolio_context=portfolio_context_str
+            query=f"Explain {signal} signal for {ticker}",
+            mode="full_deep",
+            research=deep_research,
+            latency_ms=deep_latency_ms,
+            error=deep_error,
         )
 
         # Combine research reports
