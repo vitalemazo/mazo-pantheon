@@ -127,6 +127,19 @@ The primary interface for autonomous trading. Control your AI team from one scre
 - **Live Activity Feed** - Watch trades happen in real-time
 - **Open Positions** - Current holdings with P&L
 
+#### Live Server Example
+
+Here's the dashboard running on a live Unraid server with autonomous trading enabled:
+
+![Live Dashboard](docs/screenshots/live-dashboard-tower.png)
+
+This shows:
+- **Autonomous Mode ON** with "AI LIVE" indicator
+- **Real portfolio data**: $4,976.33 equity, $12,097.83 cash
+- **2 open positions**: AAPL SHORT (10 shares), MSFT SHORT (9 shares)
+- **Live Activity Feed** showing previous analyses and trading cycles
+- **40% budget allocation** ($1,990.53 effective budget)
+
 #### Quick Analysis
 
 Analyze any ticker instantly without waiting for the autonomous cycle:
@@ -137,6 +150,15 @@ Enter a ticker like "NVDA" and get:
 - Overall signal (BULLISH/BEARISH/NEUTRAL)
 - Confidence percentage
 - Individual agent signals (Fundamentals, Technical, Warren, Cathie, etc.)
+
+#### Live Analysis Example (TSLA)
+
+![Live TSLA Analysis](docs/screenshots/live-analysis-tsla.png)
+
+Real analysis of TSLA on a live server showing:
+- **BEARISH signal** with 58.08% confidence
+- **Agent breakdown**: Fundamentals (BEARISH), Technical (BULLISH), Sentiment (BEARISH), Growth (NEUTRAL), News (NEUTRAL), Valuation (BEARISH), Warren (BEARISH), Mohnish (BEARISH)
+- **Activity logged** to Live Activity feed with timestamps
 
 ---
 
@@ -588,6 +610,9 @@ curl -X POST http://localhost:8000/api-keys/sync-to-env
 | 22 | [Left Sidebar Activity](docs/screenshots/left-sidebar-activity.png) | AI Activity Feed populated with analysis events |
 | 23 | [Right Sidebar Logs](docs/screenshots/right-sidebar-logs.png) | Console Logs tab with real-time output |
 | 24 | [Sidebars Working](docs/screenshots/sidebars-working.png) | Both sidebars showing live data |
+| 25 | [Live Dashboard](docs/screenshots/live-dashboard-tower.png) | Live server with autonomous trading ON |
+| 26 | [Live TSLA Analysis](docs/screenshots/live-analysis-tsla.png) | Real-time TSLA analysis with agent signals |
+| 27 | [Live Agent Roster](docs/screenshots/live-agent-roster.png) | Agent roster on live server |
 
 ---
 
