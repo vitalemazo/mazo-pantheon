@@ -25,6 +25,7 @@ import {
   dataHydrationService,
   type Position,
 } from '@/services/data-hydration-service';
+import { useWorkflowContext } from '@/contexts/workflow-context';
 import { toast } from 'sonner';
 import { 
   Play, 
@@ -44,7 +45,9 @@ import {
   Bot,
   Sparkles,
   Eye,
-  Lock
+  Lock,
+  Search,
+  Telescope
 } from 'lucide-react';
 
 // Map API agent names to roster IDs
@@ -931,6 +934,15 @@ interface TickerSuggestion {
   exchange?: string;
 }
 
+// Analysis mode types
+type AnalysisMode = 'signal' | 'standard' | 'deep';
+
+const ANALYSIS_MODES: { value: AnalysisMode; label: string; description: string; icon: typeof Zap }[] = [
+  { value: 'signal', label: 'Quick', description: 'Fast signals only', icon: Zap },
+  { value: 'standard', label: 'Standard', description: 'Signals + Research', icon: Search },
+  { value: 'deep', label: 'Deep', description: 'Full analysis + Research', icon: Telescope },
+];
+
 // Quick Analysis Form Component - uses global store for persistence
 function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }) {
   // Use global store for persistence across tab switches
@@ -949,6 +961,20 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
     setLiveWorkflowProgress,
     updateWorkflowProgress,
   } = useHydratedData();
+
+  // WorkflowContext for Raw JSON tab
+  const {
+    setIsRunning: setWorkflowRunning,
+    setSteps,
+    setResults,
+    setConfig,
+    updateStep,
+    resetWorkflow,
+    setWorkflowStartTime,
+  } = useWorkflowContext();
+
+  // Analysis mode state
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('signal');
   
   // Local ticker for typing (syncs to store on blur)
   const [ticker, setTicker] = useState(storedTicker);
@@ -1014,7 +1040,7 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
     setSuggestions([]);
   };
 
-  const runAnalysis = async () => {
+  const runAnalysis = async (overrideMode?: AnalysisMode) => {
     if (!ticker.trim()) {
       toast.error('Please enter a ticker symbol');
       return;
@@ -1023,6 +1049,17 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
     const operationId = `quickAnalysis_${Date.now()}`;
     const workflowId = `workflow_${Date.now()}`;
     const tickerUpper = ticker.toUpperCase();
+    const effectiveMode = overrideMode || analysisMode;
+    
+    // Map UI mode to API mode
+    const apiModeMap: Record<AnalysisMode, string> = {
+      'signal': 'signal',
+      'standard': 'pre-research', // Standard includes initial Mazo research
+      'deep': 'full', // Deep includes full research before and after
+    };
+    const apiMode = apiModeMap[effectiveMode];
+    const includesResearch = effectiveMode !== 'signal';
+    
     setIsRunning(true);
     setResult(null);
     setShowSuggestions(false);
@@ -1043,11 +1080,43 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
       signals: {},
     });
 
+    // === Initialize WorkflowContext for Raw JSON tab ===
+    resetWorkflow();
+    setWorkflowRunning(true);
+    setWorkflowStartTime(Date.now());
+    setConfig({
+      tickers: tickerUpper,
+      mode: apiMode,
+      depth: effectiveMode === 'deep' ? 'deep' : 'standard',
+      executeTrades: false,
+      dryRun: true,
+      forceRefresh: false,
+    });
+
+    // Initialize steps based on mode
+    const initialSteps: any[] = [
+      { id: 'workflow_start', name: 'Workflow Start', status: 'running', startTime: Date.now() },
+      { id: 'data_aggregation', name: 'Data Aggregation', status: 'pending', subSteps: [], dataRetrievals: [] },
+    ];
+    if (includesResearch) {
+      initialSteps.push({ id: 'mazo_initial', name: 'Mazo Research', status: 'pending', mazoResearch: undefined });
+    }
+    initialSteps.push(
+      { id: 'ai_hedge_fund', name: 'AI Hedge Fund Analysis', status: 'pending', subSteps: [], agentExecutions: [] },
+      { id: 'agents', name: '18 Agents Processing', status: 'pending', subSteps: [], agentExecutions: [] },
+      { id: 'portfolio_manager', name: 'Portfolio Manager Decision', status: 'pending', agentExecutions: [] },
+    );
+    if (effectiveMode === 'deep') {
+      initialSteps.push({ id: 'mazo_deep_dive', name: 'Mazo Deep Dive', status: 'pending', mazoResearch: undefined });
+    }
+    setSteps(initialSteps);
+
     // Add to transparency sidebar
+    const modeLabel = ANALYSIS_MODES.find(m => m.value === effectiveMode)?.label || effectiveMode;
     addAgentActivity({
       timestamp: new Date().toISOString(),
       type: 'workflow_start',
-      message: `Starting Quick Analysis for ${tickerUpper}`,
+      message: `Starting ${modeLabel} Analysis for ${tickerUpper}`,
       ticker: tickerUpper,
     });
 
@@ -1055,7 +1124,7 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
       timestamp: new Date().toISOString(),
       level: 'info',
       source: 'QuickAnalysis',
-      message: `Initiating analysis for ${tickerUpper}`,
+      message: `Initiating ${modeLabel} analysis for ${tickerUpper} (mode: ${apiMode})`,
     });
 
     try {
@@ -1065,8 +1134,8 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tickers: [tickerUpper],
-          mode: 'signal', // Use signal mode for quick analysis
-          depth: 'quick',
+          mode: apiMode, // Use selected mode
+          depth: effectiveMode === 'deep' ? 'deep' : (effectiveMode === 'standard' ? 'standard' : 'quick'),
           execute_trades: false,
           dry_run: true,
         }),
@@ -1108,6 +1177,20 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
                 // Handle agent events for sidebar
                 if (eventType === 'progress' && data.message) {
                   const msg = data.message;
+                  
+                  // Update WorkflowContext steps based on progress messages
+                  if (msg.toLowerCase().includes('starting') || msg.toLowerCase().includes('workflow')) {
+                    updateStep('workflow_start', 'completed');
+                    updateStep('data_aggregation', 'running');
+                  }
+                  if (msg.toLowerCase().includes('data') && msg.toLowerCase().includes('complete')) {
+                    updateStep('data_aggregation', 'completed');
+                    updateStep('ai_hedge_fund', 'running');
+                  }
+                  if (msg.toLowerCase().includes('agent')) {
+                    updateStep('agents', 'running');
+                  }
+                  
                   // Check if this is an agent running/completing
                   const agentMatch = msg.match(/Running (\w+)|(\w+) agent complete/i);
                   if (agentMatch) {
@@ -1123,7 +1206,7 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
                         message: `${agentName} completed analysis`,
                         ticker: tickerUpper,
                       });
-                      updateWorkflowProgress({ 
+                      updateWorkflowProgress({
                         agentsComplete,
                         agentStatuses: { [agentName.toLowerCase()]: 'complete' as const }
                       });
@@ -1152,6 +1235,16 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
                       query: research.query || tickerUpper,
                       response: research.response || research.content || JSON.stringify(research),
                       sources: research.sources || [],
+                    }
+                  });
+                  // Also update WorkflowContext for Raw JSON tab
+                  updateStep('mazo_initial', 'completed', {
+                    mazo_research: {
+                      ticker: tickerUpper,
+                      query: research.query || tickerUpper,
+                      response: research.response || research.content,
+                      sources: research.sources || [],
+                      success: true,
                     }
                   });
                   addAgentActivity({
@@ -1314,10 +1407,39 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
         completedAt: new Date().toISOString(),
       });
 
+      // Finalize WorkflowContext steps
+      updateStep('agents', 'completed');
+      updateStep('portfolio_manager', 'completed', {
+        agent_executions: finalResult?.agent_signals?.map((sig: any) => ({
+          agentName: sig.agent_name,
+          signal: sig.signal,
+          confidence: sig.confidence,
+          reasoning: sig.reasoning,
+          timestamp: new Date().toISOString(),
+        })) || [],
+      });
+      if (effectiveMode === 'deep') {
+        updateStep('mazo_deep_dive', 'completed');
+      }
+      
+      // Set results for Raw JSON tab
+      if (finalResult) {
+        setResults([{
+          ticker: tickerUpper,
+          signal: finalResult.signal,
+          confidence: finalResult.confidence,
+          agent_signals: finalResult.agent_signals,
+          reasoning: finalResult.reasoning,
+          trade: null,
+          recommendations: [],
+        }]);
+      }
+      setWorkflowRunning(false);
+
       addAgentActivity({
         timestamp: new Date().toISOString(),
         type: 'workflow_complete',
-        message: `Quick Analysis complete: ${tickerUpper} → ${finalResult?.signal || 'NEUTRAL'}`,
+        message: `${modeLabel} Analysis complete: ${tickerUpper} → ${finalResult?.signal || 'NEUTRAL'}`,
         ticker: tickerUpper,
       });
 
@@ -1326,7 +1448,7 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
         finalResult.timestamp = new Date().toISOString();
         setResult(finalResult);
         onComplete({ ticker: ticker.toUpperCase(), ...finalResult });
-        toast.success(`Analysis complete for ${ticker.toUpperCase()}`);
+        toast.success(`${modeLabel} analysis complete for ${ticker.toUpperCase()}`);
         
         // Add to activity log
         addAIActivity({
@@ -1365,14 +1487,50 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
         source: 'QuickAnalysis',
         message: error.message,
       });
+      setWorkflowRunning(false);
     } finally {
       setIsRunning(false);
       endOperation(operationId);
     }
   };
 
+  // Run Deep Analysis (shortcut button)
+  const runDeepAnalysis = () => {
+    if (!ticker.trim()) {
+      toast.error('Please enter a ticker symbol first');
+      return;
+    }
+    runAnalysis('deep');
+  };
+
   return (
     <div className="space-y-4">
+      {/* Mode Selector */}
+      <div className="flex gap-2">
+        {ANALYSIS_MODES.map((mode) => {
+          const Icon = mode.icon;
+          return (
+            <button
+              key={mode.value}
+              onClick={() => setAnalysisMode(mode.value)}
+              disabled={isRunning}
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm transition-all ${
+                analysisMode === mode.value
+                  ? 'bg-cyan-600 text-white border border-cyan-500'
+                  : 'bg-slate-700/50 text-slate-300 border border-slate-600 hover:border-slate-500'
+              } ${isRunning ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <Icon className="w-4 h-4" />
+              <div className="text-left">
+                <div className="font-medium">{mode.label}</div>
+                <div className="text-xs opacity-70">{mode.description}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Ticker Input */}
       <div className="flex gap-3 relative">
         <div className="flex-1 relative">
           <input
@@ -1428,7 +1586,7 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
         </div>
         
         <Button
-          onClick={runAnalysis}
+          onClick={() => runAnalysis()}
           disabled={isRunning || !ticker.trim()}
           className="bg-cyan-600 hover:bg-cyan-700"
         >
@@ -1444,6 +1602,19 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
             </>
           )}
         </Button>
+        
+        {/* Deep Analysis shortcut button */}
+        {analysisMode !== 'deep' && (
+          <Button
+            onClick={runDeepAnalysis}
+            disabled={isRunning || !ticker.trim()}
+            variant="outline"
+            className="border-purple-500 text-purple-400 hover:bg-purple-500/10"
+            title="Run full analysis with deep research"
+          >
+            <Telescope className="w-4 h-4" />
+          </Button>
+        )}
       </div>
 
       {result && (
@@ -1492,7 +1663,10 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
       )}
 
       <p className="text-xs text-slate-500">
-        Quick analysis runs in dry-run mode. Enable autonomous trading for live execution.
+        {analysisMode === 'signal' && 'Quick analysis runs agents only (fastest). Select Standard or Deep for Mazo research.'}
+        {analysisMode === 'standard' && 'Standard analysis includes Mazo research before agent signals.'}
+        {analysisMode === 'deep' && 'Deep analysis includes full Mazo research and comprehensive agent analysis.'}
+        {' '}All modes run in dry-run mode.
       </p>
     </div>
   );
