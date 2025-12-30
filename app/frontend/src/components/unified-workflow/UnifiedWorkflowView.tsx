@@ -27,6 +27,8 @@ import {
   DollarSign
 } from 'lucide-react';
 import { runUnifiedWorkflow, UnifiedWorkflowRequest, UnifiedWorkflowResult } from '@/services/unified-workflow-api';
+import { dataHydrationService, WorkflowResult } from '@/services/data-hydration-service';
+import { toast } from 'sonner';
 
 interface WorkflowStep {
   id: string;
@@ -203,7 +205,8 @@ export function UnifiedWorkflowView() {
               updateStep(stepId, 'completed', event.data);
             }
           } else if (event.type === 'complete') {
-            setResults(event.data?.results || []);
+            const rawResults = event.data?.results || [];
+            setResults(rawResults);
             // Mark all steps as completed
             setSteps(prev => prev.map(step => 
               step.status === 'running' 
@@ -211,10 +214,59 @@ export function UnifiedWorkflowView() {
                 : step
             ));
             setIsRunning(false);
+            
+            // === INTEGRATION: Record in shared store so all tabs see it ===
+            const workflowResult: WorkflowResult = {
+              id: `workflow-${Date.now()}`,
+              timestamp: new Date(),
+              tickers: tickerList,
+              mode: mode,
+              agentSignals: rawResults.flatMap((r: any) => 
+                (r.agent_signals || []).map((s: any) => ({
+                  agent: s.agent_name || s.agent || 'Unknown',
+                  signal: s.signal || 'NEUTRAL',
+                  confidence: s.confidence || 0,
+                  reasoning: typeof s.reasoning === 'string' ? s.reasoning : JSON.stringify(s.reasoning),
+                }))
+              ),
+              mazoResearch: rawResults[0]?.research_report,
+              pmDecision: rawResults[0]?.pm_decision ? {
+                action: rawResults[0].pm_decision.action,
+                ticker: rawResults[0].pm_decision.ticker,
+                quantity: rawResults[0].pm_decision.quantity,
+                reasoning: rawResults[0].portfolio_manager_reasoning,
+              } : undefined,
+              tradeExecuted: rawResults[0]?.trade?.executed ? {
+                orderId: rawResults[0].trade.order_id,
+                action: rawResults[0].trade.action,
+                quantity: rawResults[0].trade.quantity,
+                price: rawResults[0].trade.filled_price,
+              } : undefined,
+              success: true,
+            };
+            
+            // This updates the shared store AND refreshes positions/trades if needed
+            dataHydrationService.recordWorkflowComplete(workflowResult);
+            console.log('[UnifiedWorkflowView] Workflow recorded in shared store:', workflowResult.id);
+            
+            // Show success notification
+            const actionText = workflowResult.pmDecision?.action 
+              ? `→ ${workflowResult.pmDecision.action.toUpperCase()}` 
+              : '';
+            toast.success(`Workflow complete for ${tickerList.join(', ')} ${actionText}`.trim(), {
+              duration: 4000,
+              position: 'top-right',
+            });
           } else if (event.type === 'error') {
             setError(event.message || 'An error occurred');
             updateStep('error', 'error', { message: event.message });
             setIsRunning(false);
+            
+            // Show error notification
+            toast.error(`Workflow failed: ${event.message || 'Unknown error'}`, {
+              duration: 5000,
+              position: 'top-right',
+            });
           }
         },
         abortControllerRef.current.signal

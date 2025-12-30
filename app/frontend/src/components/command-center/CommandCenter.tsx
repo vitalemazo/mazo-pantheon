@@ -329,10 +329,20 @@ export function CommandCenter() {
                 
                 {/* Also show executed trades from history */}
                 {trades.length === 0 && recentWorkflows.length === 0 ? (
-                  <div className="text-center py-6 text-slate-400">
-                    <History className="w-10 h-10 mx-auto mb-2 opacity-50" />
-                    <p>No decisions recorded yet</p>
-                    <p className="text-sm mt-1">Run a workflow from the Unified Workflow tab</p>
+                  <div className="text-center py-8 text-slate-400">
+                    <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-700/50 flex items-center justify-center">
+                      <Zap className="w-8 h-8 opacity-50" />
+                    </div>
+                    <p className="text-lg font-medium text-slate-300">No AI decisions yet</p>
+                    <p className="text-sm mt-2 max-w-md mx-auto">
+                      When you run an analysis from the <span className="text-cyan-400">Unified Workflow</span> tab, 
+                      the AI decisions will appear here with full reasoning and agent signals.
+                    </p>
+                    <div className="mt-4 p-3 bg-slate-700/30 rounded-lg inline-block">
+                      <p className="text-xs text-slate-500">
+                        💡 Tip: Try running a workflow with "Dry Run" enabled first to test safely
+                      </p>
+                    </div>
                   </div>
                 ) : trades.length > 0 && (
                   <div className="space-y-3">
@@ -418,10 +428,29 @@ export function CommandCenter() {
               <CardContent>
                 {trades.length === 0 ? (
                   <div className="text-center py-12 text-slate-400">
-                    <History className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                    <p className="text-lg">No trades recorded yet</p>
-                    <p className="text-sm mt-2">
-                      Run a workflow or wait for the automated trading cycle to create trades
+                    <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-slate-700/50 flex items-center justify-center">
+                      <History className="w-10 h-10 opacity-50" />
+                    </div>
+                    <p className="text-xl font-medium text-slate-300">Trade History Empty</p>
+                    <p className="text-sm mt-3 max-w-lg mx-auto">
+                      Your trading history will appear here after you execute trades. Each trade includes:
+                    </p>
+                    <div className="grid grid-cols-3 gap-3 mt-4 max-w-md mx-auto text-xs">
+                      <div className="p-2 bg-slate-700/30 rounded">
+                        <span className="text-cyan-400">Entry/Exit</span>
+                        <p className="text-slate-500 mt-1">Price & timing</p>
+                      </div>
+                      <div className="p-2 bg-slate-700/30 rounded">
+                        <span className="text-purple-400">Agent Votes</span>
+                        <p className="text-slate-500 mt-1">18 AI signals</p>
+                      </div>
+                      <div className="p-2 bg-slate-700/30 rounded">
+                        <span className="text-emerald-400">P&L</span>
+                        <p className="text-slate-500 mt-1">Real returns</p>
+                      </div>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-4">
+                      Enable "Execute Trades" in Unified Workflow to start recording trades
                     </p>
                   </div>
                 ) : (
@@ -515,11 +544,31 @@ export function CommandCenter() {
               <CardContent>
                 {agents.length === 0 ? (
                   <div className="text-center py-12 text-slate-400">
-                    <Users className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                    <p className="text-lg">No agent data yet</p>
-                    <p className="text-sm mt-2">
-                      Agent performance will be tracked as trades are executed
+                    <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-slate-700/50 flex items-center justify-center">
+                      <Users className="w-10 h-10 opacity-50" />
+                    </div>
+                    <p className="text-xl font-medium text-slate-300">Agent Leaderboard Coming Soon</p>
+                    <p className="text-sm mt-3 max-w-lg mx-auto">
+                      The system will track how each of the 18 AI agents performs over time:
                     </p>
+                    <div className="flex flex-wrap justify-center gap-2 mt-4 max-w-lg mx-auto">
+                      {['Warren Buffett', 'Ben Graham', 'Cathie Wood', 'Peter Lynch', 'Charlie Munger', 'Bill Ackman'].map((name) => (
+                        <Badge key={name} variant="outline" className="border-slate-600 text-slate-400">
+                          {name}
+                        </Badge>
+                      ))}
+                      <Badge variant="outline" className="border-slate-600 text-slate-500">
+                        +12 more agents
+                      </Badge>
+                    </div>
+                    <div className="mt-6 p-4 bg-slate-700/30 rounded-lg max-w-sm mx-auto text-left">
+                      <p className="text-xs text-slate-400 mb-2">Tracking includes:</p>
+                      <ul className="text-xs text-slate-500 space-y-1">
+                        <li>• Accuracy rate (correct predictions)</li>
+                        <li>• Average return when signal was followed</li>
+                        <li>• Best and worst calls</li>
+                      </ul>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-3">

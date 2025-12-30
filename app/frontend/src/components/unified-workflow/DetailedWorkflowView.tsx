@@ -43,6 +43,7 @@ import {
 import { runUnifiedWorkflow, UnifiedWorkflowRequest } from '@/services/unified-workflow-api';
 import { cn } from '@/lib/utils';
 import { dataHydrationService, WorkflowResult } from '@/services/data-hydration-service';
+import { toast } from 'sonner';
 import { WorkflowModeHelp } from './WorkflowModeHelp';
 import { ResearchDepthHelp } from './ResearchDepthHelp';
 import { TradingOptionsHelp } from './TradingOptionsHelp';
@@ -318,10 +319,26 @@ export function DetailedWorkflowView() {
             dataHydrationService.recordWorkflowComplete(workflowResult);
             console.log('[DetailedWorkflowView] Workflow recorded in shared store:', workflowResult.id);
             
+            // Show success notification
+            const actionText = workflowResult.pmDecision?.action 
+              ? `→ ${workflowResult.pmDecision.action.toUpperCase()}` 
+              : '';
+            const tradeText = workflowResult.tradeExecuted ? ' (Trade Executed!)' : '';
+            toast.success(`Workflow complete for ${tickerList.join(', ')} ${actionText}${tradeText}`.trim(), {
+              duration: 4000,
+              position: 'top-right',
+            });
+            
           } else if (event.type === 'error') {
             setError(event.message || 'An error occurred');
             updateStep('error', 'error', { message: event.message });
             setIsRunning(false);
+            
+            // Show error notification
+            toast.error(`Workflow failed: ${event.message || 'Unknown error'}`, {
+              duration: 5000,
+              position: 'top-right',
+            });
           }
         },
         abortControllerRef.current.signal
