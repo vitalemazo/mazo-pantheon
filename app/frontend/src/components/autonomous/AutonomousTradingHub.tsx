@@ -810,29 +810,95 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
     setResult(null);
 
     try {
+      // Start the analysis via POST to get the stream
       const response = await fetch(`${API_BASE_URL}/unified-workflow/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tickers: [ticker.toUpperCase()],
-          mode: 'full',
+          mode: 'signal', // Use signal mode for quick analysis
           depth: 'quick',
           execute_trades: false,
           dry_run: true,
         }),
       });
 
-      const data = await response.json();
-      
-      if (data.results && data.results.length > 0) {
-        setResult(data.results[0]);
-        onComplete({ ticker: ticker.toUpperCase(), ...data.results[0] });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      // Handle SSE stream
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let finalResult: any = null;
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const eventData = JSON.parse(line.slice(6));
+                
+                // Look for complete event with results
+                if (eventData.type === 'complete' && eventData.data) {
+                  const results = eventData.data.results || eventData.data;
+                  if (Array.isArray(results) && results.length > 0) {
+                    finalResult = results[0];
+                  } else if (results.decisions) {
+                    // Extract from decisions format
+                    const tickerKey = ticker.toUpperCase();
+                    const decision = results.decisions[tickerKey];
+                    if (decision) {
+                      finalResult = {
+                        signal: decision.action?.toUpperCase() || 'NEUTRAL',
+                        confidence: decision.confidence,
+                        reasoning: decision.reasoning,
+                        agent_signals: Object.entries(results.analyst_signals?.[tickerKey] || {}).map(
+                          ([name, sig]: [string, any]) => ({
+                            agent_name: name,
+                            signal: sig.signal?.toUpperCase(),
+                            confidence: sig.confidence
+                          })
+                        )
+                      };
+                    }
+                  }
+                }
+                
+                // Also check for hedge_fund_signal in progress events
+                if (eventData.type === 'progress' && eventData.data?.hedge_fund_signal) {
+                  const sig = eventData.data.hedge_fund_signal;
+                  finalResult = {
+                    signal: sig.action?.toUpperCase() || sig.signal?.toUpperCase() || 'NEUTRAL',
+                    confidence: sig.confidence,
+                    reasoning: sig.reasoning,
+                    agent_signals: sig.agent_signals
+                  };
+                }
+              } catch {
+                // Skip non-JSON lines
+              }
+            }
+          }
+        }
+      }
+
+      if (finalResult) {
+        setResult(finalResult);
+        onComplete({ ticker: ticker.toUpperCase(), ...finalResult });
         toast.success(`Analysis complete for ${ticker.toUpperCase()}`);
       } else {
         toast.info('Analysis complete but no actionable signal found');
-        setResult({ signal: 'NEUTRAL', message: 'No strong signal' });
+        setResult({ signal: 'NEUTRAL', message: 'No strong signal detected' });
       }
     } catch (error: any) {
+      console.error('Analysis error:', error);
       toast.error(`Analysis failed: ${error.message}`);
     } finally {
       setIsRunning(false);
