@@ -713,3 +713,60 @@ def get_scheduler() -> TradingScheduler:
     if _scheduler is None:
         _scheduler = TradingScheduler()
     return _scheduler
+
+
+async def run_daemon():
+    """Run the scheduler as a background daemon."""
+    import asyncio
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    logger.info("=" * 60)
+    logger.info("MAZO PANTHEON TRADING SCHEDULER")
+    logger.info("=" * 60)
+    logger.info("Starting autonomous trading scheduler daemon...")
+    
+    scheduler = get_scheduler()
+    
+    if not scheduler.scheduler:
+        logger.error("APScheduler not available. Cannot start daemon.")
+        return
+    
+    # Setup default schedule with automated trading
+    scheduler.add_default_schedule()
+    
+    # Start the scheduler
+    scheduler.start()
+    
+    logger.info("Scheduler is running. Market hours: 9:30 AM - 4:00 PM ET")
+    logger.info("Scheduled tasks:")
+    for job in scheduler.scheduler.get_jobs():
+        logger.info(f"  - {job.id}: {job.next_run_time}")
+    
+    # Keep the daemon running
+    try:
+        while True:
+            await asyncio.sleep(60)
+            # Log heartbeat every 5 minutes
+            if datetime.now().minute % 5 == 0:
+                logger.info(f"Scheduler heartbeat - {len(scheduler.scheduler.get_jobs())} jobs active")
+    except KeyboardInterrupt:
+        logger.info("Shutdown signal received")
+    finally:
+        scheduler.stop()
+        logger.info("Scheduler stopped")
+
+
+if __name__ == "__main__":
+    import sys
+    import asyncio
+    
+    if "--daemon" in sys.argv:
+        print("Starting Mazo Trading Scheduler Daemon...")
+        asyncio.run(run_daemon())
+    else:
+        print("Usage: python -m src.trading.scheduler --daemon")
+        print("  --daemon    Run as background scheduler daemon")
