@@ -13,7 +13,7 @@
  * - Trade execution
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { API_BASE_URL } from '@/lib/api-config';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -794,11 +794,98 @@ export function AutonomousTradingHub() {
   );
 }
 
-// Quick Analysis Form Component
+// Ticker suggestions from Alpaca
+interface TickerSuggestion {
+  symbol: string;
+  name: string;
+  exchange?: string;
+}
+
+// Quick Analysis Form Component with ticker autocomplete and persistence
 function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }) {
-  const [ticker, setTicker] = useState('');
+  // Load persisted state from localStorage
+  const [ticker, setTicker] = useState(() => {
+    try {
+      return localStorage.getItem('quickAnalysis_ticker') || '';
+    } catch { return ''; }
+  });
   const [isRunning, setIsRunning] = useState(false);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<any>(() => {
+    try {
+      const saved = localStorage.getItem('quickAnalysis_result');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
+  
+  // Autocomplete state
+  const [suggestions, setSuggestions] = useState<TickerSuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Persist ticker and result to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('quickAnalysis_ticker', ticker);
+    } catch {}
+  }, [ticker]);
+
+  useEffect(() => {
+    try {
+      if (result) {
+        localStorage.setItem('quickAnalysis_result', JSON.stringify(result));
+      }
+    } catch {}
+  }, [result]);
+
+  // Search for ticker suggestions from Alpaca
+  const searchTickers = useCallback(async (query: string) => {
+    if (query.length < 1) {
+      setSuggestions([]);
+      return;
+    }
+
+    setSearchLoading(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/alpaca/assets?search=${encodeURIComponent(query)}&limit=8`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setSuggestions(data.assets || []);
+      }
+    } catch (e) {
+      console.error('Ticker search failed:', e);
+    } finally {
+      setSearchLoading(false);
+    }
+  }, []);
+
+  // Debounced search
+  useEffect(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+
+    if (ticker.length >= 1 && showSuggestions) {
+      debounceRef.current = setTimeout(() => {
+        searchTickers(ticker);
+      }, 200);
+    } else {
+      setSuggestions([]);
+    }
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [ticker, showSuggestions, searchTickers]);
+
+  const selectTicker = (symbol: string) => {
+    setTicker(symbol);
+    setShowSuggestions(false);
+    setSuggestions([]);
+  };
 
   const runAnalysis = async () => {
     if (!ticker.trim()) {
@@ -808,6 +895,7 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
 
     setIsRunning(true);
     setResult(null);
+    setShowSuggestions(false);
 
     try {
       // Start the analysis via POST to get the stream
@@ -890,12 +978,20 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
       }
 
       if (finalResult) {
+        finalResult.ticker = ticker.toUpperCase();
+        finalResult.timestamp = new Date().toISOString();
         setResult(finalResult);
         onComplete({ ticker: ticker.toUpperCase(), ...finalResult });
         toast.success(`Analysis complete for ${ticker.toUpperCase()}`);
       } else {
+        const neutralResult = { 
+          signal: 'NEUTRAL', 
+          message: 'No strong signal detected',
+          ticker: ticker.toUpperCase(),
+          timestamp: new Date().toISOString()
+        };
+        setResult(neutralResult);
         toast.info('Analysis complete but no actionable signal found');
-        setResult({ signal: 'NEUTRAL', message: 'No strong signal detected' });
       }
     } catch (error: any) {
       console.error('Analysis error:', error);
@@ -907,16 +1003,60 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-3">
-        <input
-          type="text"
-          value={ticker}
-          onChange={(e) => setTicker(e.target.value.toUpperCase())}
-          placeholder="Enter ticker (e.g., AAPL)"
-          disabled={isRunning}
-          className="flex-1 px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:border-cyan-500 focus:outline-none"
-          onKeyDown={(e) => e.key === 'Enter' && runAnalysis()}
-        />
+      <div className="flex gap-3 relative">
+        <div className="flex-1 relative">
+          <input
+            ref={inputRef}
+            type="text"
+            value={ticker}
+            onChange={(e) => setTicker(e.target.value.toUpperCase())}
+            onFocus={() => setShowSuggestions(true)}
+            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+            placeholder="Enter ticker (e.g., AAPL)"
+            disabled={isRunning}
+            className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:border-cyan-500 focus:outline-none"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                runAnalysis();
+              } else if (e.key === 'Escape') {
+                setShowSuggestions(false);
+              }
+            }}
+          />
+          
+          {/* Ticker Suggestions Dropdown */}
+          {showSuggestions && (suggestions.length > 0 || searchLoading) && (
+            <div className="absolute z-50 w-full mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg max-h-64 overflow-auto">
+              {searchLoading && (
+                <div className="px-3 py-2 text-sm text-slate-400 flex items-center gap-2">
+                  <RefreshCw className="w-3 h-3 animate-spin" />
+                  Searching...
+                </div>
+              )}
+              {suggestions.map((asset) => (
+                <button
+                  key={asset.symbol}
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    selectTicker(asset.symbol);
+                  }}
+                  className="w-full px-3 py-2 text-left hover:bg-slate-700 flex items-center justify-between"
+                >
+                  <div>
+                    <span className="font-medium text-white">{asset.symbol}</span>
+                    {asset.exchange && (
+                      <span className="ml-2 text-xs text-slate-500">{asset.exchange}</span>
+                    )}
+                    <div className="text-xs text-slate-400 truncate">{asset.name}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        
         <Button
           onClick={runAnalysis}
           disabled={isRunning || !ticker.trim()}
