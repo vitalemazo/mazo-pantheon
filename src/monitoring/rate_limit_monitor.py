@@ -119,8 +119,19 @@ class RateLimitMonitor:
                 )
             
             quota = self._quotas[api_name]
+            
+            # Auto-reset window after 1 minute
+            now = datetime.now(timezone.utc)
+            if quota.window_start:
+                elapsed = (now - quota.window_start).total_seconds()
+                if elapsed >= 60:  # 1 minute window
+                    quota.calls_made = 0
+                    quota.window_start = now
+                    quota.consecutive_errors = 0
+                    logger.debug(f"Auto-reset rate limit window for {api_name} after {elapsed:.0f}s")
+            
             quota.calls_made += 1
-            quota.last_call_at = datetime.now(timezone.utc)
+            quota.last_call_at = now
             
             if rate_limit_remaining is not None:
                 quota.calls_remaining = rate_limit_remaining
@@ -220,8 +231,19 @@ class RateLimitMonitor:
     def get_all_status(self) -> Dict[str, Dict[str, Any]]:
         """Get status for all tracked APIs."""
         with self._lock:
-            return {
-                name: {
+            now = datetime.now(timezone.utc)
+            result = {}
+            
+            for name, quota in self._quotas.items():
+                # Auto-reset window if expired
+                if quota.window_start:
+                    elapsed = (now - quota.window_start).total_seconds()
+                    if elapsed >= 60:  # 1 minute window
+                        quota.calls_made = 0
+                        quota.window_start = now
+                        quota.consecutive_errors = 0
+                
+                result[name] = {
                     "calls_made": quota.calls_made,
                     "calls_remaining": quota.calls_remaining,
                     "limit": quota.limit,
@@ -229,8 +251,8 @@ class RateLimitMonitor:
                     "last_call_at": quota.last_call_at.isoformat() if quota.last_call_at else None,
                     "consecutive_errors": quota.consecutive_errors,
                 }
-                for name, quota in self._quotas.items()
-            }
+            
+            return result
     
     def reset_window(self, api_name: str):
         """Reset the tracking window for an API (e.g., when quota resets)."""

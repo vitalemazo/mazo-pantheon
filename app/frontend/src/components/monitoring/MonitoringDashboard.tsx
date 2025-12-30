@@ -39,7 +39,7 @@ export function MonitoringDashboard() {
   const hasP0 = alerts?.some((a: any) => a.priority === 'P0');
   
   return (
-    <div className="space-y-4">
+    <div className="h-full overflow-auto p-4 space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
