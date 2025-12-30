@@ -8,6 +8,7 @@ from app.backend.database.connection import engine
 from app.backend.database.models import Base
 from app.backend.services.ollama_service import ollama_service
 from app.backend.services.env_sync_service import sync_env_on_startup
+from app.backend.services.cache_service import get_cache_stats, get_redis_client
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -121,3 +122,30 @@ async def shutdown_event():
         logger.info("Trading scheduler stopped")
     except Exception as e:
         logger.warning(f"Error stopping scheduler: {e}")
+
+
+# ==================== CACHE ENDPOINTS ====================
+
+@app.get("/cache/stats")
+async def cache_stats():
+    """Get Redis cache statistics."""
+    return get_cache_stats()
+
+
+@app.post("/cache/clear")
+async def cache_clear(pattern: str = ""):
+    """Clear cache entries matching pattern (empty = all)."""
+    from app.backend.services.cache_service import delete_cached
+    
+    if pattern:
+        count = delete_cached(pattern)
+        return {"cleared": count, "pattern": pattern}
+    else:
+        # Clear all mazo keys
+        client = get_redis_client()
+        if client:
+            keys = client.keys("mazo:*")
+            if keys:
+                count = client.delete(*keys)
+                return {"cleared": count, "pattern": "mazo:*"}
+        return {"cleared": 0, "pattern": "mazo:*"}

@@ -5,6 +5,8 @@ Provides endpoints for:
 - Fetching tradeable assets (ticker search)
 - Account information
 - Portfolio status
+
+Uses Redis caching to dramatically speed up asset searches.
 """
 
 from fastapi import APIRouter, HTTPException, Query, Depends
@@ -16,6 +18,13 @@ import logging
 
 from app.backend.database import get_db
 from app.backend.repositories.api_key_repository import ApiKeyRepository
+from app.backend.services.cache_service import (
+    get_cached_alpaca_assets, 
+    cache_alpaca_assets,
+    CacheTTL,
+    get_cached,
+    set_cached,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,73 +70,57 @@ async def get_tradeable_assets(
     """
     Get a list of tradeable assets from Alpaca.
     
-    Filters by tradable=True to only return currently tradeable assets.
-    Use the search parameter to filter by symbol or company name.
+    Uses Redis caching (1 hour TTL) to avoid repeated API calls.
+    The full asset list is cached, then filtered client-side for searches.
     """
-    api_key, secret_key, base_url = get_alpaca_credentials(db)
+    # Try to get cached assets first
+    cache_key = f"alpaca:assets:{asset_class}"
+    cached_assets = get_cached(cache_key)
     
-    if not api_key or not secret_key:
-        raise HTTPException(
-            status_code=400, 
-            detail="Alpaca API credentials not configured. Set ALPACA_API_KEY and ALPACA_SECRET_KEY in Settings."
-        )
-    
-    # Alpaca assets endpoint is on the trading API
-    # Remove /v2 from base_url if present for assets endpoint
-    assets_base = base_url.replace("/v2", "").replace("paper-api", "paper-api")
-    assets_url = f"{assets_base}/v2/assets"
-    
-    headers = {
-        "APCA-API-KEY-ID": api_key,
-        "APCA-API-SECRET-KEY": secret_key,
-    }
-    
-    params = {
-        "status": "active",
-        "asset_class": asset_class,
-    }
-    
-    try:
-        response = requests.get(assets_url, headers=headers, params=params, timeout=30)
+    if cached_assets is None:
+        # Cache miss - fetch from Alpaca
+        logger.info(f"[Cache] Fetching Alpaca assets from API...")
         
-        if response.status_code != 200:
-            error_msg = response.text
-            try:
-                error_data = response.json()
-                error_msg = error_data.get("message", response.text)
-            except:
-                pass
+        api_key, secret_key, base_url = get_alpaca_credentials(db)
+        
+        if not api_key or not secret_key:
             raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Alpaca API error: {error_msg}"
+                status_code=400, 
+                detail="Alpaca API credentials not configured. Set ALPACA_API_KEY and ALPACA_SECRET_KEY in Settings."
             )
         
-        all_assets = response.json()
+        assets_base = base_url.replace("/v2", "").replace("paper-api", "paper-api")
+        assets_url = f"{assets_base}/v2/assets"
         
-        # Filter for tradeable assets only
-        tradeable_assets = [
-            asset for asset in all_assets 
-            if asset.get("tradable") == True and asset.get("status") == "active"
-        ]
+        headers = {
+            "APCA-API-KEY-ID": api_key,
+            "APCA-API-SECRET-KEY": secret_key,
+        }
         
-        # Apply search filter if provided
-        if search:
-            search_lower = search.lower()
-            tradeable_assets = [
-                asset for asset in tradeable_assets
-                if search_lower in asset.get("symbol", "").lower() 
-                or search_lower in asset.get("name", "").lower()
-            ]
+        params = {
+            "status": "active",
+            "asset_class": asset_class,
+        }
         
-        # Sort by symbol
-        tradeable_assets.sort(key=lambda x: x.get("symbol", ""))
-        
-        # Limit results
-        tradeable_assets = tradeable_assets[:limit]
-        
-        # Return simplified response
-        return {
-            "assets": [
+        try:
+            response = requests.get(assets_url, headers=headers, params=params, timeout=30)
+            
+            if response.status_code != 200:
+                error_msg = response.text
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("message", response.text)
+                except:
+                    pass
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Alpaca API error: {error_msg}"
+                )
+            
+            all_assets = response.json()
+            
+            # Filter for tradeable assets and simplify
+            cached_assets = [
                 {
                     "symbol": asset.get("symbol"),
                     "name": asset.get("name"),
@@ -137,22 +130,58 @@ async def get_tradeable_assets(
                     "shortable": asset.get("shortable", False),
                     "easy_to_borrow": asset.get("easy_to_borrow", False),
                 }
-                for asset in tradeable_assets
-            ],
-            "total": len(tradeable_assets),
-            "search": search,
-        }
-        
-    except requests.exceptions.Timeout:
-        raise HTTPException(status_code=504, detail="Alpaca API timeout")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Alpaca API request failed: {e}")
-        raise HTTPException(status_code=502, detail=f"Failed to connect to Alpaca: {str(e)}")
+                for asset in all_assets 
+                if asset.get("tradable") == True and asset.get("status") == "active"
+            ]
+            
+            # Cache for 1 hour (assets rarely change)
+            set_cached(cache_key, cached_assets, CacheTTL.ALPACA_ASSETS)
+            logger.info(f"[Cache] Cached {len(cached_assets)} Alpaca assets")
+            
+        except requests.exceptions.Timeout:
+            raise HTTPException(status_code=504, detail="Alpaca API timeout")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Alpaca API request failed: {e}")
+            raise HTTPException(status_code=502, detail=f"Failed to connect to Alpaca: {str(e)}")
+    else:
+        logger.debug(f"[Cache] Using cached Alpaca assets ({len(cached_assets)} items)")
+    
+    # Now filter cached assets
+    tradeable_assets = cached_assets
+    
+    # Apply search filter if provided
+    if search:
+        search_lower = search.lower()
+        tradeable_assets = [
+            asset for asset in tradeable_assets
+            if search_lower in asset.get("symbol", "").lower() 
+            or search_lower in asset.get("name", "").lower()
+        ]
+    
+    # Sort by symbol
+    tradeable_assets.sort(key=lambda x: x.get("symbol", ""))
+    
+    # Limit results
+    tradeable_assets = tradeable_assets[:limit]
+    
+    return {
+        "assets": tradeable_assets,
+        "total": len(tradeable_assets),
+        "search": search,
+        "cached": cached_assets is not None,
+    }
 
 
 @router.get("/status")
 async def get_alpaca_status(db: Session = Depends(get_db)):
-    """Check Alpaca connection status and account info."""
+    """Check Alpaca connection status and account info (cached for 30 seconds)."""
+    # Check cache first
+    cache_key = "alpaca:status"
+    cached_status = get_cached(cache_key)
+    if cached_status:
+        cached_status["cached"] = True
+        return cached_status
+    
     api_key, secret_key, base_url = get_alpaca_credentials(db)
     
     if not api_key or not secret_key:
@@ -160,6 +189,7 @@ async def get_alpaca_status(db: Session = Depends(get_db)):
             "connected": False,
             "error": "Alpaca API credentials not configured",
             "mode": None,
+            "cached": False,
         }
     
     headers = {
@@ -175,11 +205,12 @@ async def get_alpaca_status(db: Session = Depends(get_db)):
                 "connected": False,
                 "error": f"API error: {response.status_code}",
                 "mode": "paper" if "paper" in base_url else "live",
+                "cached": False,
             }
         
         account = response.json()
         
-        return {
+        result = {
             "connected": True,
             "mode": "paper" if "paper" in base_url else "live",
             "account_status": account.get("status"),
@@ -187,13 +218,19 @@ async def get_alpaca_status(db: Session = Depends(get_db)):
             "buying_power": float(account.get("buying_power", 0)),
             "cash": float(account.get("cash", 0)),
             "portfolio_value": float(account.get("portfolio_value", 0)),
+            "cached": False,
         }
+        
+        # Cache for 30 seconds
+        set_cached(cache_key, result, CacheTTL.ALPACA_ACCOUNT)
+        return result
         
     except Exception as e:
         return {
             "connected": False,
             "error": str(e),
             "mode": "paper" if "paper" in base_url else "live",
+            "cached": False,
         }
 
 
