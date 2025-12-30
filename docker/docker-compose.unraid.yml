@@ -18,10 +18,10 @@
 
 services:
   # ==========================================================================
-  # PostgreSQL Database
+  # TimescaleDB (PostgreSQL with time-series extensions)
   # ==========================================================================
   postgres:
-    image: postgres:16-alpine
+    image: timescale/timescaledb:latest-pg16
     container_name: mazo-postgres
     restart: unless-stopped
     environment:

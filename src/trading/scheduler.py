@@ -718,6 +718,8 @@ def get_scheduler() -> TradingScheduler:
 async def run_daemon():
     """Run the scheduler as a background daemon."""
     import asyncio
+    import socket
+    import uuid
     
     logging.basicConfig(
         level=logging.INFO,
@@ -738,6 +740,9 @@ async def run_daemon():
     # Setup default schedule with automated trading
     scheduler.add_default_schedule()
     
+    # Add monitoring tasks
+    await _add_monitoring_schedule(scheduler)
+    
     # Start the scheduler
     scheduler.start()
     
@@ -746,10 +751,22 @@ async def run_daemon():
     for job in scheduler.scheduler.get_jobs():
         logger.info(f"  - {job.id}: {job.next_run_time}")
     
-    # Keep the daemon running
+    # Generate unique scheduler ID for heartbeats
+    scheduler_id = f"scheduler-{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
+    hostname = socket.gethostname()
+    
+    # Keep the daemon running with heartbeat
     try:
         while True:
             await asyncio.sleep(60)
+            
+            # Emit heartbeat every minute
+            await _emit_heartbeat(
+                scheduler_id=scheduler_id,
+                hostname=hostname,
+                jobs_pending=len(scheduler.scheduler.get_jobs()),
+            )
+            
             # Log heartbeat every 5 minutes
             if datetime.now().minute % 5 == 0:
                 logger.info(f"Scheduler heartbeat - {len(scheduler.scheduler.get_jobs())} jobs active")
@@ -758,6 +775,124 @@ async def run_daemon():
     finally:
         scheduler.stop()
         logger.info("Scheduler stopped")
+
+
+async def _add_monitoring_schedule(scheduler: TradingScheduler):
+    """Add monitoring-related scheduled tasks."""
+    if not scheduler.scheduler:
+        return
+    
+    # Pre-market health check (6:15 AM ET - before market)
+    scheduler.scheduler.add_job(
+        _run_pre_market_health_check,
+        trigger=CronTrigger(hour=6, minute=15, timezone='America/New_York'),
+        id="pre_market_health_check",
+        name="Pre-Market Health Check",
+        replace_existing=True,
+    )
+    logger.info("Added pre-market health check at 6:15 AM ET")
+    
+    # Daily analytics and report (4:30 PM ET - after market)
+    scheduler.scheduler.add_job(
+        _run_daily_analytics,
+        trigger=CronTrigger(hour=16, minute=30, timezone='America/New_York'),
+        id="daily_analytics",
+        name="Daily Analytics Report",
+        replace_existing=True,
+    )
+    logger.info("Added daily analytics at 4:30 PM ET")
+
+
+async def _emit_heartbeat(scheduler_id: str, hostname: str, jobs_pending: int):
+    """Emit scheduler heartbeat to monitoring system."""
+    try:
+        from src.monitoring import get_event_logger
+        import psutil
+        
+        event_logger = get_event_logger()
+        
+        # Get memory and CPU if available
+        memory_mb = None
+        cpu_percent = None
+        try:
+            process = psutil.Process()
+            memory_mb = process.memory_info().rss / (1024 * 1024)
+            cpu_percent = process.cpu_percent(interval=None)
+        except:
+            pass
+        
+        event_logger.log_heartbeat(
+            scheduler_id=scheduler_id,
+            hostname=hostname,
+            jobs_pending=jobs_pending,
+            jobs_running=0,  # TODO: Track running jobs
+            memory_mb=memory_mb,
+            cpu_percent=cpu_percent,
+        )
+        
+    except Exception as e:
+        # Don't let heartbeat errors crash the scheduler
+        logger.debug(f"Heartbeat logging failed: {e}")
+
+
+async def _run_pre_market_health_check():
+    """Run pre-market health check."""
+    try:
+        from src.monitoring import run_pre_market_health_check
+        
+        logger.info("Running pre-market health check...")
+        report = await run_pre_market_health_check()
+        
+        if report.is_ready():
+            logger.info(f"✅ Pre-market health check: READY")
+        else:
+            logger.warning(f"⚠️ Pre-market health check: {report.overall_status}")
+            if report.failures:
+                logger.error(f"   Failures: {report.failures}")
+            if report.warnings:
+                logger.warning(f"   Warnings: {report.warnings}")
+        
+        return report.to_dict()
+        
+    except Exception as e:
+        logger.error(f"Pre-market health check failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+async def _run_daily_analytics():
+    """Run daily analytics and report generation."""
+    try:
+        from src.monitoring import get_analytics_service
+        from datetime import date
+        
+        logger.info("Running daily analytics...")
+        analytics = get_analytics_service()
+        
+        report = await analytics.generate_daily_report(date.today())
+        
+        logger.info("=" * 60)
+        logger.info("DAILY PERFORMANCE REPORT")
+        logger.info("=" * 60)
+        logger.info(f"Date: {report.get('date')}")
+        
+        summary = report.get("summary", {})
+        logger.info(f"Workflows Run: {summary.get('workflows_run', 0)}")
+        logger.info(f"Signals Generated: {summary.get('signals_generated', 0)}")
+        logger.info(f"Trades Executed: {summary.get('trades_executed', 0)}")
+        logger.info(f"Win Rate: {summary.get('win_rate', 0):.1%}")
+        
+        execution = report.get("execution", {})
+        if execution:
+            logger.info(f"Fill Rate: {execution.get('fill_rate', 0):.1%}")
+            logger.info(f"Avg Slippage: {execution.get('avg_slippage_bps', 0):.1f} bps")
+        
+        logger.info("=" * 60)
+        
+        return report
+        
+    except Exception as e:
+        logger.error(f"Daily analytics failed: {e}")
+        return {"status": "error", "error": str(e)}
 
 
 if __name__ == "__main__":
