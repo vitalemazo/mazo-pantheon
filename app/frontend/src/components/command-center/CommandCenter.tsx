@@ -1,10 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useTradingDashboard } from '@/contexts/trading-dashboard-context';
+import { 
+  useHydratedData, 
+  dataHydrationService,
+  type Position,
+  type ScheduledTask,
+} from '@/services/data-hydration-service';
 import { 
   RefreshCw, 
   TrendingUp, 
@@ -21,49 +25,6 @@ import {
   BarChart3
 } from 'lucide-react';
 
-// Types for trade history
-interface TradeContext {
-  trigger_source: string;
-  workflow_mode: string;
-  consensus_direction: string;
-  consensus_confidence: number;
-  bullish_count: number;
-  bearish_count: number;
-  neutral_count: number;
-  pm_reasoning: string;
-  mazo_sentiment: string;
-  agent_signals: Record<string, any>;
-  was_profitable: boolean | null;
-}
-
-interface Trade {
-  id: number;
-  ticker: string;
-  action: string;
-  quantity: number;
-  entry_price: number | null;
-  exit_price: number | null;
-  entry_time: string | null;
-  exit_time: string | null;
-  realized_pnl: number | null;
-  return_pct: number | null;
-  status: string;
-  strategy: string | null;
-  context?: TradeContext;
-}
-
-interface AgentPerf {
-  name: string;
-  type: string | null;
-  total_signals: number;
-  accuracy_rate: number | null;
-  correct_predictions: number;
-  incorrect_predictions: number;
-  avg_return_when_followed: number | null;
-  best_call: { ticker: string; return: number } | null;
-  worst_call: { ticker: string; return: number } | null;
-}
-
 function formatCurrency(value: number): string {
   const sign = value >= 0 ? '' : '-';
   return `${sign}$${Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -74,62 +35,31 @@ function formatPercent(value: number): string {
   return `${sign}${value.toFixed(2)}%`;
 }
 
-interface Position {
-  ticker: string;
-  side: string;
-  qty: number;
-  unrealized_pnl: number;
-}
-
-interface ScheduledTask {
-  id: string;
-  name: string;
-  next_run: string | null;
-}
-
 export function CommandCenter() {
-  const { performance, scheduler, fetchData } = useTradingDashboard();
+  // Use hydrated data - already cached, no loading needed
+  const { 
+    performance, 
+    scheduler, 
+    trades, 
+    agents, 
+    metrics,
+    isRefreshing,
+    refreshTrades,
+    refreshAgents,
+  } = useHydratedData();
   
-  const [trades, setTrades] = useState<Trade[]>([]);
-  const [agents, setAgents] = useState<AgentPerf[]>([]);
-  const [perfSummary, setPerfSummary] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
+  const [selectedTrade, setSelectedTrade] = useState<any>(null);
+  const [isManualRefresh, setIsManualRefresh] = useState(false);
 
-  const fetchHistory = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [tradesRes, agentsRes, perfRes] = await Promise.all([
-        fetch('http://localhost:8000/history/trades?limit=25'),
-        fetch('http://localhost:8000/history/agents'),
-        fetch('http://localhost:8000/history/performance'),
-      ]);
+  const handleRefresh = async () => {
+    setIsManualRefresh(true);
+    await dataHydrationService.backgroundRefresh();
+    await refreshTrades();
+    await refreshAgents();
+    setIsManualRefresh(false);
+  };
 
-      if (tradesRes.ok) {
-        const data = await tradesRes.json();
-        setTrades(data.trades || []);
-      }
-
-      if (agentsRes.ok) {
-        const data = await agentsRes.json();
-        setAgents(data.agents || []);
-      }
-
-      if (perfRes.ok) {
-        const data = await perfRes.json();
-        setPerfSummary(data.summary || null);
-      }
-    } catch (err) {
-      console.error('Failed to fetch history:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchHistory();
-    fetchData();
-  }, [fetchHistory, fetchData]);
+  // Data is always available (from cache) - no loading states needed
 
   return (
     <div className="h-full overflow-auto bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
@@ -145,12 +75,12 @@ export function CommandCenter() {
             </p>
           </div>
           <Button 
-            onClick={() => { fetchHistory(); fetchData(); }}
-            disabled={loading}
+            onClick={handleRefresh}
+            disabled={isManualRefresh || isRefreshing}
             variant="outline"
             className="border-slate-600"
           >
-            <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 mr-2 ${isManualRefresh || isRefreshing ? 'animate-spin' : ''}`} />
             Refresh All
           </Button>
         </div>
@@ -204,7 +134,7 @@ export function CommandCenter() {
                 Total Trades
               </div>
               <div className="text-xl font-bold text-cyan-400">
-                {perfSummary?.total_trades || 0}
+                {metrics?.total_trades || 0}
               </div>
             </CardContent>
           </Card>
@@ -216,7 +146,7 @@ export function CommandCenter() {
                 Win Rate
               </div>
               <div className="text-xl font-bold text-purple-400">
-                {perfSummary?.win_rate != null ? `${perfSummary.win_rate}%` : 'N/A'}
+                {metrics?.win_rate != null ? `${metrics.win_rate}%` : 'N/A'}
               </div>
             </CardContent>
           </Card>
@@ -425,13 +355,7 @@ export function CommandCenter() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {loading ? (
-                  <div className="space-y-3">
-                    {[1, 2, 3].map((i) => (
-                      <Skeleton key={i} className="h-20 w-full" />
-                    ))}
-                  </div>
-                ) : trades.length === 0 ? (
+                {trades.length === 0 ? (
                   <div className="text-center py-12 text-slate-400">
                     <History className="w-16 h-16 mx-auto mb-4 opacity-50" />
                     <p className="text-lg">No trades recorded yet</p>
@@ -528,13 +452,7 @@ export function CommandCenter() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {loading ? (
-                  <div className="space-y-3">
-                    {[1, 2, 3].map((i) => (
-                      <Skeleton key={i} className="h-16 w-full" />
-                    ))}
-                  </div>
-                ) : agents.length === 0 ? (
+                {agents.length === 0 ? (
                   <div className="text-center py-12 text-slate-400">
                     <Users className="w-16 h-16 mx-auto mb-4 opacity-50" />
                     <p className="text-lg">No agent data yet</p>
