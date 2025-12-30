@@ -21,7 +21,7 @@ import {
   Gauge
 } from 'lucide-react';
 import useSWR from 'swr';
-import { API_BASE_URL_URL } from '@/lib/api-config';
+import { API_BASE_URL } from '@/lib/api-config';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
