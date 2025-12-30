@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useTradingDashboardContext } from '@/contexts/trading-dashboard-context';
+import { useTradingDashboard } from '@/contexts/trading-dashboard-context';
 import { 
   RefreshCw, 
   TrendingUp, 
@@ -12,15 +12,12 @@ import {
   DollarSign,
   Activity,
   Clock,
-  Target,
   Award,
   History,
   Users,
   Zap,
-  AlertTriangle,
   CheckCircle,
   XCircle,
-  Brain,
   BarChart3
 } from 'lucide-react';
 
@@ -77,13 +74,21 @@ function formatPercent(value: number): string {
   return `${sign}${value.toFixed(2)}%`;
 }
 
-function formatTime(isoString: string | null): string {
-  if (!isoString) return 'N/A';
-  return new Date(isoString).toLocaleString();
+interface Position {
+  ticker: string;
+  side: string;
+  qty: number;
+  unrealized_pnl: number;
+}
+
+interface ScheduledTask {
+  id: string;
+  name: string;
+  next_run: string | null;
 }
 
 export function CommandCenter() {
-  const { performance, scheduler, fetchData } = useTradingDashboardContext();
+  const { performance, scheduler, fetchData } = useTradingDashboard();
   
   const [trades, setTrades] = useState<Trade[]>([]);
   const [agents, setAgents] = useState<AgentPerf[]>([]);
@@ -265,7 +270,7 @@ export function CommandCenter() {
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {performance.positions.map((pos) => (
+                      {performance.positions.map((pos: Position) => (
                         <div 
                           key={pos.ticker}
                           className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg"
@@ -303,7 +308,7 @@ export function CommandCenter() {
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {scheduler.scheduled_tasks.slice(0, 5).map((task) => (
+                      {scheduler.scheduled_tasks.slice(0, 5).map((task: ScheduledTask) => (
                         <div 
                           key={task.id}
                           className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg"
