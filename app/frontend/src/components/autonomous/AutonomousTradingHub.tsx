@@ -100,11 +100,53 @@ export function AutonomousTradingHub() {
     automatedStatus,
   } = useHydratedData();
 
-  // Local state
-  const [isAutonomousEnabled, setIsAutonomousEnabled] = useState(false);
-  const [config, setConfig] = useState<TradingConfig>(DEFAULT_CONFIG);
-  const [activities, setActivities] = useState<AIActivity[]>([]);
+  // Persist config to localStorage
+  const [config, setConfig] = useState<TradingConfig>(() => {
+    try {
+      const saved = localStorage.getItem('aiHedgeFund_config');
+      return saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : DEFAULT_CONFIG;
+    } catch { return DEFAULT_CONFIG; }
+  });
+  
+  // Persist activities to localStorage (keep last 20)
+  const [activities, setActivities] = useState<AIActivity[]>(() => {
+    try {
+      const saved = localStorage.getItem('aiHedgeFund_activities');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  
+  // Autonomous state synced from scheduler
+  const [isAutonomousEnabled, setIsAutonomousEnabled] = useState(() => {
+    try {
+      return localStorage.getItem('aiHedgeFund_autonomous') === 'true';
+    } catch { return false; }
+  });
+  
   const [isStarting, setIsStarting] = useState(false);
+  
+  // Persist config changes
+  useEffect(() => {
+    try {
+      localStorage.setItem('aiHedgeFund_config', JSON.stringify(config));
+    } catch {}
+  }, [config]);
+  
+  // Persist activities changes
+  useEffect(() => {
+    try {
+      // Keep only last 20 activities
+      const toSave = activities.slice(0, 20);
+      localStorage.setItem('aiHedgeFund_activities', JSON.stringify(toSave));
+    } catch {}
+  }, [activities]);
+  
+  // Persist autonomous state
+  useEffect(() => {
+    try {
+      localStorage.setItem('aiHedgeFund_autonomous', String(isAutonomousEnabled));
+    } catch {}
+  }, [isAutonomousEnabled]);
 
   // Calculate budget in dollars
   const portfolioValue = performance?.equity || 0;
@@ -118,6 +160,45 @@ export function AutonomousTradingHub() {
       setIsAutonomousEnabled(scheduler.is_running);
     }
   }, [scheduler?.is_running]);
+  
+  // Poll for automated trading status and add activities
+  useEffect(() => {
+    const checkAutomatedStatus = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/trading/automated/status`);
+        if (response.ok) {
+          const data = await response.json();
+          // If there's a new run, add activity
+          if (data.last_run && data.total_runs > 0) {
+            const lastRunTime = new Date(data.last_run).getTime();
+            const now = Date.now();
+            // Only add if run was in last 5 minutes and not already in activities
+            if (now - lastRunTime < 5 * 60 * 1000) {
+              const runId = `run_${data.last_run}`;
+              if (!activities.some(a => a.id === runId)) {
+                const result = data.last_result;
+                if (result) {
+                  addActivity({
+                    type: 'analyze',
+                    message: `AI cycle complete: ${result.signals_found || 0} signals, ${result.trades_executed || 0} trades`,
+                    status: 'complete',
+                    details: result,
+                  });
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Failed to check automated status:', e);
+      }
+    };
+
+    // Check immediately and then every 30 seconds
+    checkAutomatedStatus();
+    const interval = setInterval(checkAutomatedStatus, 30000);
+    return () => clearInterval(interval);
+  }, [activities]);
 
   // Handle risk level change
   const handleRiskChange = (level: TradingConfig['riskLevel']) => {
