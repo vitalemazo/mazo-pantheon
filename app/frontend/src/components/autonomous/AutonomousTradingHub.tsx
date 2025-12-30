@@ -66,14 +66,6 @@ interface TradingConfig {
   takeProfitPercent: number;
 }
 
-const DEFAULT_CONFIG: TradingConfig = {
-  budgetPercent: 25,
-  riskLevel: 'balanced',
-  maxPositions: 5,
-  stopLossPercent: 5,
-  takeProfitPercent: 10,
-};
-
 const RISK_PRESETS = {
   conservative: { maxPositions: 3, stopLossPercent: 3, takeProfitPercent: 6, budgetPercent: 15 },
   balanced: { maxPositions: 5, stopLossPercent: 5, takeProfitPercent: 10, budgetPercent: 25 },
@@ -103,13 +95,10 @@ export function AutonomousTradingHub() {
     isAutonomousEnabled,
     aiActivities: activities,
     tradingConfig,
-    activeOperations,
     // Actions
     setAutonomousEnabled,
     addAIActivity,
     setTradingConfig,
-    startOperation,
-    endOperation,
   } = useHydratedData();
 
   // Local UI state only
@@ -121,6 +110,7 @@ export function AutonomousTradingHub() {
     riskLevel: tradingConfig.riskLevel,
     maxPositions: tradingConfig.maxPositions,
     stopLossPercent: tradingConfig.stopLossPercent,
+    takeProfitPercent: tradingConfig.takeProfitPercent ?? 10,
   };
   
   const setConfig = (updater: TradingConfig | ((prev: TradingConfig) => TradingConfig)) => {
@@ -823,11 +813,6 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
   const [searchLoading, setSearchLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Check if there's a global analysis running
-  const globalAnalysisRunning = Object.values(activeOperations).some(
-    op => op.type === 'quickAnalysis'
-  );
 
   // Sync from store when it changes
   useEffect(() => {

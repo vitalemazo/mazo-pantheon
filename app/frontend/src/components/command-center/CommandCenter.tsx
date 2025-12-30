@@ -306,7 +306,7 @@ export function CommandCenter() {
                             {workflow.pmDecision.reasoning}
                           </p>
                         )}
-                        {workflow.agentSignals.length > 0 && (
+                        {workflow.agentSignals && workflow.agentSignals.length > 0 && (
                           <div className="flex gap-1 mt-2 flex-wrap">
                             {workflow.agentSignals.slice(0, 6).map((sig, i) => (
                               <span 

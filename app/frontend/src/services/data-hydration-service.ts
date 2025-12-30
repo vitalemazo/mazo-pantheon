@@ -195,6 +195,7 @@ interface DataStore {
     riskLevel: 'conservative' | 'balanced' | 'aggressive';
     maxPositions: number;
     stopLossPercent: number;
+    takeProfitPercent: number;
   };
   quickAnalysisResult: QuickAnalysisResult | null;
   quickAnalysisTicker: string;
@@ -282,6 +283,7 @@ export const useDataStore = create<DataStore>()(
         riskLevel: 'balanced',
         maxPositions: 5,
         stopLossPercent: 5,
+        takeProfitPercent: 10,
       },
       quickAnalysisResult: null,
       quickAnalysisTicker: '',

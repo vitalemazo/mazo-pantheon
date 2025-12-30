@@ -74,11 +74,11 @@ export function RawJsonTab({ className }: RawJsonTabProps) {
         ticker: result.ticker,
         signal: result.signal,
         confidence: result.confidence,
-        agentSignals: result.agentSignals,
-        research: result.research,
+        agentSignals: result.agent_signals,
+        research: result.research_report,
         trade: result.trade,
         recommendations: result.recommendations,
-        executionTime: result.executionTime,
+        executionTime: result.execution_time,
       })),
     };
   }, [tickers, mode, depth, executeTrades, dryRun, forceRefresh, isRunning, steps, results, error]);

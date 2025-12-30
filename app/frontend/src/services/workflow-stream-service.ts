@@ -13,10 +13,8 @@ import { API_BASE_URL } from '@/lib/api-config';
 import { useDataStore } from './data-hydration-service';
 import { AGENT_ROSTER } from '@/types/ai-transparency';
 import type { 
-  AgentActivityEntry, 
   WorkflowProgress,
   SignalType,
-  ActivityType,
 } from '@/types/ai-transparency';
 
 // ==================== STREAM PARSING ====================

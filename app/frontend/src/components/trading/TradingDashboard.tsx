@@ -158,7 +158,7 @@ export function TradingDashboard() {
               ) : (
                 <>
                   <div className="text-3xl font-bold text-cyan-400">
-                    {metrics?.win_rate !== null ? `${metrics.win_rate}%` : 'N/A'}
+                    {metrics?.win_rate != null ? `${metrics.win_rate}%` : 'N/A'}
                   </div>
                   <div className="text-sm text-slate-400 mt-1">
                     {metrics?.winning_trades || 0}W / {metrics?.losing_trades || 0}L ({metrics?.total_trades || 0} total)
