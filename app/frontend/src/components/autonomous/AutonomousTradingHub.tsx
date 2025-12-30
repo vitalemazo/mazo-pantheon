@@ -628,7 +628,7 @@ export function AutonomousTradingHub() {
                             <span className="text-sm text-white">{activity.message}</span>
                           </div>
                           <div className="text-xs text-slate-500 mt-1">
-                            {activity.timestamp.toLocaleTimeString()}
+                            {new Date(activity.timestamp).toLocaleTimeString()}
                           </div>
                         </div>
                       </div>
@@ -745,7 +745,7 @@ export function AutonomousTradingHub() {
                           )}
                         </div>
                         <span className="text-xs text-slate-500">
-                          {wf.timestamp.toLocaleTimeString()}
+                          {new Date(wf.timestamp).toLocaleTimeString()}
                         </span>
                       </div>
                     ))}

@@ -72,7 +72,7 @@ function MessageBubble({ message }: { message: ResearchMessage }) {
 
         {/* Timestamp */}
         <div className="mt-1 text-xs text-muted-foreground/70">
-          {message.timestamp.toLocaleTimeString()}
+          {new Date(message.timestamp).toLocaleTimeString()}
         </div>
       </div>
     </div>

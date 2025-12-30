@@ -298,7 +298,7 @@ export function CommandCenter() {
                             )}
                           </div>
                           <span className="text-xs text-slate-500">
-                            {workflow.timestamp.toLocaleTimeString()}
+                            {new Date(workflow.timestamp).toLocaleTimeString()}
                           </span>
                         </div>
                         {workflow.pmDecision?.reasoning && (
