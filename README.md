@@ -16,6 +16,7 @@ An autonomous AI trading system that combines 18 specialized trading agents, dee
 - [Quick Start](#-quick-start-docker)
 - [UI Overview](#-ui-overview)
   - [Main Tabs](#main-tabs)
+  - [Monitoring Dashboard](#5-monitoring-dashboard)
   - [Transparency Sidebars](#transparency-sidebars)
   - [Bottom Panel](#bottom-panel)
 - [The AI Team](#-the-ai-team)
@@ -218,7 +219,61 @@ Unified view for monitoring everything at once.
 
 ---
 
-### 5. Settings
+### 5. Monitoring Dashboard
+
+Real-time system monitoring, alerts, and performance analytics.
+
+![Monitoring Overview](docs/screenshots/monitoring-overview.png)
+
+**Overview Tab Features:**
+- **System Status** - Overall health (Healthy/Degraded/Down)
+- **Services** - Scheduler, Redis, Database status
+- **Rate Limits** - API quota tracking (Financial Datasets, OpenAI, Anthropic, Alpaca)
+- **Health Checks** - Scheduler heartbeat, Redis ping, DB latency
+- **Daily Metrics** - Workflows run, signals generated, trades executed, win rate
+
+#### Alerts Tab
+
+Real-time alert monitoring with priority levels and detailed context:
+
+![Monitoring Alerts](docs/screenshots/monitoring-alerts.png)
+
+**Alert Features:**
+- **Priority Levels** - P0 (Critical), P1 (Warning), P2 (Info)
+- **Alert Types** - Rate limit warnings, system errors, trade failures
+- **Detailed Payload** - JSON context for debugging
+- **Timestamps** - When alerts were triggered
+- **Actions** - Acknowledge, dismiss, investigate
+
+#### Performance Tab
+
+Analytics on workflow efficiency and agent performance:
+
+![Monitoring Performance](docs/screenshots/monitoring-performance.png)
+
+**Performance Metrics:**
+- **Workflows Run** - Total analysis cycles today
+- **Signals Generated** - Agent signals produced
+- **Pipeline Latency** - Average workflow time
+- **LLM Latency** - Average AI model response time
+- **Mazo Research Effectiveness** - Success rate, PM agreement
+- **Agent Performance Table** - All 18 agents with signals count, accuracy, confidence, and bias
+
+#### Trade Journal Tab
+
+Complete audit trail of all trades executed by the AI:
+
+![Monitoring Trade Journal](docs/screenshots/monitoring-trade-journal.png)
+
+**Trade Journal Features:**
+- **Trade History** - All executed orders with timestamps
+- **Search** - Filter by ticker
+- **Execution Details** - Side, quantity, price, status
+- **Performance Tracking** - Win/loss tracking per trade
+
+---
+
+### 6. Settings
 
 Configure everything via the web UI - no file editing needed.
 
@@ -704,6 +759,10 @@ curl -X POST http://localhost:8000/api-keys/sync-to-env
 | 37 | [Tower E2E Roster Tab](docs/screenshots/tower-e2e-roster-tab.png) | Signal consensus: 1 Bullish, 3 Neutral, 15 Bearish |
 | 38 | [Tower E2E Decision Tab](docs/screenshots/tower-e2e-decision-tab.png) | BEARISH 58.08% with 19 agent signals |
 | 39 | [Tower E2E Logs Tab](docs/screenshots/tower-e2e-logs-tab.png) | Console with 12 SSE event logs |
+| 40 | [Monitoring Overview](docs/screenshots/monitoring-overview.png) | System status, rate limits, health checks |
+| 41 | [Monitoring Alerts](docs/screenshots/monitoring-alerts.png) | Real-time alerts with priority levels |
+| 42 | [Monitoring Performance](docs/screenshots/monitoring-performance.png) | Workflow & agent performance metrics |
+| 43 | [Monitoring Trade Journal](docs/screenshots/monitoring-trade-journal.png) | Trade history and audit trail |
 
 ---
 
