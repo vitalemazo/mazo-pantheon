@@ -96,8 +96,8 @@ class PositionMonitor:
         }
         
         try:
-            # Get all open positions from Alpaca
-            positions = await self.alpaca.get_positions()
+            # Get all open positions from Alpaca (synchronous call)
+            positions = self.alpaca.get_positions()
             
             if not positions:
                 logger.info("No open positions to monitor")
@@ -106,13 +106,23 @@ class PositionMonitor:
             results["positions_checked"] = len(positions)
             
             for pos in positions:
-                ticker = pos.get("symbol", "")
-                qty = float(pos.get("qty", 0))
+                # Handle both dict and object access patterns
+                if hasattr(pos, 'symbol'):
+                    ticker = pos.symbol
+                    qty = float(pos.qty)
+                    entry_price = float(pos.avg_entry_price)
+                    current_price = float(pos.current_price)
+                    unrealized_pnl = float(pos.unrealized_pl)
+                    unrealized_pnl_pct = float(pos.unrealized_plpc) * 100
+                else:
+                    ticker = pos.get("symbol", "")
+                    qty = float(pos.get("qty", 0))
+                    entry_price = float(pos.get("avg_entry_price", 0))
+                    current_price = float(pos.get("current_price", 0))
+                    unrealized_pnl = float(pos.get("unrealized_pl", 0))
+                    unrealized_pnl_pct = float(pos.get("unrealized_plpc", 0)) * 100
+                
                 side = "short" if qty < 0 else "long"
-                entry_price = float(pos.get("avg_entry_price", 0))
-                current_price = float(pos.get("current_price", 0))
-                unrealized_pnl = float(pos.get("unrealized_pl", 0))
-                unrealized_pnl_pct = float(pos.get("unrealized_plpc", 0)) * 100
                 
                 # Get position-specific rules or use defaults
                 rules = self.position_rules.get(ticker, {})
@@ -215,26 +225,18 @@ class PositionMonitor:
         logger.warning(f"   Trigger: ${trigger_price:.2f} | P&L: {pnl_pct:.2f}%")
         
         try:
-            # Place the exit order
-            if action == "sell":
-                result = await self.alpaca.submit_order(
-                    symbol=ticker,
-                    qty=qty,
-                    side="sell",
-                    order_type="market",
-                    time_in_force="day"
-                )
-            else:  # cover (buy to close short)
-                result = await self.alpaca.submit_order(
-                    symbol=ticker,
-                    qty=qty,
-                    side="buy",
-                    order_type="market",
-                    time_in_force="day"
-                )
+            # Use close_position for simplicity - it handles both long and short
+            result = self.alpaca.close_position(ticker, qty=abs(qty))
             
-            action_taken = "exit"
-            details = f"Order placed: {result}"
+            if result.success:
+                action_taken = "exit"
+                details = f"Exit order placed: {result.message}"
+                self.exits_executed += 1
+                logger.info(f"✅ Exit executed for {ticker}: {result.message}")
+            else:
+                action_taken = "failed"
+                details = f"Exit failed: {result.error}"
+                logger.error(f"Exit failed for {ticker}: {result.error}")
             
         except Exception as e:
             action_taken = "failed"

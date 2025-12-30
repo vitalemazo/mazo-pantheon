@@ -3,6 +3,8 @@ import os
 import pandas as pd
 import requests
 import time
+import logging
+from threading import Semaphore, Lock
 
 from src.data.cache import get_cache
 from src.data.models import (
@@ -19,13 +21,102 @@ from src.data.models import (
     CompanyFactsResponse,
 )
 
+logger = logging.getLogger(__name__)
+
 # Global cache instance
 _cache = get_cache()
 
 
+class DataAPIRateLimiter:
+    """
+    Rate limiter for Financial Datasets API calls.
+    
+    Prevents 429 errors by:
+    1. Limiting concurrent requests
+    2. Enforcing minimum delay between requests
+    3. Exponential backoff on rate limit errors
+    """
+    
+    def __init__(
+        self,
+        max_concurrent: int = 2,
+        min_delay_seconds: float = 0.5,
+        backoff_base: float = 2.0,
+        max_backoff: float = 120.0,
+    ):
+        self.max_concurrent = max_concurrent
+        self.min_delay = min_delay_seconds
+        self.backoff_base = backoff_base
+        self.max_backoff = max_backoff
+        
+        self.semaphore = Semaphore(max_concurrent)
+        self.last_request_time = 0
+        self.time_lock = Lock()
+        
+        self.consecutive_429s = 0
+        self.backoff_lock = Lock()
+    
+    def _wait_for_slot(self):
+        """Wait for rate limit slot."""
+        with self.time_lock:
+            now = time.time()
+            elapsed = now - self.last_request_time
+            if elapsed < self.min_delay:
+                time.sleep(self.min_delay - elapsed)
+            self.last_request_time = time.time()
+    
+    def _calculate_backoff(self) -> float:
+        """Calculate backoff delay based on consecutive 429 errors."""
+        with self.backoff_lock:
+            if self.consecutive_429s == 0:
+                return 0.0
+            backoff = min(self.backoff_base ** self.consecutive_429s, self.max_backoff)
+            # Add jitter
+            import random
+            jitter = random.uniform(0, backoff * 0.1)
+            return backoff + jitter
+    
+    def record_429(self):
+        """Record a 429 error."""
+        with self.backoff_lock:
+            self.consecutive_429s += 1
+            logger.warning(f"Data API rate limited, consecutive 429s: {self.consecutive_429s}")
+    
+    def record_success(self):
+        """Record a successful request."""
+        with self.backoff_lock:
+            self.consecutive_429s = 0
+    
+    def acquire(self, timeout: float = 300) -> bool:
+        """Acquire permission to make an API call."""
+        if not self.semaphore.acquire(timeout=timeout):
+            return False
+        
+        # Apply backoff if needed
+        backoff = self._calculate_backoff()
+        if backoff > 0:
+            logger.info(f"Data API backoff: waiting {backoff:.1f}s")
+            time.sleep(backoff)
+        
+        # Wait for minimum delay
+        self._wait_for_slot()
+        return True
+    
+    def release(self):
+        """Release the rate limiter slot."""
+        self.semaphore.release()
+
+
+# Global rate limiter for data API
+_data_rate_limiter = DataAPIRateLimiter(
+    max_concurrent=int(os.getenv("DATA_API_MAX_CONCURRENT", "2")),
+    min_delay_seconds=float(os.getenv("DATA_API_MIN_DELAY", "0.5")),
+)
+
+
 def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: dict = None, max_retries: int = 3) -> requests.Response:
     """
-    Make an API request with rate limiting handling and moderate backoff.
+    Make an API request with rate limiting handling and exponential backoff.
     
     Args:
         url: The URL to request
@@ -41,20 +132,35 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
         Exception: If the request fails with a non-429 error
     """
     for attempt in range(max_retries + 1):  # +1 for initial attempt
-        if method.upper() == "POST":
-            response = requests.post(url, headers=headers, json=json_data)
-        else:
-            response = requests.get(url, headers=headers)
+        # Acquire rate limiter permission
+        if not _data_rate_limiter.acquire(timeout=300):
+            logger.warning("Data API rate limiter timeout")
+            # Return a fake 429 response to trigger retry logic
+            response = requests.Response()
+            response.status_code = 429
+            return response
         
-        if response.status_code == 429 and attempt < max_retries:
-            # Linear backoff: 60s, 90s, 120s, 150s...
-            delay = 60 + (30 * attempt)
-            print(f"Rate limited (429). Attempt {attempt + 1}/{max_retries + 1}. Waiting {delay}s before retrying...")
-            time.sleep(delay)
-            continue
-        
-        # Return the response (whether success, other errors, or final 429)
-        return response
+        try:
+            if method.upper() == "POST":
+                response = requests.post(url, headers=headers, json=json_data, timeout=30)
+            else:
+                response = requests.get(url, headers=headers, timeout=30)
+            
+            if response.status_code == 429:
+                _data_rate_limiter.record_429()
+                if attempt < max_retries:
+                    # Exponential backoff: 10s, 20s, 40s...
+                    delay = min(10 * (2 ** attempt), 120)
+                    logger.info(f"Rate limited (429). Attempt {attempt + 1}/{max_retries + 1}. Waiting {delay}s...")
+                    time.sleep(delay)
+                    continue
+            else:
+                _data_rate_limiter.record_success()
+            
+            return response
+            
+        finally:
+            _data_rate_limiter.release()
 
 
 def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None) -> list[Price]:
