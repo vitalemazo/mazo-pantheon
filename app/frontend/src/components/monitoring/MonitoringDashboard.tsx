@@ -21,8 +21,7 @@ import { AlertFeed } from './AlertFeed';
 import { PerformanceMetrics } from './PerformanceMetrics';
 import { AgentPerformanceTable } from './AgentPerformanceTable';
 import { TradeJournal } from './TradeJournal';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API_BASE_URL } from '@/lib/api-config';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
@@ -31,7 +30,7 @@ export function MonitoringDashboard() {
   
   // Fetch alerts for badge count
   const { data: alerts } = useSWR(
-    `${API_BASE}/monitoring/alerts?resolved=false&limit=10`,
+    `${API_BASE_URL}/monitoring/alerts?resolved=false&limit=10`,
     fetcher,
     { refreshInterval: 30000 }
   );

@@ -28,8 +28,7 @@ import {
 } from 'lucide-react';
 import useSWR from 'swr';
 import { formatDistanceToNow } from 'date-fns';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API_BASE_URL_URL } from '@/lib/api-config';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
@@ -49,7 +48,7 @@ export function TradeJournal() {
   const [searchTicker, setSearchTicker] = useState('');
   
   const { data, isLoading, error } = useSWR(
-    `${API_BASE}/monitoring/trades?limit=50${searchTicker ? `&ticker=${searchTicker}` : ''}`,
+    `${API_BASE_URL}/monitoring/trades?limit=50${searchTicker ? `&ticker=${searchTicker}` : ''}`,
     fetcher,
     { refreshInterval: 30000 }
   );

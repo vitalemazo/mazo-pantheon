@@ -19,8 +19,7 @@ import {
   Clock
 } from 'lucide-react';
 import useSWR from 'swr';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API_BASE_URL_URL } from '@/lib/api-config';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
@@ -71,19 +70,19 @@ interface PerformanceMetricsProps {
 
 export function PerformanceMetrics({ showCharts = false }: PerformanceMetricsProps) {
   const { data: dailyMetrics, isLoading } = useSWR(
-    `${API_BASE}/monitoring/metrics/daily`,
+    `${API_BASE_URL}/monitoring/metrics/daily`,
     fetcher,
     { refreshInterval: 60000 }
   );
   
   const { data: executionMetrics } = useSWR(
-    `${API_BASE}/monitoring/metrics/execution?days=7`,
+    `${API_BASE_URL}/monitoring/metrics/execution?days=7`,
     fetcher,
     { refreshInterval: 60000 }
   );
   
   const { data: mazoMetrics } = useSWR(
-    `${API_BASE}/monitoring/metrics/mazo?days=30`,
+    `${API_BASE_URL}/monitoring/metrics/mazo?days=30`,
     fetcher,
     { refreshInterval: 60000 }
   );

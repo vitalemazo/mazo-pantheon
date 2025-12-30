@@ -21,8 +21,7 @@ import {
   Gauge
 } from 'lucide-react';
 import useSWR from 'swr';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API_BASE_URL_URL } from '@/lib/api-config';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
@@ -88,13 +87,13 @@ function RateLimitGauge({
 
 export function SystemStatusPanel() {
   const { data: systemStatus, error, isLoading } = useSWR(
-    `${API_BASE}/monitoring/system/status`,
+    `${API_BASE_URL}/monitoring/system/status`,
     fetcher,
     { refreshInterval: 10000 }
   );
   
   const { data: healthData } = useSWR(
-    `${API_BASE}/monitoring/health`,
+    `${API_BASE_URL}/monitoring/health`,
     fetcher,
     { refreshInterval: 30000 }
   );

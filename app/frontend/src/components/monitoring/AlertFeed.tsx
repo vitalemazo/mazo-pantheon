@@ -19,8 +19,7 @@ import {
 } from 'lucide-react';
 import useSWR, { mutate } from 'swr';
 import { formatDistanceToNow } from 'date-fns';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API_BASE_URL_URL } from '@/lib/api-config';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
@@ -136,17 +135,17 @@ function AlertItem({
 
 export function AlertFeed({ limit = 50, compact = false }: AlertFeedProps) {
   const { data: alerts, error, isLoading } = useSWR<Alert[]>(
-    `${API_BASE}/monitoring/alerts?resolved=false&limit=${limit}`,
+    `${API_BASE_URL}/monitoring/alerts?resolved=false&limit=${limit}`,
     fetcher,
     { refreshInterval: 10000 }
   );
   
   const handleAcknowledge = async (alertId: string) => {
     try {
-      await fetch(`${API_BASE}/monitoring/alerts/${alertId}/acknowledge`, {
+      await fetch(`${API_BASE_URL}/monitoring/alerts/${alertId}/acknowledge`, {
         method: 'POST',
       });
-      mutate(`${API_BASE}/monitoring/alerts?resolved=false&limit=${limit}`);
+      mutate(`${API_BASE_URL}/monitoring/alerts?resolved=false&limit=${limit}`);
     } catch (error) {
       console.error('Failed to acknowledge alert:', error);
     }
@@ -154,10 +153,10 @@ export function AlertFeed({ limit = 50, compact = false }: AlertFeedProps) {
   
   const handleResolve = async (alertId: string) => {
     try {
-      await fetch(`${API_BASE}/monitoring/alerts/${alertId}/resolve`, {
+      await fetch(`${API_BASE_URL}/monitoring/alerts/${alertId}/resolve`, {
         method: 'POST',
       });
-      mutate(`${API_BASE}/monitoring/alerts?resolved=false&limit=${limit}`);
+      mutate(`${API_BASE_URL}/monitoring/alerts?resolved=false&limit=${limit}`);
     } catch (error) {
       console.error('Failed to resolve alert:', error);
     }

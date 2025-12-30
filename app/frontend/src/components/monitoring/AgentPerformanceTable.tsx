@@ -23,8 +23,7 @@ import {
   Users
 } from 'lucide-react';
 import useSWR from 'swr';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API_BASE_URL_URL } from '@/lib/api-config';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
@@ -45,7 +44,7 @@ export function AgentPerformanceTable() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   
   const { data: agents, isLoading, error } = useSWR<AgentPerformance[]>(
-    `${API_BASE}/monitoring/metrics/agents?days=30`,
+    `${API_BASE_URL}/monitoring/metrics/agents?days=30`,
     fetcher,
     { refreshInterval: 60000 }
   );
