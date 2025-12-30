@@ -633,35 +633,54 @@ class AutomatedTradingService:
         pm_decision: Dict[str, Any],
         portfolio: PortfolioContext
     ) -> Dict[str, Any]:
-        """Execute trade via Alpaca."""
+        """Execute trade via Alpaca directly."""
         try:
-            # Create a mock result object for execute_trades
-            from integration.unified_workflow import UnifiedResult
+            from src.trading.alpaca_service import OrderSide, OrderType, TimeInForce
             
-            mock_result = UnifiedResult(
-                success=True,
-                hedge_fund={
-                    "decisions": {
-                        ticker: pm_decision
-                    }
-                },
-                pm_decision=pm_decision
+            action = pm_decision.get("action", "hold")
+            quantity = pm_decision.get("quantity", 0)
+            
+            if action == "hold" or quantity == 0:
+                return {"success": True, "message": "No trade needed (hold)"}
+            
+            # Map action to order side
+            if action in ["buy", "cover"]:
+                side = OrderSide.BUY
+            elif action in ["sell", "short"]:
+                side = OrderSide.SELL
+            elif action == "reduce_long":
+                side = OrderSide.SELL
+            elif action == "reduce_short":
+                side = OrderSide.BUY
+            else:
+                return {"success": False, "message": f"Unknown action: {action}"}
+            
+            # Submit order via Alpaca
+            result = self.alpaca.submit_order(
+                symbol=ticker,
+                qty=quantity,
+                side=side,
+                order_type=OrderType.MARKET,
+                time_in_force=TimeInForce.DAY
             )
             
-            # Execute the trade
-            updated_result = execute_trades(mock_result, portfolio, dry_run=False)
-            
-            if updated_result.trade:
+            if result and result.success:
+                order = result.order
                 return {
-                    "success": updated_result.trade.success,
-                    "action": updated_result.trade.action,
-                    "quantity": updated_result.trade.quantity,
-                    "filled_price": updated_result.trade.filled_price,
-                    "order_id": updated_result.trade.order_id,
-                    "message": updated_result.trade.message,
+                    "success": True,
+                    "action": action,
+                    "quantity": quantity,
+                    "order_id": order.id if order else None,
+                    "filled_price": order.filled_avg_price if order else None,
+                    "status": order.status if order else "submitted",
+                    "message": result.message,
                 }
             else:
-                return {"success": False, "message": "No trade result"}
+                return {
+                    "success": False, 
+                    "message": result.message if result else "Order submission failed",
+                    "error": result.error if result else None,
+                }
                 
         except Exception as e:
             logger.error(f"Trade execution failed for {ticker}: {e}")
