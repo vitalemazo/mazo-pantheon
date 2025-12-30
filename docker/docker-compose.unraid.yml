@@ -70,20 +70,15 @@ services:
     image: mazo-pantheon-backend:latest
     container_name: mazo-backend
     restart: unless-stopped
+    env_file:
+      - ../.env
     environment:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: /app
       DATABASE_URL: postgresql://mazo:${POSTGRES_PASSWORD:-mazo_secure_password}@postgres:5432/mazo_pantheon
       REDIS_URL: redis://redis:6379/0
-      # API Keys (from .env file)
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      ALPACA_API_KEY: ${ALPACA_API_KEY}
-      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY}
-      ALPACA_PAPER: ${ALPACA_PAPER:-true}
-      FINANCIAL_DATASETS_API_KEY: ${FINANCIAL_DATASETS_API_KEY}
-      # Mazo config
-      MAZO_API_URL: ${MAZO_API_URL:-http://localhost:3001}
+      ALPACA_PAPER: "true"
+      MAZO_PATH: /app/mazo
     volumes:
       - ../.env:/app/.env:rw
       - backend_data:/app/data
@@ -133,17 +128,15 @@ services:
     container_name: mazo-scheduler
     restart: unless-stopped
     command: python -m src.trading.scheduler --daemon
+    env_file:
+      - ../.env
     environment:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: /app
       DATABASE_URL: postgresql://mazo:${POSTGRES_PASSWORD:-mazo_secure_password}@postgres:5432/mazo_pantheon
       REDIS_URL: redis://redis:6379/0
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      ALPACA_API_KEY: ${ALPACA_API_KEY}
-      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY}
-      ALPACA_PAPER: ${ALPACA_PAPER:-true}
-      FINANCIAL_DATASETS_API_KEY: ${FINANCIAL_DATASETS_API_KEY}
+      ALPACA_PAPER: "true"
+      MAZO_PATH: /app/mazo
       # Scheduler config
       AUTO_TRADING_ENABLED: ${AUTO_TRADING_ENABLED:-false}
       TRADING_INTERVAL_MINUTES: ${TRADING_INTERVAL_MINUTES:-30}
