@@ -85,7 +85,7 @@ services:
       # Mazo config
       MAZO_API_URL: ${MAZO_API_URL:-http://localhost:3001}
     volumes:
-      - ../.env:/app/.env:ro
+      - ../.env:/app/.env:rw
       - backend_data:/app/data
     ports:
       - "8000:8000"
@@ -150,7 +150,7 @@ services:
       MAX_BUDGET_PERCENT: ${MAX_BUDGET_PERCENT:-25}
       RISK_LEVEL: ${RISK_LEVEL:-balanced}
     volumes:
-      - ../.env:/app/.env:ro
+      - ../.env:/app/.env:rw
       - backend_data:/app/data
     depends_on:
       - backend
