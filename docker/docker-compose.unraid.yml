@@ -1,0 +1,179 @@
+# ============================================================================
+# MAZO PANTHEON - AI HEDGE FUND
+# Unraid Production Deployment
+# ============================================================================
+# 
+# Deploy to Unraid:
+#   1. Copy this repo to /mnt/user/appdata/mazo-pantheon/
+#   2. Create .env file with your API keys
+#   3. Run: docker-compose -f docker-compose.unraid.yml up -d
+#
+# Services:
+#   - backend:   FastAPI server (port 8000)
+#   - frontend:  Vite React app (port 5173)
+#   - postgres:  Database for trade history
+#   - redis:     Caching layer
+#   - scheduler: Autonomous trading scheduler
+# ============================================================================
+
+services:
+  # ==========================================================================
+  # PostgreSQL Database
+  # ==========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: mazo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mazo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mazo_secure_password}
+      POSTGRES_DB: mazo_pantheon
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mazo -d mazo_pantheon"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mazo-network
+
+  # ==========================================================================
+  # Redis Cache
+  # ==========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: mazo-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mazo-network
+
+  # ==========================================================================
+  # Backend API Server (FastAPI)
+  # ==========================================================================
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    image: mazo-pantheon-backend:latest
+    container_name: mazo-backend
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: /app
+      DATABASE_URL: postgresql://mazo:${POSTGRES_PASSWORD:-mazo_secure_password}@postgres:5432/mazo_pantheon
+      REDIS_URL: redis://redis:6379/0
+      # API Keys (from .env file)
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ALPACA_API_KEY: ${ALPACA_API_KEY}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY}
+      ALPACA_PAPER: ${ALPACA_PAPER:-true}
+      FINANCIAL_DATASETS_API_KEY: ${FINANCIAL_DATASETS_API_KEY}
+      # Mazo config
+      MAZO_API_URL: ${MAZO_API_URL:-http://localhost:3001}
+    volumes:
+      - ../.env:/app/.env:ro
+      - backend_data:/app/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - mazo-network
+
+  # ==========================================================================
+  # Frontend (Vite React)
+  # ==========================================================================
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    image: mazo-pantheon-frontend:latest
+    container_name: mazo-frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: http://backend:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    networks:
+      - mazo-network
+
+  # ==========================================================================
+  # Autonomous Trading Scheduler
+  # Runs in background, triggers AI trading cycles automatically
+  # ==========================================================================
+  scheduler:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    image: mazo-pantheon-backend:latest
+    container_name: mazo-scheduler
+    restart: unless-stopped
+    command: python -m src.trading.scheduler --daemon
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: /app
+      DATABASE_URL: postgresql://mazo:${POSTGRES_PASSWORD:-mazo_secure_password}@postgres:5432/mazo_pantheon
+      REDIS_URL: redis://redis:6379/0
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ALPACA_API_KEY: ${ALPACA_API_KEY}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY}
+      ALPACA_PAPER: ${ALPACA_PAPER:-true}
+      FINANCIAL_DATASETS_API_KEY: ${FINANCIAL_DATASETS_API_KEY}
+      # Scheduler config
+      AUTO_TRADING_ENABLED: ${AUTO_TRADING_ENABLED:-false}
+      TRADING_INTERVAL_MINUTES: ${TRADING_INTERVAL_MINUTES:-30}
+      MAX_BUDGET_PERCENT: ${MAX_BUDGET_PERCENT:-25}
+      RISK_LEVEL: ${RISK_LEVEL:-balanced}
+    volumes:
+      - ../.env:/app/.env:ro
+      - backend_data:/app/data
+    depends_on:
+      - backend
+      - postgres
+      - redis
+    networks:
+      - mazo-network
+
+# ==========================================================================
+# Networks
+# ==========================================================================
+networks:
+  mazo-network:
+    driver: bridge
+    name: mazo-network
+
+# ==========================================================================
+# Volumes
+# ==========================================================================
+volumes:
+  postgres_data:
+    name: mazo-postgres-data
+  redis_data:
+    name: mazo-redis-data
+  backend_data:
+    name: mazo-backend-data

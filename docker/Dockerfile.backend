@@ -1,0 +1,47 @@
+# ============================================================================
+# MAZO PANTHEON - Backend Dockerfile
+# FastAPI server with trading engine
+# ============================================================================
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set PYTHONPATH
+ENV PYTHONPATH=/app
+
+# Install Poetry
+RUN pip install poetry==1.7.1
+
+# Copy only dependency files first for better caching
+COPY pyproject.toml poetry.lock* /app/
+
+# Configure Poetry and install dependencies
+RUN poetry config virtualenvs.create false \
+    && poetry install --no-interaction --no-ansi --no-root \
+    && pip install apscheduler psycopg2-binary redis
+
+# Copy source code
+COPY src/ /app/src/
+COPY app/backend/ /app/app/backend/
+COPY integration/ /app/integration/
+
+# Create data directory
+RUN mkdir -p /app/data
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Start the FastAPI server
+CMD ["uvicorn", "app.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
