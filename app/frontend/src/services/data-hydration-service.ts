@@ -13,6 +13,12 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { API_BASE_URL } from '@/lib/api-config';
+import type { 
+  AgentActivityEntry, 
+  WorkflowProgress, 
+  ConsoleLogEntry,
+  AgentSignal,
+} from '@/types/ai-transparency';
 
 // ==================== TYPES ====================
 
@@ -208,6 +214,13 @@ interface DataStore {
     startedAt: number;
   }>;
 
+  // AI Transparency State (for sidebars)
+  agentActivityLog: AgentActivityEntry[];
+  consoleLogs: ConsoleLogEntry[];
+  agentStatuses: Record<string, 'pending' | 'running' | 'complete' | 'error'>;
+  selectedAgentId: string | null;
+  liveWorkflowProgress: WorkflowProgress | null;
+
   // Actions
   setPerformance: (data: PerformanceData) => void;
   setScheduler: (data: SchedulerStatus) => void;
@@ -233,6 +246,18 @@ interface DataStore {
   startOperation: (id: string, type: string, message: string) => void;
   updateOperation: (id: string, updates: { message?: string; progress?: number }) => void;
   endOperation: (id: string) => void;
+  
+  // AI Transparency Actions
+  addAgentActivity: (entry: Omit<AgentActivityEntry, 'id'>) => void;
+  clearAgentActivityLog: () => void;
+  togglePinActivity: (id: string) => void;
+  addConsoleLog: (entry: Omit<ConsoleLogEntry, 'id'>) => void;
+  clearConsoleLogs: () => void;
+  setAgentStatus: (agentId: string, status: 'pending' | 'running' | 'complete' | 'error') => void;
+  resetAgentStatuses: () => void;
+  setSelectedAgentId: (id: string | null) => void;
+  setLiveWorkflowProgress: (progress: WorkflowProgress | null) => void;
+  updateWorkflowProgress: (updates: Partial<WorkflowProgress>) => void;
 }
 
 export const useDataStore = create<DataStore>()(
@@ -267,6 +292,13 @@ export const useDataStore = create<DataStore>()(
       isRefreshing: false,
       errors: {},
       activeOperations: {},
+      
+      // AI Transparency initial state
+      agentActivityLog: [],
+      consoleLogs: [],
+      agentStatuses: {},
+      selectedAgentId: null,
+      liveWorkflowProgress: null,
 
       // Setters that update lastUpdated timestamp
       setPerformance: (data) => set((state) => ({
@@ -357,6 +389,55 @@ export const useDataStore = create<DataStore>()(
         const { [id]: removed, ...rest } = state.activeOperations;
         return { activeOperations: rest };
       }),
+      
+      // AI Transparency Actions
+      addAgentActivity: (entry) => set((state) => {
+        const newEntry: AgentActivityEntry = {
+          ...entry,
+          id: `activity_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        };
+        // Keep last 200 activities
+        return {
+          agentActivityLog: [newEntry, ...state.agentActivityLog.slice(0, 199)],
+        };
+      }),
+      
+      clearAgentActivityLog: () => set({ agentActivityLog: [] }),
+      
+      togglePinActivity: (id) => set((state) => ({
+        agentActivityLog: state.agentActivityLog.map((a) =>
+          a.id === id ? { ...a, isPinned: !a.isPinned } : a
+        ),
+      })),
+      
+      addConsoleLog: (entry) => set((state) => {
+        const newEntry: ConsoleLogEntry = {
+          ...entry,
+          id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        };
+        // Keep last 500 logs
+        return {
+          consoleLogs: [...state.consoleLogs.slice(-499), newEntry],
+        };
+      }),
+      
+      clearConsoleLogs: () => set({ consoleLogs: [] }),
+      
+      setAgentStatus: (agentId, status) => set((state) => ({
+        agentStatuses: { ...state.agentStatuses, [agentId]: status },
+      })),
+      
+      resetAgentStatuses: () => set({ agentStatuses: {} }),
+      
+      setSelectedAgentId: (id) => set({ selectedAgentId: id }),
+      
+      setLiveWorkflowProgress: (progress) => set({ liveWorkflowProgress: progress }),
+      
+      updateWorkflowProgress: (updates) => set((state) => ({
+        liveWorkflowProgress: state.liveWorkflowProgress
+          ? { ...state.liveWorkflowProgress, ...updates }
+          : null,
+      })),
     }),
     {
       name: 'mazo-data-store', // localStorage key
@@ -374,6 +455,8 @@ export const useDataStore = create<DataStore>()(
         agents: state.agents,
         metrics: state.metrics,
         lastUpdated: state.lastUpdated,
+        // AI Transparency (persist last 50 activities)
+        agentActivityLog: state.agentActivityLog.slice(0, 50),
       }),
     }
   )
@@ -651,6 +734,23 @@ export function useHydratedData() {
     startOperation: store.startOperation,
     updateOperation: store.updateOperation,
     endOperation: store.endOperation,
+    
+    // AI Transparency State & Actions
+    agentActivityLog: store.agentActivityLog,
+    consoleLogs: store.consoleLogs,
+    agentStatuses: store.agentStatuses,
+    selectedAgentId: store.selectedAgentId,
+    liveWorkflowProgress: store.liveWorkflowProgress,
+    addAgentActivity: store.addAgentActivity,
+    clearAgentActivityLog: store.clearAgentActivityLog,
+    togglePinActivity: store.togglePinActivity,
+    addConsoleLog: store.addConsoleLog,
+    clearConsoleLogs: store.clearConsoleLogs,
+    setAgentStatus: store.setAgentStatus,
+    resetAgentStatuses: store.resetAgentStatuses,
+    setSelectedAgentId: store.setSelectedAgentId,
+    setLiveWorkflowProgress: store.setLiveWorkflowProgress,
+    updateWorkflowProgress: store.updateWorkflowProgress,
   };
 }
 

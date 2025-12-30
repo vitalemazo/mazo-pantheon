@@ -1,6 +1,6 @@
 import { BottomPanel } from '@/components/panels/bottom/bottom-panel';
-import { LeftSidebar } from '@/components/panels/left/left-sidebar';
-import { RightSidebar } from '@/components/panels/right/right-sidebar';
+import { AgentActivityFeed } from '@/components/panels/left/AgentActivityFeed';
+import { IntelligencePanel } from '@/components/panels/right/IntelligencePanel';
 import { TabBar } from '@/components/tabs/tab-bar';
 import { TabContent } from '@/components/tabs/tab-content';
 import { SidebarProvider } from '@/components/ui/sidebar';
@@ -142,12 +142,12 @@ function LayoutContent({ children: _children }: { children: ReactNode }) {
         <TabContent className="h-full w-full" />
       </main>
 
-      {/* Floating left sidebar */}
+      {/* Floating left sidebar - AI Activity Feed */}
       <div className={cn(
         "absolute top-0 left-0 z-30 h-full transition-transform",
         isLeftCollapsed && "transform -translate-x-full opacity-0"
       )}>
-        <LeftSidebar
+        <AgentActivityFeed
           isCollapsed={isLeftCollapsed}
           onCollapse={() => setIsLeftCollapsed(true)}
           onExpand={() => setIsLeftCollapsed(false)}
@@ -155,12 +155,12 @@ function LayoutContent({ children: _children }: { children: ReactNode }) {
         />
       </div>
 
-      {/* Floating right sidebar */}
+      {/* Floating right sidebar - Intelligence Panel */}
       <div className={cn(
         "absolute top-0 right-0 z-30 h-full transition-transform",
         isRightCollapsed && "transform translate-x-full opacity-0"
       )}>
-        <RightSidebar
+        <IntelligencePanel
           isCollapsed={isRightCollapsed}
           onCollapse={() => setIsRightCollapsed(true)}
           onExpand={() => setIsRightCollapsed(false)}
