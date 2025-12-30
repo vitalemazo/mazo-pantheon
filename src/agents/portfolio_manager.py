@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, date
@@ -6,6 +7,8 @@ from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 
 from src.graph.state import AgentState, show_agent_reasoning
+
+logger = logging.getLogger(__name__)
 from src.graph.portfolio_context import PortfolioContext
 from pydantic import BaseModel, Field
 from typing_extensions import Literal
@@ -751,11 +754,25 @@ def _log_pm_decisions(
         for agent_name, signal_data in ticker_signals.items():
             sig = signal_data.get("sig", "").lower()
             conf = signal_data.get("conf", 0)
+            reasoning = signal_data.get("reasoning", "")
             
             agents_received[agent_name] = {
                 "signal": sig,
                 "confidence": conf,
             }
+            
+            # Log individual agent signal
+            try:
+                event_logger.log_agent_signal(
+                    workflow_id=workflow_id,
+                    agent_id=agent_name,
+                    ticker=ticker,
+                    signal=sig if sig else "neutral",
+                    confidence=conf,
+                    reasoning=reasoning[:500] if reasoning else None,
+                )
+            except Exception:
+                pass  # Don't fail PM logging if agent signal logging fails
             
             if "bullish" in sig or "buy" in sig or "long" in sig:
                 bullish_count += 1

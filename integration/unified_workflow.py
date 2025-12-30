@@ -510,15 +510,28 @@ class UnifiedWorkflow:
         Returns:
             List of UnifiedResult for each ticker
         """
-        mode = mode or WorkflowMode(config.default_workflow_mode)
-        research_depth = research_depth or ResearchDepth(config.default_research_depth)
+        # Convert string mode to enum if needed
+        if mode is None:
+            mode = WorkflowMode(config.default_workflow_mode)
+        elif isinstance(mode, str):
+            mode = WorkflowMode(mode)
+        
+        # Convert string research_depth to enum if needed
+        if research_depth is None:
+            research_depth = ResearchDepth(config.default_research_depth)
+        elif isinstance(research_depth, str):
+            research_depth = ResearchDepth(research_depth)
 
         results = []
         total_start = datetime.now()
 
+        # Safely get value for display
+        mode_display = mode.value if hasattr(mode, 'value') else str(mode)
+        depth_display = research_depth.value if hasattr(research_depth, 'value') else str(research_depth)
+        
         print(f"\n{'='*60}")
         print(f"UNIFIED TRADING WORKFLOW")
-        print(f"Mode: {mode.value} | Depth: {research_depth.value}")
+        print(f"Mode: {mode_display} | Depth: {depth_display}")
         print(f"Tickers: {', '.join(tickers)}")
         print(f"{'='*60}\n")
 
@@ -543,7 +556,7 @@ class UnifiedWorkflow:
                 )
 
             result.execution_time = (datetime.now() - start_time).total_seconds()
-            result.workflow_mode = mode.value
+            result.workflow_mode = mode.value if hasattr(mode, 'value') else str(mode)
             results.append(result)
 
             print(f"[{ticker}] Completed in {result.execution_time:.2f}s")
@@ -598,7 +611,8 @@ class UnifiedWorkflow:
         if not workflow_id:
             workflow_id = uuid.uuid4()
         
-        print(f"  [Mazo] Researching {ticker} (depth: {depth.value})...")
+        depth_str = depth.value if hasattr(depth, 'value') else str(depth)
+        print(f"  [Mazo] Researching {ticker} (depth: {depth_str})...")
 
         query = self._build_research_query(ticker, depth)
         

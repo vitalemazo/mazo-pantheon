@@ -526,9 +526,10 @@ class AutomatedTradingService:
 
             # Run the hedge fund analysis pipeline
             # This will run all AI agents and PM
+            from integration.unified_workflow import WorkflowMode
             results = workflow.analyze(
                 tickers=[signal.ticker],
-                mode="signal",  # Just get signals from agents
+                mode=WorkflowMode.SIGNAL_ONLY,  # Just get signals from agents
             )
             
             # Get first result
@@ -545,34 +546,85 @@ class AutomatedTradingService:
             consensus_direction = "neutral"
             consensus_confidence = 0.0
             
-            if hasattr(result, 'hedge_fund') and result.hedge_fund:
-                agent_signals = result.hedge_fund.get("analyst_signals", {})
+            # Try to get event logger for monitoring
+            event_logger = None
+            try:
+                from src.monitoring import get_event_logger
+                event_logger = get_event_logger()
+            except ImportError:
+                pass
+            
+            import uuid as uuid_module
+            workflow_id = uuid_module.uuid4()
+            
+            # Get agent signals from result - can be in different formats
+            result_agent_signals = []
+            if hasattr(result, 'agent_signals') and result.agent_signals:
+                result_agent_signals = result.agent_signals
+            elif hasattr(result, 'hedge_fund') and result.hedge_fund:
+                # Old format - dict of dicts
+                hf_signals = result.hedge_fund.get("analyst_signals", {})
+                for ticker_data in hf_signals.values():
+                    for agent_name, agent_data in ticker_data.items():
+                        if isinstance(agent_data, dict):
+                            result_agent_signals.append({
+                                "agent": agent_name,
+                                "signal": agent_data.get("signal", "neutral"),
+                                "confidence": agent_data.get("confidence", 50),
+                                "reasoning": agent_data.get("reasoning", ""),
+                            })
+            
+            # Calculate consensus and log agent signals
+            bullish_count = 0
+            bearish_count = 0
+            total_confidence = 0
+            
+            for agent_signal in result_agent_signals:
+                # Handle both dict and dataclass formats
+                if hasattr(agent_signal, 'agent'):
+                    agent_name = agent_signal.agent
+                    sig = getattr(agent_signal, 'signal', 'neutral').lower()
+                    conf = getattr(agent_signal, 'confidence', 50)
+                    reasoning = getattr(agent_signal, 'reasoning', '')
+                elif isinstance(agent_signal, dict):
+                    agent_name = agent_signal.get("agent", "unknown")
+                    sig = agent_signal.get("signal", "neutral").lower()
+                    conf = agent_signal.get("confidence", 50)
+                    reasoning = agent_signal.get("reasoning", "")
+                else:
+                    continue
                 
-                # Calculate consensus
-                bullish_count = 0
-                bearish_count = 0
-                total_confidence = 0
+                # Log agent signal to monitoring
+                if event_logger:
+                    try:
+                        event_logger.log_agent_signal(
+                            workflow_id=workflow_id,
+                            agent_id=agent_name,
+                            ticker=signal.ticker,
+                            signal=sig if sig else "neutral",
+                            confidence=conf,
+                            reasoning=str(reasoning)[:500] if reasoning else None,
+                        )
+                    except Exception:
+                        pass  # Don't fail analysis if signal logging fails
                 
-                for ticker_data in agent_signals.values():
-                    for agent_name, agent_signal in ticker_data.items():
-                        if isinstance(agent_signal, dict):
-                            sig = agent_signal.get("signal", "").lower()
-                            conf = agent_signal.get("confidence", 50)
-                            
-                            if "bullish" in sig or "buy" in sig:
-                                bullish_count += 1
-                                total_confidence += conf
-                            elif "bearish" in sig or "sell" in sig or "short" in sig:
-                                bearish_count += 1
-                                total_confidence += conf
-                
-                total = bullish_count + bearish_count
-                if total > 0:
-                    if bullish_count > bearish_count:
-                        consensus_direction = "bullish"
-                    elif bearish_count > bullish_count:
-                        consensus_direction = "bearish"
-                    consensus_confidence = total_confidence / total
+                if "bullish" in sig or "buy" in sig:
+                    bullish_count += 1
+                    total_confidence += conf
+                elif "bearish" in sig or "sell" in sig or "short" in sig:
+                    bearish_count += 1
+                    total_confidence += conf
+            
+            # Convert back to dict for compatibility
+            agent_signals = {signal.ticker: {s.agent if hasattr(s, 'agent') else s.get('agent', 'unknown'): s for s in result_agent_signals}} if result_agent_signals else {}
+            
+            total = bullish_count + bearish_count
+            if total > 0:
+                if bullish_count > bearish_count:
+                    consensus_direction = "bullish"
+                elif bearish_count > bullish_count:
+                    consensus_direction = "bearish"
+                consensus_confidence = total_confidence / total
             
             return AnalysisResult(
                 ticker=signal.ticker,
