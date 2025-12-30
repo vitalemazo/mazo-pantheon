@@ -11,6 +11,7 @@ Supports both paper trading and live trading modes.
 """
 
 import os
+import time
 import requests
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any, Literal
@@ -19,6 +20,22 @@ from enum import Enum
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+# Lazy import for monitoring to avoid circular imports
+_rate_limit_monitor = None
+
+
+def _get_rate_limit_monitor():
+    """Lazy load the rate limit monitor."""
+    global _rate_limit_monitor
+    if _rate_limit_monitor is None:
+        try:
+            from src.monitoring import get_rate_limit_monitor
+            _rate_limit_monitor = get_rate_limit_monitor()
+        except Exception:
+            pass
+    return _rate_limit_monitor
 
 
 class OrderSide(str, Enum):
@@ -251,29 +268,71 @@ class AlpacaService:
         params: Dict = None,
         data: Dict = None
     ) -> Dict:
-        """Make API request"""
+        """Make API request with monitoring."""
         url = f"{self.base_url}/{endpoint}"
+        rate_monitor = _get_rate_limit_monitor()
+        
+        start_time = time.time()
+        try:
+            response = requests.request(
+                method=method,
+                url=url,
+                headers=self._headers(),
+                params=params,
+                json=data,
+            )
+            latency_ms = int((time.time() - start_time) * 1000)
 
-        response = requests.request(
-            method=method,
-            url=url,
-            headers=self._headers(),
-            params=params,
-            json=data,
-        )
+            if response.status_code == 429:
+                # Rate limited
+                if rate_monitor:
+                    retry_after = response.headers.get("Retry-After")
+                    rate_monitor.record_rate_limit_hit(
+                        "alpaca",
+                        retry_after=int(retry_after) if retry_after else None
+                    )
+                raise Exception(f"Alpaca API rate limited (429)")
 
-        if response.status_code >= 400:
-            error_msg = response.text
-            try:
-                error_data = response.json()
-                error_msg = error_data.get("message", response.text)
-            except:
-                pass
-            raise Exception(f"Alpaca API error ({response.status_code}): {error_msg}")
+            if response.status_code >= 400:
+                error_msg = response.text
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("message", response.text)
+                except:
+                    pass
+                
+                # Log failed call
+                if rate_monitor:
+                    rate_monitor.record_call(
+                        "alpaca",
+                        success=False,
+                        latency_ms=latency_ms,
+                    )
+                raise Exception(f"Alpaca API error ({response.status_code}): {error_msg}")
 
-        if response.text:
-            return response.json()
-        return {}
+            # Log successful call with rate limit headers
+            if rate_monitor:
+                remaining = response.headers.get("X-RateLimit-Remaining")
+                rate_monitor.record_call(
+                    "alpaca",
+                    success=True,
+                    rate_limit_remaining=int(remaining) if remaining else None,
+                    latency_ms=latency_ms,
+                )
+
+            if response.text:
+                return response.json()
+            return {}
+            
+        except requests.exceptions.RequestException as e:
+            latency_ms = int((time.time() - start_time) * 1000)
+            if rate_monitor:
+                rate_monitor.record_call(
+                    "alpaca",
+                    success=False,
+                    latency_ms=latency_ms,
+                )
+            raise
 
     # ==================== Account ====================
 

@@ -7,6 +7,34 @@ import logging
 from threading import Semaphore, Lock
 
 from src.data.cache import get_cache
+
+# Lazy import for monitoring to avoid circular imports
+_rate_limit_monitor = None
+_event_logger = None
+
+
+def _get_rate_limit_monitor():
+    """Lazy load the rate limit monitor."""
+    global _rate_limit_monitor
+    if _rate_limit_monitor is None:
+        try:
+            from src.monitoring import get_rate_limit_monitor
+            _rate_limit_monitor = get_rate_limit_monitor()
+        except Exception:
+            pass
+    return _rate_limit_monitor
+
+
+def _get_event_logger():
+    """Lazy load the event logger."""
+    global _event_logger
+    if _event_logger is None:
+        try:
+            from src.monitoring import get_event_logger
+            _event_logger = get_event_logger()
+        except Exception:
+            pass
+    return _event_logger
 from src.data.models import (
     CompanyNews,
     CompanyNewsResponse,
@@ -131,6 +159,8 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
     Raises:
         Exception: If the request fails with a non-429 error
     """
+    rate_monitor = _get_rate_limit_monitor()
+    
     for attempt in range(max_retries + 1):  # +1 for initial attempt
         # Acquire rate limiter permission
         if not _data_rate_limiter.acquire(timeout=300):
@@ -140,14 +170,26 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
             response.status_code = 429
             return response
         
+        start_time = time.time()
         try:
             if method.upper() == "POST":
                 response = requests.post(url, headers=headers, json=json_data, timeout=30)
             else:
                 response = requests.get(url, headers=headers, timeout=30)
             
+            latency_ms = int((time.time() - start_time) * 1000)
+            
             if response.status_code == 429:
                 _data_rate_limiter.record_429()
+                
+                # Log rate limit hit to monitoring system
+                if rate_monitor:
+                    retry_after = response.headers.get("Retry-After")
+                    rate_monitor.record_rate_limit_hit(
+                        "financial_datasets",
+                        retry_after=int(retry_after) if retry_after else None
+                    )
+                
                 if attempt < max_retries:
                     # Exponential backoff: 10s, 20s, 40s...
                     delay = min(10 * (2 ** attempt), 120)
@@ -156,9 +198,38 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
                     continue
             else:
                 _data_rate_limiter.record_success()
+                
+                # Log successful call to monitoring system
+                if rate_monitor:
+                    # Parse rate limit headers if present
+                    remaining = response.headers.get("X-RateLimit-Remaining")
+                    rate_monitor.record_call(
+                        "financial_datasets",
+                        success=(response.status_code < 400),
+                        rate_limit_remaining=int(remaining) if remaining else None,
+                        latency_ms=latency_ms,
+                    )
             
             return response
             
+        except requests.exceptions.Timeout as e:
+            latency_ms = int((time.time() - start_time) * 1000)
+            if rate_monitor:
+                rate_monitor.record_call(
+                    "financial_datasets",
+                    success=False,
+                    latency_ms=latency_ms,
+                )
+            raise
+        except requests.exceptions.RequestException as e:
+            latency_ms = int((time.time() - start_time) * 1000)
+            if rate_monitor:
+                rate_monitor.record_call(
+                    "financial_datasets",
+                    success=False,
+                    latency_ms=latency_ms,
+                )
+            raise
         finally:
             _data_rate_limiter.release()
 
