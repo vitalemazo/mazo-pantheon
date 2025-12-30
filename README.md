@@ -319,7 +319,7 @@ Visualizes the decision tree - how the PM arrived at its conclusion. Shows the f
 
 Real-time console output for debugging and monitoring. Shows detailed log entries as the system operates.
 
-![Logs Tab with Data](docs/screenshots/right-sidebar-logs.png)
+![Logs Tab with Data](docs/screenshots/e2e-logs-tab-populated.png)
 
 **Log Entry Format:**
 ```
@@ -338,6 +338,44 @@ Real-time console output for debugging and monitoring. Shows detailed log entrie
 - 📋 **Copy** - Copy log to clipboard
 - 🗑️ **Clear** - Reset the console
 - 🔽 **Auto-scroll** - Follow new logs
+
+---
+
+### E2E Testing: Sidebars With Live Data
+
+When you run a Quick Analysis, all transparency sidebars populate with real-time data:
+
+#### Left Sidebar - Activity Feed (Populated)
+
+![Left Sidebar Populated](docs/screenshots/e2e-left-sidebar-populated.png)
+
+**Live Data Shows:**
+- 5 events from NVDA analysis
+- "Quick Analysis complete: NVDA → BEARISH"
+- "Portfolio Manager - Decision: BEARISH"
+- Timestamps for each event
+
+#### Decision Tab (Populated)
+
+![Decision Tab Populated](docs/screenshots/e2e-decision-tab-populated.png)
+
+**Live Data Shows:**
+- **Final Decision**: BEARISH (42.16% confidence)
+- **PM Reasoning**: Analysis complete
+- **Agent Signals**: 5 Bullish, 3 Neutral, 11 Bearish
+- **Individual Signals**: All 19 agents with confidence percentages
+- **Decision Flow**: 18 Agents → Mazo → PM
+
+#### Logs Tab (Populated)
+
+![Logs Tab Populated](docs/screenshots/e2e-logs-tab-populated.png)
+
+**Live Data Shows:**
+- 12 console logs from SSE stream
+- workflow_start, data_aggregation events
+- ai_hedge_fund, agents processing
+- portfolio_manager, trade_execution
+- Complete event with full results JSON
 
 ---
 
@@ -653,6 +691,9 @@ curl -X POST http://localhost:8000/api-keys/sync-to-env
 | 33 | [Buffett Agent Card](docs/screenshots/roster-agent-buffett.png) | Clickable agent info card |
 | 34 | [PM Agent Card](docs/screenshots/roster-agent-pm.png) | Portfolio Manager info card |
 | 35 | [Full Interface](docs/screenshots/full-interface-sidebars.png) | Complete 3-column layout |
+| 36 | [E2E Left Sidebar](docs/screenshots/e2e-left-sidebar-populated.png) | Activity feed with live NVDA analysis |
+| 37 | [E2E Decision Tab](docs/screenshots/e2e-decision-tab-populated.png) | Decision tree with 19 agent signals |
+| 38 | [E2E Logs Tab](docs/screenshots/e2e-logs-tab-populated.png) | Console with 12 SSE event logs |
 
 ---
 
