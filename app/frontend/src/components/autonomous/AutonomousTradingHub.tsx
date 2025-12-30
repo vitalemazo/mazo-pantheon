@@ -47,6 +47,65 @@ import {
   Lock
 } from 'lucide-react';
 
+// Map API agent names to roster IDs
+function normalizeAgentId(apiName: string): string {
+  const name = apiName.toLowerCase().trim();
+  
+  // Direct mappings for known agent names
+  const mappings: Record<string, string> = {
+    'fundamentals analyst': 'fundamentals',
+    'fundamentals': 'fundamentals',
+    'technical analyst': 'technicals',
+    'technicals analyst': 'technicals',
+    'technicals': 'technicals',
+    'sentiment analyst': 'sentiment',
+    'sentiment': 'sentiment',
+    'valuation analyst': 'valuation',
+    'valuation': 'valuation',
+    'risk manager': 'risk_manager',
+    'risk': 'risk_manager',
+    'news sentiment': 'news_sentiment',
+    'news analyst': 'news_sentiment',
+    'news': 'news_sentiment',
+    'growth analyst': 'cathie_wood', // Growth is Cathie Wood's style
+    'growth': 'cathie_wood',
+    'warren buffett': 'warren_buffett',
+    'buffett': 'warren_buffett',
+    'warren': 'warren_buffett',
+    'charlie munger': 'charlie_munger',
+    'munger': 'charlie_munger',
+    'ben graham': 'ben_graham',
+    'graham': 'ben_graham',
+    'peter lynch': 'peter_lynch',
+    'lynch': 'peter_lynch',
+    'phil fisher': 'phil_fisher',
+    'fisher': 'phil_fisher',
+    'cathie wood': 'cathie_wood',
+    'wood': 'cathie_wood',
+    'cathie': 'cathie_wood',
+    'michael burry': 'michael_burry',
+    'burry': 'michael_burry',
+    'bill ackman': 'bill_ackman',
+    'ackman': 'bill_ackman',
+    'stanley druckenmiller': 'stanley_druckenmiller',
+    'druckenmiller': 'stanley_druckenmiller',
+    'druck': 'stanley_druckenmiller',
+    'aswath damodaran': 'aswath_damodaran',
+    'damodaran': 'aswath_damodaran',
+    'aswath': 'aswath_damodaran',
+    'mohnish pabrai': 'mohnish_pabrai',
+    'pabrai': 'mohnish_pabrai',
+    'rakesh jhunjhunwala': 'rakesh_jhunjhunwala',
+    'rakesh': 'rakesh_jhunjhunwala',
+    'portfolio manager': 'portfolio_manager',
+    'pm': 'portfolio_manager',
+    'mazo': 'mazo',
+    'mazo research': 'mazo',
+  };
+
+  return mappings[name] || name.replace(/\s+/g, '_');
+}
+
 // Types
 interface AIActivity {
   id: string;
@@ -1148,7 +1207,8 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
                       const agentSignals: Record<string, any> = {};
                       Object.entries(results.analyst_signals?.[tickerUpper] || {}).forEach(
                         ([name, sig]: [string, any]) => {
-                          agentSignals[name.toLowerCase()] = {
+                          const agentId = normalizeAgentId(name);
+                          agentSignals[agentId] = {
                             signal: sig.signal?.toLowerCase() || 'neutral',
                             confidence: sig.confidence || 50,
                             reasoning: sig.reasoning || '',
@@ -1172,7 +1232,8 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
                   if (finalResult?.agent_signals) {
                     const agentSignals: Record<string, any> = {};
                     finalResult.agent_signals.forEach((sig: any) => {
-                      const agentId = sig.agent_name?.toLowerCase() || sig.agent_id;
+                      const rawId = sig.agent_name || sig.agent_id || '';
+                      const agentId = normalizeAgentId(rawId);
                       if (agentId) {
                         agentSignals[agentId] = {
                           signal: sig.signal?.toLowerCase() || 'neutral',
@@ -1219,7 +1280,7 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
                     (Array.isArray(sig.agent_signals) ? sig.agent_signals : Object.entries(sig.agent_signals)).forEach(
                       (item: any) => {
                         const [name, data] = Array.isArray(item) ? item : [item.agent_name || item.agent_id, item];
-                        const agentId = (name || '').toLowerCase();
+                        const agentId = normalizeAgentId(name || '');
                         if (agentId) {
                           agentSignals[agentId] = {
                             signal: (data.signal || data)?.toString().toLowerCase() || 'neutral',
