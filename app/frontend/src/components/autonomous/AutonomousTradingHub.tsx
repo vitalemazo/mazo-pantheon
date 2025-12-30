@@ -27,15 +27,11 @@ import {
 import { toast } from 'sonner';
 import { 
   Play, 
-  Pause,
-  DollarSign,
   TrendingUp,
-  TrendingDown,
   Activity,
   Brain,
   Shield,
   Zap,
-  Clock,
   CheckCircle,
   AlertCircle,
   Users,
@@ -98,12 +94,9 @@ export function AutonomousTradingHub() {
   const { 
     performance, 
     scheduler, 
-    trades, 
-    agents,
     metrics,
     recentWorkflows,
     automatedStatus,
-    isRefreshing,
   } = useHydratedData();
 
   // Local state
