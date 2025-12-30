@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import datetime, date
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -248,6 +249,119 @@ def _compact_signals(signals_by_ticker: dict[str, dict]) -> dict[str, dict]:
     return out
 
 
+def _build_historical_context(portfolio: dict, tickers: list[str]) -> str:
+    """
+    Build historical context including today's trades and performance.
+    This helps the PM understand past decisions and optimize for daily profit.
+    """
+    lines = []
+    
+    try:
+        from src.trading.alpaca_service import AlpacaService
+        alpaca = AlpacaService()
+        
+        # Get today's date info
+        now = datetime.now()
+        market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        time_remaining = (market_close - now).total_seconds() / 3600 if now < market_close else 0
+        
+        lines.append(f"=== TODAY'S PERFORMANCE ({now.strftime('%Y-%m-%d %H:%M ET')}) ===")
+        
+        if time_remaining > 0:
+            lines.append(f"⏰ Time until market close: {time_remaining:.1f} hours")
+        else:
+            lines.append("⏰ Market is closed")
+        
+        # Get account performance
+        account = alpaca.get_account()
+        if account:
+            equity = float(account.equity)
+            last_equity = float(account.last_equity) if hasattr(account, 'last_equity') and account.last_equity else equity
+            day_pl = equity - last_equity
+            day_pl_pct = (day_pl / last_equity * 100) if last_equity > 0 else 0
+            pl_sign = "+" if day_pl >= 0 else ""
+            
+            lines.append(f"\n📊 Today's P&L: {pl_sign}${day_pl:,.2f} ({pl_sign}{day_pl_pct:.2f}%)")
+            
+            # Goal for the day
+            if day_pl >= 0:
+                lines.append(f"✅ Currently PROFITABLE today - protect gains")
+            else:
+                lines.append(f"⚠️ Currently at LOSS today - focus on recovery")
+        
+        # Get today's executed orders
+        orders = alpaca.get_orders(status="closed", limit=20)
+        today = date.today()
+        today_orders = []
+        for o in (orders or []):
+            if hasattr(o, 'filled_at') and o.filled_at:
+                try:
+                    # Handle both datetime objects and ISO strings
+                    if isinstance(o.filled_at, str):
+                        filled_date = datetime.fromisoformat(o.filled_at.replace('Z', '+00:00')).date()
+                    else:
+                        filled_date = o.filled_at.date()
+                    if filled_date == today:
+                        today_orders.append(o)
+                except:
+                    pass
+        
+        if today_orders:
+            lines.append(f"\n📜 Today's Executed Trades ({len(today_orders)}):")
+            for order in today_orders[:5]:  # Show last 5
+                side = order.side.upper() if hasattr(order, 'side') else 'UNKNOWN'
+                qty = float(order.qty) if hasattr(order, 'qty') else 0
+                symbol = order.symbol if hasattr(order, 'symbol') else 'UNKNOWN'
+                filled_price = float(order.filled_avg_price) if hasattr(order, 'filled_avg_price') and order.filled_avg_price else 0
+                lines.append(f"  • {symbol}: {side} {qty:.0f} @ ${filled_price:.2f}")
+        else:
+            lines.append("\n📜 No trades executed today yet")
+        
+        # Get current positions with P&L for relevant tickers
+        positions = alpaca.get_positions()
+        relevant_positions = [p for p in (positions or []) if p.symbol in tickers]
+        
+        if relevant_positions:
+            lines.append("\n📈 Position Performance (for analysis tickers):")
+            for pos in relevant_positions:
+                pl = float(pos.unrealized_pl) if hasattr(pos, 'unrealized_pl') else 0
+                pl_pct = float(pos.unrealized_plpc) * 100 if hasattr(pos, 'unrealized_plpc') else 0
+                pl_sign = "+" if pl >= 0 else ""
+                entry = float(pos.avg_entry_price) if hasattr(pos, 'avg_entry_price') else 0
+                current = float(pos.current_price) if hasattr(pos, 'current_price') else 0
+                qty = float(pos.qty) if hasattr(pos, 'qty') else 0
+                side = "LONG" if qty > 0 else "SHORT"
+                lines.append(f"  • {pos.symbol} ({side}): Entry ${entry:.2f} → Now ${current:.2f} | P&L: {pl_sign}${pl:.2f} ({pl_sign}{pl_pct:.1f}%)")
+                
+                # Add actionable insights
+                if pl_pct > 5:
+                    lines.append(f"    → Consider taking profits (>{5}% gain)")
+                elif pl_pct < -5:
+                    lines.append(f"    → Consider cutting losses (>{5}% loss)")
+        
+        # Add strategy reminders based on time of day
+        lines.append("\n🎯 DAILY PROFIT STRATEGY:")
+        if time_remaining > 5:
+            lines.append("  • Early session: Be selective, look for strong signals")
+            lines.append("  • Build positions gradually, don't over-commit")
+        elif time_remaining > 2:
+            lines.append("  • Mid-day: Monitor positions, adjust stops")
+            lines.append("  • Lock in profits on winners, cut losers quickly")
+        elif time_remaining > 0:
+            lines.append("  • Late session: Focus on closing positions")
+            lines.append("  • Don't open new positions close to market close")
+            lines.append("  • Secure daily profits, avoid overnight risk")
+        else:
+            lines.append("  • Market closed: Review today's performance")
+            lines.append("  • Plan for tomorrow based on after-hours movement")
+        
+    except Exception as e:
+        lines.append(f"(Historical context unavailable: {str(e)[:50]})")
+    
+    return "\n".join(lines)
+
+
 def _build_position_context(portfolio: dict, tickers: list[str], current_prices: dict[str, float]) -> str:
     """Build a rich position context string for the LLM with concentration analysis."""
     lines = []
@@ -352,6 +466,9 @@ def generate_trading_decision(
     
     # Build rich position context
     position_context = _build_position_context(portfolio, tickers_for_llm, current_prices)
+    
+    # Build historical context (today's trades, P&L, strategy)
+    historical_context = _build_historical_context(portfolio, tickers_for_llm)
 
     # Check if paper trading mode (more aggressive)
     is_paper_trading = portfolio.get("paper_trading", True)  # Default to paper for safety
@@ -366,19 +483,24 @@ def generate_trading_decision(
     # Different prompts for paper vs live trading
     if is_paper_trading:
         system_prompt = (
-            "You are an aggressive portfolio manager in PAPER TRADING mode. Your job is to TEST signals with fake money.\n\n"
-            "CRITICAL RULES FOR PAPER TRADING:\n"
-            "1. DO NOT 'wait for better entry' - this is paper money, test NOW\n"
-            "2. If analysts say BEARISH → SHORT the stock\n"
-            "3. If analysts say BULLISH → BUY the stock\n"
-            "4. ONLY use HOLD if signals are 50/50 split (equal bullish vs bearish)\n"
-            "5. Ignore Mazo's timing advice ('wait for pullback') - act on the signal direction\n"
-            "6. Position size: Use 20-40% of buying power per trade (be aggressive!)\n"
-            "7. Even 40-50% confidence is enough to act in paper trading\n\n"
-            "PORTFOLIO REBALANCING (when you see concentration warnings):\n"
-            "- If a position is >25% of portfolio, consider using 'reduce_long' or 'reduce_short'\n"
-            "- Reduce over-concentrated positions to free up capital for new opportunities\n"
-            "- Example: AAPL at 50% → reduce_short 5 shares, then short MSFT with freed capital\n\n"
+            "You are an INTELLIGENT portfolio manager in PAPER TRADING mode. Your PRIMARY GOAL is to END EACH DAY PROFITABLE.\n\n"
+            "DAILY PROFIT STRATEGY:\n"
+            "1. You have access to TODAY'S PERFORMANCE data - use it to make smart decisions\n"
+            "2. If today's P&L is positive → protect gains, be more conservative\n"
+            "3. If today's P&L is negative → look for recovery opportunities\n"
+            "4. Track your previous trades today - learn from wins and losses\n"
+            "5. Consider TIME OF DAY: less aggressive near market close\n\n"
+            "SIGNAL INTERPRETATION (18 AI Agents + Mazo Research):\n"
+            "1. If majority of agents say BEARISH → SHORT the stock\n"
+            "2. If majority of agents say BULLISH → BUY the stock\n"
+            "3. Weight agent confidence scores - higher confidence = stronger signal\n"
+            "4. Mazo provides independent research - use it as a second opinion\n"
+            "5. ONLY use HOLD if signals are truly 50/50 split\n\n"
+            "POSITION MANAGEMENT:\n"
+            "- Position with +5% gain → Consider taking profits (sell/cover)\n"
+            "- Position with -5% loss → Consider cutting losses (sell/cover)\n"
+            "- If a position is >25% of portfolio → reduce_long or reduce_short\n"
+            "- Diversify: Don't put all capital in one stock\n\n"
             "AVAILABLE ACTIONS:\n"
             "- buy: Open LONG (stock goes UP)\n"
             "- sell: Close entire LONG position\n"
@@ -389,7 +511,7 @@ def generate_trading_decision(
             "- hold: NO TRADE (only use if truly 50/50 split)\n"
             "- cancel: Cancel pending orders\n\n"
             "RISK MANAGEMENT (for new positions):\n"
-            "- stop_loss_pct: Set a stop loss as % from entry (typically 3-8% for paper trading)\n"
+            "- stop_loss_pct: Set a stop loss as % from entry (typically 3-8%)\n"
             "- take_profit_pct: Set a profit target as % from entry (typically 5-15%)\n"
             "- For SHORTS: stop_loss triggers if price goes UP by X%, take_profit if price goes DOWN\n"
             "- For LONGS: stop_loss triggers if price goes DOWN by X%, take_profit if price goes UP\n\n"
@@ -397,17 +519,24 @@ def generate_trading_decision(
         )
     else:
         system_prompt = (
-            "You are an intelligent portfolio manager making trading decisions with REAL MONEY.\n\n"
-            "RISK MANAGEMENT:\n"
-            "1. Single position should not exceed 25% of portfolio\n"
-            "2. If you see CONCENTRATION WARNINGS, prioritize rebalancing\n"
-            "3. Use 'reduce_long' or 'reduce_short' to trim over-concentrated positions\n"
-            "4. Consider existing positions before adding new ones\n"
-            "5. Check pending orders - cancel if analysis changed\n\n"
-            "PORTFOLIO REBALANCING:\n"
-            "- If a position is >25% of portfolio, reduce it before adding new positions\n"
-            "- Example: AAPL short at 50% → reduce_short 5 shares to bring to ~25%\n"
-            "- Then use freed capital for new opportunities\n\n"
+            "You are an INTELLIGENT portfolio manager making trading decisions with REAL MONEY.\n"
+            "Your PRIMARY GOAL is to END EACH DAY PROFITABLE while managing risk.\n\n"
+            "DAILY PROFIT STRATEGY:\n"
+            "1. Review TODAY'S PERFORMANCE data before every decision\n"
+            "2. If today's P&L is positive → protect gains, tighten stops\n"
+            "3. If today's P&L is negative → be selective, only high-confidence trades\n"
+            "4. Track previous trades today - don't repeat losing strategies\n"
+            "5. Consider TIME OF DAY: reduce position sizes near market close\n\n"
+            "SIGNAL INTERPRETATION (18 AI Agents + Mazo Research):\n"
+            "1. Require STRONG consensus (>70% agents agree) for new positions\n"
+            "2. Weight agent confidence scores heavily\n"
+            "3. Mazo research provides independent validation\n"
+            "4. If agents and Mazo disagree → HOLD and wait for clarity\n\n"
+            "POSITION MANAGEMENT:\n"
+            "- Position with +5% gain → Consider taking profits\n"
+            "- Position with -3% loss → Consider cutting losses (real money = tighter stops)\n"
+            "- If a position is >25% of portfolio → reduce_long or reduce_short\n"
+            "- Diversify: Max 4-5 positions at any time\n\n"
             "AVAILABLE ACTIONS:\n"
             "- buy/sell: For long positions (full close)\n"
             "- short/cover: For short positions (full close)\n"
@@ -415,32 +544,40 @@ def generate_trading_decision(
             "- reduce_short: PARTIAL cover (keep some shares)\n"
             "- hold: No action\n"
             "- cancel: Cancel pending orders\n\n"
-            "RISK MANAGEMENT (REQUIRED for new positions with real money):\n"
-            "- stop_loss_pct: Set a stop loss as % from entry (typically 2-5% for real money)\n"
+            "RISK MANAGEMENT (REQUIRED for new positions):\n"
+            "- stop_loss_pct: Set a stop loss as % from entry (typically 2-5%)\n"
             "- take_profit_pct: Set a profit target as % from entry (typically 5-10%)\n"
-            "- Always set these for new buy/short positions to limit downside risk\n\n"
-            "Inputs: analyst signals, current positions, Mazo research (if any), and allowed actions with max qty.\n"
-            "Pick one action per ticker. Include stop_loss_pct and take_profit_pct for new positions.\n"
+            "- ALWAYS set these for new positions to limit downside risk\n\n"
+            "Inputs: today's performance, analyst signals, positions, Mazo research.\n"
+            "Pick one action per ticker. Include stop_loss_pct and take_profit_pct.\n"
             "Keep reasoning concise (max 150 chars). Return JSON only."
         )
     
-    # Enhanced prompt with portfolio awareness and Mazo research
+    # Enhanced prompt with portfolio awareness, historical context, and Mazo research
     template = ChatPromptTemplate.from_messages(
         [
             ("system", system_prompt),
             (
                 "human",
+                "{historical_context}\n\n"
                 "=== PORTFOLIO STATE ===\n{portfolio_context}\n\n"
-                "=== ANALYST SIGNALS ===\n{signals}\n\n"
+                "=== ANALYST SIGNALS (18 AI Agents) ===\n{signals}\n\n"
                 "{mazo_research}"
                 "=== ALLOWED ACTIONS (max qty per action) ===\n{allowed}\n\n"
                 "DECISION REQUIRED: For each ticker, pick ONE action.\n"
                 "Priority order:\n"
-                "1. If CONCENTRATION WARNING: use reduce_long/reduce_short first to free capital\n"
-                "2. If majority BEARISH + no position → 'short'\n"
-                "3. If majority BULLISH + no position → 'buy'\n"
-                "4. If position exists + signal agrees → hold or add\n"
-                "5. quantity=0 only for hold/cancel\n\n"
+                "1. PROTECT PROFITS: If position is +5% or more, consider taking profits\n"
+                "2. CUT LOSSES: If position is -5% or more, consider closing\n"
+                "3. If CONCENTRATION WARNING: use reduce_long/reduce_short first to free capital\n"
+                "4. If majority BEARISH + no position → 'short'\n"
+                "5. If majority BULLISH + no position → 'buy'\n"
+                "6. If position exists + signal agrees → hold or add\n"
+                "7. quantity=0 only for hold/cancel\n\n"
+                "DAILY PROFIT FOCUS: Your goal is to END THE DAY PROFITABLE.\n"
+                "- Lock in gains on winning positions\n"
+                "- Cut losses quickly on losing positions\n"
+                "- Diversify across multiple tickers\n"
+                "- Consider time of day (less aggressive near close)\n\n"
                 "JSON Format (include risk targets for new positions):\n"
                 "{{\n"
                 '  "decisions": {{\n'
@@ -453,6 +590,7 @@ def generate_trading_decision(
     )
 
     prompt_data = {
+        "historical_context": historical_context,
         "portfolio_context": position_context,
         "signals": json.dumps(compact_signals, indent=2, ensure_ascii=False),
         "allowed": json.dumps(compact_allowed, indent=2, ensure_ascii=False),
