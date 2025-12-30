@@ -22,6 +22,8 @@ An autonomous AI trading system that combines 18 specialized trading agents, dee
 | **Portfolio Health** - AI-powered health check | ![](docs/screenshots/04-portfolio-health-result.png) |
 | **Trading Dashboard** - Pipeline & positions | ![](docs/screenshots/06-trading-dashboard.png) |
 | **Command Center** - Unified view | ![](docs/screenshots/07-command-center-overview.png) |
+| **Mazo Research** - Ask anything about markets | ![](docs/screenshots/19-mazo-research-result.png) |
+| **Agent Roster** - 18 AI analysts + Mazo + PM | ![](docs/screenshots/21-roster-with-agents.png) |
 | **Settings** - API configuration | ![](docs/screenshots/09-settings-api-keys.png) |
 
 </details>
@@ -347,11 +349,25 @@ The UI includes transparency panels for full insight into AI operations:
 | **Decision** | Decision tree visualization |
 | **Logs** | Real-time console output |
 
-![Sidebar Research Tab](docs/screenshots/11-sidebar-research.png)
+![Agent Roster](docs/screenshots/21-roster-with-agents.png)
 
 ### AI Activity Feed (Left Sidebar)
 
 Real-time timeline of all AI decisions and actions as they happen.
+
+![Live Activity](docs/screenshots/14-live-activity-with-data.png)
+
+### Ask Mazo - Research Panel
+
+Ask natural language questions about any stock or market topic:
+
+![Mazo Research](docs/screenshots/19-mazo-research-result.png)
+
+Features:
+- Research depth options (Quick, Standard, Deep)
+- Real-time streaming responses
+- Sourced from financial APIs and SEC filings
+- Confidence scores for each response
 
 ---
 
