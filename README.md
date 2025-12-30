@@ -341,34 +341,43 @@ Real-time console output for debugging and monitoring. Shows detailed log entrie
 
 ---
 
-### E2E Testing: Sidebars With Live Data
+### E2E Testing: Sidebars With Live Data (tower.local.lan)
 
-When you run a Quick Analysis, all transparency sidebars populate with real-time data:
+All E2E tests performed against **tower.local.lan:8000** production API:
 
 #### Left Sidebar - Activity Feed (Populated)
 
-![Left Sidebar Populated](docs/screenshots/e2e-left-sidebar-populated.png)
+![Left Sidebar Populated](docs/screenshots/tower-e2e-left-sidebar.png)
 
 **Live Data Shows:**
-- 5 events from NVDA analysis
-- "Quick Analysis complete: NVDA → BEARISH"
+- 3 events from TSLA analysis
+- "Quick Analysis complete: TSLA → BEARISH"
 - "Portfolio Manager - Decision: BEARISH"
 - Timestamps for each event
 
-#### Decision Tab (Populated)
+#### Roster Tab - Signal Consensus
 
-![Decision Tab Populated](docs/screenshots/e2e-decision-tab-populated.png)
+![Roster Tab with Signals](docs/screenshots/tower-e2e-roster-tab.png)
 
 **Live Data Shows:**
-- **Final Decision**: BEARISH (42.16% confidence)
+- **Signal Consensus**: 1 Bullish, 3 Neutral, 15 Bearish
+- All 18 analyst agents + Mazo + PM visible
+- Live signal status after analysis
+
+#### Decision Tab (Populated)
+
+![Decision Tab Populated](docs/screenshots/tower-e2e-decision-tab.png)
+
+**Live Data Shows:**
+- **Final Decision**: BEARISH (58.08% confidence)
 - **PM Reasoning**: Analysis complete
-- **Agent Signals**: 5 Bullish, 3 Neutral, 11 Bearish
+- **Agent Signals**: 1 Bullish, 3 Neutral, 15 Bearish
 - **Individual Signals**: All 19 agents with confidence percentages
 - **Decision Flow**: 18 Agents → Mazo → PM
 
 #### Logs Tab (Populated)
 
-![Logs Tab Populated](docs/screenshots/e2e-logs-tab-populated.png)
+![Logs Tab Populated](docs/screenshots/tower-e2e-logs-tab.png)
 
 **Live Data Shows:**
 - 12 console logs from SSE stream
@@ -691,9 +700,10 @@ curl -X POST http://localhost:8000/api-keys/sync-to-env
 | 33 | [Buffett Agent Card](docs/screenshots/roster-agent-buffett.png) | Clickable agent info card |
 | 34 | [PM Agent Card](docs/screenshots/roster-agent-pm.png) | Portfolio Manager info card |
 | 35 | [Full Interface](docs/screenshots/full-interface-sidebars.png) | Complete 3-column layout |
-| 36 | [E2E Left Sidebar](docs/screenshots/e2e-left-sidebar-populated.png) | Activity feed with live NVDA analysis |
-| 37 | [E2E Decision Tab](docs/screenshots/e2e-decision-tab-populated.png) | Decision tree with 19 agent signals |
-| 38 | [E2E Logs Tab](docs/screenshots/e2e-logs-tab-populated.png) | Console with 12 SSE event logs |
+| 36 | [Tower E2E Left Sidebar](docs/screenshots/tower-e2e-left-sidebar.png) | Activity feed with live TSLA analysis |
+| 37 | [Tower E2E Roster Tab](docs/screenshots/tower-e2e-roster-tab.png) | Signal consensus: 1 Bullish, 3 Neutral, 15 Bearish |
+| 38 | [Tower E2E Decision Tab](docs/screenshots/tower-e2e-decision-tab.png) | BEARISH 58.08% with 19 agent signals |
+| 39 | [Tower E2E Logs Tab](docs/screenshots/tower-e2e-logs-tab.png) | Console with 12 SSE event logs |
 
 ---
 
