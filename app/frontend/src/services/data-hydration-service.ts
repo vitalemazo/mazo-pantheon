@@ -236,7 +236,9 @@ export const useDataStore = create<DataStore>((set) => ({
 
 // ==================== FETCH FUNCTIONS ====================
 
-const API_BASE = 'http://localhost:8000';
+import { API_BASE_URL } from '@/lib/api-config';
+
+const API_BASE = API_BASE_URL;
 
 async function fetchWithTimeout(url: string, timeout = 10000): Promise<Response> {
   const controller = new AbortController();

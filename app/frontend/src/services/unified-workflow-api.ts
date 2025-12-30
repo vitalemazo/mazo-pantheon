@@ -4,7 +4,7 @@
  * Handles API calls to the unified workflow endpoint with streaming support.
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API_BASE_URL } from '@/lib/api-config';
 
 export interface UnifiedWorkflowRequest {
   tickers: string[];

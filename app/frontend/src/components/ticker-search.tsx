@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, X, TrendingUp, Loader2, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { API_BASE_URL } from '@/lib/api-config';
 
 interface Asset {
   symbol: string;
@@ -45,7 +46,7 @@ export function TickerSearch({
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const response = await fetch('http://localhost:8000/alpaca/status');
+        const response = await fetch(`${API_BASE_URL}/alpaca/status`);
         if (response.ok) {
           const data = await response.json();
           setAlpacaConnected(data.connected);
@@ -61,7 +62,7 @@ export function TickerSearch({
   useEffect(() => {
     const loadPopular = async () => {
       try {
-        const response = await fetch('http://localhost:8000/alpaca/popular');
+        const response = await fetch(`${API_BASE_URL}/alpaca/popular`);
         if (response.ok) {
           const data = await response.json();
           setPopularTickers(data.tickers);
@@ -85,7 +86,7 @@ export function TickerSearch({
 
     try {
       const response = await fetch(
-        `http://localhost:8000/alpaca/assets?search=${encodeURIComponent(query)}&limit=20`
+        `${API_BASE_URL}/alpaca/assets?search=${encodeURIComponent(query)}&limit=20`
       );
       
       if (response.ok) {

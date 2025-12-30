@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { API_BASE_URL } from '@/lib/api-config';
 
 interface Position {
   symbol: string;
@@ -60,7 +61,7 @@ export function PortfolioHealthProvider({ children }: { children: ReactNode }) {
     setError(null);
     
     try {
-      const response = await fetch('http://localhost:8000/unified-workflow/portfolio-health-check', {
+      const response = await fetch(`${API_BASE_URL}/unified-workflow/portfolio-health-check`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),

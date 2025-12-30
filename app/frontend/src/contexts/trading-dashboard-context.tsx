@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
+import { API_BASE_URL } from '@/lib/api-config';
 
 interface Position {
   ticker: string;
@@ -125,11 +126,11 @@ export function TradingDashboardProvider({ children }: { children: ReactNode }) 
 
     try {
       const [perfRes, metricsRes, schedulerRes, watchlistRes, automatedRes] = await Promise.all([
-        fetch('http://localhost:8000/trading/performance'),
-        fetch('http://localhost:8000/trading/performance/metrics'),
-        fetch('http://localhost:8000/trading/scheduler/status'),
-        fetch('http://localhost:8000/trading/watchlist'),
-        fetch('http://localhost:8000/trading/automated/status'),
+        fetch(`${API_BASE_URL}/trading/performance`),
+        fetch(`${API_BASE_URL}/trading/performance/metrics`),
+        fetch(`${API_BASE_URL}/trading/scheduler/status`),
+        fetch(`${API_BASE_URL}/trading/watchlist`),
+        fetch(`${API_BASE_URL}/trading/automated/status`),
       ]);
 
       if (perfRes.ok) {
@@ -169,8 +170,8 @@ export function TradingDashboardProvider({ children }: { children: ReactNode }) 
   const toggleScheduler = useCallback(async () => {
     try {
       const endpoint = scheduler?.is_running 
-        ? 'http://localhost:8000/trading/scheduler/stop'
-        : 'http://localhost:8000/trading/scheduler/start';
+        ? `${API_BASE_URL}/trading/scheduler/stop`
+        : `${API_BASE_URL}/trading/scheduler/start`;
       
       await fetch(endpoint, { method: 'POST' });
       fetchData();
@@ -181,7 +182,7 @@ export function TradingDashboardProvider({ children }: { children: ReactNode }) 
 
   const addDefaultSchedule = useCallback(async () => {
     try {
-      await fetch('http://localhost:8000/trading/scheduler/add-default-schedule', { 
+      await fetch(`${API_BASE_URL}/trading/scheduler/add-default-schedule`, { 
         method: 'POST' 
       });
       fetchData();
@@ -194,8 +195,8 @@ export function TradingDashboardProvider({ children }: { children: ReactNode }) 
     setAiLoading(true);
     try {
       const endpoint = dryRun 
-        ? 'http://localhost:8000/trading/automated/dry-run'
-        : 'http://localhost:8000/trading/automated/run';
+        ? `${API_BASE_URL}/trading/automated/dry-run`
+        : `${API_BASE_URL}/trading/automated/run`;
       
       const response = await fetch(endpoint, {
         method: 'POST',

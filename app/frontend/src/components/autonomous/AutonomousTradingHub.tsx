@@ -14,6 +14,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { API_BASE_URL } from '@/lib/api-config';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -133,7 +134,7 @@ export function AutonomousTradingHub() {
     setIsStarting(true);
     
     try {
-      const response = await fetch(`http://localhost:8000/trading/scheduler/${isAutonomousEnabled ? 'stop' : 'start'}`, {
+      const response = await fetch(`${API_BASE_URL}/trading/scheduler/${isAutonomousEnabled ? 'stop' : 'start'}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -182,7 +183,7 @@ export function AutonomousTradingHub() {
     });
     
     try {
-      const response = await fetch('http://localhost:8000/trading/automated/run', {
+      const response = await fetch(`${API_BASE_URL}/trading/automated/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -809,7 +810,7 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
     setResult(null);
 
     try {
-      const response = await fetch('http://localhost:8000/unified-workflow/run', {
+      const response = await fetch(`${API_BASE_URL}/unified-workflow/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

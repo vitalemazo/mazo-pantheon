@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { apiKeysService } from '@/services/api-keys-api';
+import { API_BASE_URL } from '@/lib/api-config';
 import { Eye, EyeOff, Key, Trash2, Globe, Zap, Info, CheckCircle, XCircle, Loader2, RefreshCw, Cloud, Server } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -433,7 +434,7 @@ export function ApiKeysSettings() {
   const testAlpacaConnection = async () => {
     setTestingConnection('alpaca');
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/alpaca/status`);
+      const response = await fetch(`${API_BASE_URL}/alpaca/status`);
       const data = await response.json();
       if (data.connected) {
         setConnectionStatus(prev => ({ ...prev, alpaca: 'success' }));
@@ -473,7 +474,7 @@ export function ApiKeysSettings() {
   const syncToEnvFile = async () => {
     setSyncing(true);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api-keys/sync-to-env`, {
+      const response = await fetch(`${API_BASE_URL}/api-keys/sync-to-env`, {
         method: 'POST'
       });
       if (response.ok) {
