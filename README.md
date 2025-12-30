@@ -1,312 +1,394 @@
-# Mazo Pantheon
+# 🤖 Mazo Pantheon - AI Hedge Fund
 
-An AI-powered hedge fund combining multi-agent trading signals with autonomous financial research.
+**One Team. One Dream. One AI-Powered Hedge Fund.**
 
-> ⚠️ **Disclaimer**: This is for **educational purposes only**. Not financial advice. Use at your own risk.
+An autonomous AI trading system that combines 18 specialized trading agents, deep financial research, and a Portfolio Manager to make intelligent trading decisions on your behalf.
 
-## Overview
-
-This system integrates two AI components:
-
-| Component | Description |
-|-----------|-------------|
-| **AI Hedge Fund** | 18 specialized agents generating trading signals |
-| **Mazo Research** | Autonomous deep financial research agent |
-
-## Screenshots
-
-### Main Dashboard
-![Main Dashboard](docs/screenshots/main-dashboard.png)
-
-### Unified Workflow
-Complete transparency with workflow execution graph, configuration options, and real-time progress tracking.
-![Unified Workflow](docs/screenshots/unified-workflow.png)
-
-### Workflow Mode Dropdown
-Select from 5 workflow modes: Signal Only, Research Only, Pre-Research, Post-Research, or Full Workflow.
-![Workflow Modes Dropdown](docs/screenshots/workflow-modes-dropdown.png)
-
-### Workflow Modes Guide
-Built-in help explaining each workflow mode, token usage, cost estimates, and recommendations.
-![Workflow Modes Guide](docs/screenshots/workflow-modes-guide.png)
-
-### Research Depth Dropdown
-Choose research depth: Quick (30-60s), Standard (2-5min), or Deep (5-15min).
-![Research Depth Dropdown](docs/screenshots/research-depth-dropdown.png)
-
-### Research Depth Guide
-Detailed explanation of each research depth level, token costs, and when to use each.
-![Research Depth Guide](docs/screenshots/research-depth-guide.png)
-
-### Trading Options Guide
-Understand Dry Run vs Execute Trades, recommended workflows, and safety practices.
-![Trading Options Guide](docs/screenshots/trading-options-guide.png)
-
-### Raw JSON Output
-Inspect the full workflow state as JSON - useful for debugging and export.
-![Raw JSON Panel](docs/screenshots/raw-json-panel.png)
-
-### Settings - API Keys
-Configure all API keys for financial data, LLM providers, web search, and trading.
-![Settings API Keys](docs/screenshots/settings-api-keys.png)
-
-### Settings - Data Source Fallbacks
-Configure backup data sources (Yahoo Finance, FMP) when primary API is unavailable.
-![Data Source Fallbacks](docs/screenshots/settings-data-fallbacks.png)
-
-### Primary Data Source Dropdown
-Choose your preferred data source: Financial Datasets API, FMP, or Yahoo Finance.
-![Data Source Dropdown](docs/screenshots/data-source-dropdown.png)
-
-### Settings - Models
-View available cloud and local (Ollama) models with provider information.
-![Settings Models](docs/screenshots/settings-models.png)
+> ⚠️ **Disclaimer**: This is for **educational and research purposes only**. Not financial advice. Use paper trading to test. Deploy to live trading at your own risk.
 
 ---
 
-## Quick Start
+## 🎯 What Is This?
 
-### 1. Setup Environment
+Mazo Pantheon is a complete AI-powered trading platform that:
+
+1. **Scans the market** for trading opportunities using multiple strategies
+2. **Validates signals** through Mazo's deep research agent
+3. **Analyzes trades** with 18 AI agents (each with unique investment philosophies)
+4. **Executes decisions** through a Portfolio Manager that weighs all perspectives
+5. **Runs autonomously** 24/7 on your own infrastructure
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         YOUR AI TRADING TEAM                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│   📊 Strategy Engine     →    🔬 Mazo Research    →    🧠 18 AI Agents │
+│   (Market Scanning)           (Deep Analysis)          (Trading Views) │
+│                                                                         │
+│                              ↓                                          │
+│                                                                         │
+│                    💼 Portfolio Manager (Final Decision)                │
+│                              ↓                                          │
+│                    📈 Alpaca Trade Execution                            │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🚀 Quick Start (Docker)
+
+### Prerequisites
+
+- Docker & Docker Compose
+- API Keys (see [Configuration](#configuration))
+
+### Deploy in 3 Steps
 
 ```bash
-# Clone and enter directory
+# 1. Clone the repository
 git clone https://github.com/yourusername/mazo-pantheon.git
 cd mazo-pantheon
 
-# Create Python virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install Python dependencies
-pip install -r requirements.txt
-
-# Install Mazo (TypeScript) dependencies
-cd mazo && bun install && cd ..
-```
-
-### 2. Configure API Keys
-
-```bash
+# 2. Configure your API keys
 cp .env.example .env
-# Edit .env with your actual API keys
+nano .env  # Add your API keys
+
+# 3. Deploy with Docker Compose
+cd docker
+docker-compose -f docker-compose.unraid.yml up -d
 ```
 
-**Required keys:**
-- `FINANCIAL_DATASETS_API_KEY` - Financial data ([get here](https://financialdatasets.ai/))
-- `OPENAI_API_KEY` - LLM provider ([get here](https://platform.openai.com/))
+### Access the UI
 
-**Optional keys:**
-- `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `GOOGLE_API_KEY` - Alternative LLM providers
-- `TAVILY_API_KEY` - Web search for research
-- `ALPACA_API_KEY` + `ALPACA_SECRET_KEY` - Paper/live trading
-
-### 3. Start the Application
-
-**Option A: Run Script (Recommended)**
-```bash
-./app/run.sh
-```
-
-**Option B: Manual Start**
-```bash
-# Terminal 1 - Backend
-source venv/bin/activate
-python -m uvicorn app.backend.main:app --host 0.0.0.0 --port 8000
-
-# Terminal 2 - Frontend
-cd app/frontend && npm run dev
-```
-
-### 4. Access the UI
-
-- **Web UI**: http://localhost:5173
-- **API Docs**: http://localhost:8000/docs
+| Service | URL |
+|---------|-----|
+| **Web UI** | http://localhost:5173 |
+| **API Docs** | http://localhost:8000/docs |
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Web UI (React)                         │
-│                   localhost:5173                            │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────────────┐
-│                   FastAPI Backend                           │
-│                   localhost:8000                            │
-├─────────────────────────────────────────────────────────────┤
-│  /unified-workflow  │  /hedge-fund  │  /api-keys  │  /mazo │
-└──────────┬──────────┴───────┬───────┴──────┬──────┴────┬────┘
-           │                  │              │           │
-┌──────────▼──────────┐ ┌─────▼─────┐ ┌──────▼────┐ ┌────▼────┐
-│  Unified Workflow   │ │ 18 Agents │ │  SQLite   │ │  Mazo   │
-│  Orchestrator       │ │ LangGraph │ │  Database │ │  (Bun)  │
-└─────────────────────┘ └───────────┘ └───────────┘ └─────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           DOCKER CONTAINERS                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐ │
+│  │  mazo-frontend  │  │  mazo-backend   │  │  mazo-postgres          │ │
+│  │  (React/Nginx)  │  │  (FastAPI)      │  │  (Trade History)        │ │
+│  │  Port: 5173     │  │  Port: 8000     │  │  Port: 5432             │ │
+│  └────────┬────────┘  └────────┬────────┘  └─────────────────────────┘ │
+│           │                    │                                        │
+│           └────────────────────┼─────────────────────────────────────── │
+│                                │                                        │
+│  ┌─────────────────────────────┴─────────────────────────────────────┐ │
+│  │                        Backend Services                            │ │
+│  ├────────────────────────────────────────────────────────────────────┤ │
+│  │  • 18 AI Trading Agents (LangGraph)                                │ │
+│  │  • Mazo Research Agent (Bun/TypeScript)                            │ │
+│  │  • Strategy Engine (Momentum, Mean Reversion, Trend)               │ │
+│  │  • Portfolio Manager (Aggregates all signals)                      │ │
+│  │  • Autonomous Scheduler (APScheduler)                              │ │
+│  │  • Alpaca Trading Integration                                      │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                         │
+│  ┌─────────────────┐                                                    │
+│  │  mazo-redis     │ ← Caching Layer                                    │
+│  │  Port: 6379     │                                                    │
+│  └─────────────────┘                                                    │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Trading Agents
+## 🤖 The AI Team
 
-18 specialized agents analyze stocks from different perspectives:
+### Trading Agents (18 Total)
 
-### Value Investors
-- **Ben Graham** - Margin of safety, hidden gems
-- **Warren Buffett** - Wonderful companies at fair prices
-- **Charlie Munger** - Quality businesses only
-- **Mohnish Pabrai** - Low-risk doubles (Dhandho)
-- **Michael Burry** - Contrarian deep value
+Each agent analyzes stocks from a unique investment philosophy:
 
-### Growth Investors
-- **Cathie Wood** - Innovation and disruption
-- **Peter Lynch** - Ten-baggers in everyday businesses
-- **Phil Fisher** - Deep scuttlebutt research
+| Category | Agents | Philosophy |
+|----------|--------|------------|
+| **Value Investors** | Ben Graham, Warren Buffett, Charlie Munger, Mohnish Pabrai, Michael Burry | Margin of safety, quality at fair prices |
+| **Growth Investors** | Cathie Wood, Peter Lynch, Phil Fisher | Innovation, ten-baggers, scuttlebutt |
+| **Macro/Quant** | Stanley Druckenmiller, Aswath Damodaran | Asymmetric opportunities, disciplined valuation |
+| **Activist** | Bill Ackman, Rakesh Jhunjhunwala | Activist positions, emerging markets |
+| **Technical** | Valuation, Sentiment, Fundamentals, Technicals, Risk Manager | Data-driven analysis |
+| **Decision Maker** | Portfolio Manager | Weighs all signals, makes final call |
 
-### Macro/Quantitative
-- **Stanley Druckenmiller** - Asymmetric macro opportunities
-- **Aswath Damodaran** - Disciplined valuation
+### Mazo Research Agent
 
-### Regional/Other
-- **Bill Ackman** - Activist positions
-- **Rakesh Jhunjhunwala** - India's Big Bull
-
-### Technical Agents
-- **Valuation Agent** - Intrinsic value calculation
-- **Sentiment Agent** - Market sentiment analysis
-- **Fundamentals Agent** - Financial data analysis
-- **Technicals Agent** - Technical indicators
-- **Risk Manager** - Risk metrics and position limits
-- **Portfolio Manager** - Final trading decisions
+Deep autonomous research that:
+- Searches the web for real-time information
+- Analyzes company fundamentals
+- Provides comprehensive investment thesis
+- Validates or challenges trading signals
 
 ---
 
-## Workflow Modes
+## ⚙️ Configuration
 
-Access via the **Unified Workflow** tab in the UI:
+### Required API Keys
 
-| Mode | Description |
-|------|-------------|
-| `signal` | AI Hedge Fund analysis only |
-| `research` | Mazo research only |
-| `pre-research` | Research first → informed trading signal |
-| `post-research` | Signal first → Mazo explains the decision |
-| `full` | Complete: pre-research → signal → post-research |
+| Key | Purpose | Get It |
+|-----|---------|--------|
+| `FINANCIAL_DATASETS_API_KEY` | Stock data, metrics, news | [financialdatasets.ai](https://financialdatasets.ai/) |
+| `OPENAI_API_KEY` | LLM for AI agents | [platform.openai.com](https://platform.openai.com/) |
+| `ALPACA_API_KEY` + `ALPACA_SECRET_KEY` | Trade execution | [alpaca.markets](https://alpaca.markets/) |
 
----
+### Optional API Keys
 
-## Configuration
+| Key | Purpose |
+|-----|---------|
+| `ANTHROPIC_API_KEY` | Claude models |
+| `GROQ_API_KEY` | Fast inference |
+| `GOOGLE_API_KEY` | Gemini models |
+| `TAVILY_API_KEY` | Web search for research |
+| `FMP_API_KEY` | Alternative financial data |
 
-All configuration is in a single `.env` file at the project root.
-
-The `mazo/.env` is a symlink to the root `.env` (single source of truth).
-
-### Key Settings
+### Environment Variables
 
 ```bash
-# LLM Provider
-OPENAI_API_KEY=your-key
-OPENAI_API_BASE=https://api.openai.com/v1  # or custom proxy
-
-# Financial Data
+# ===========================================
+# REQUIRED - Core Functionality
+# ===========================================
 FINANCIAL_DATASETS_API_KEY=your-key
-
-# Mazo Settings
-MAZO_PATH=/path/to/mazo-pantheon/mazo
-MAZO_TIMEOUT=300
-DEFAULT_WORKFLOW_MODE=full
-DEFAULT_RESEARCH_DEPTH=standard
-
-# Trading (Alpaca)
+OPENAI_API_KEY=your-key
 ALPACA_API_KEY=your-key
 ALPACA_SECRET_KEY=your-secret
 ALPACA_BASE_URL=https://paper-api.alpaca.markets/v2
 ALPACA_TRADING_MODE=paper
+
+# ===========================================
+# DOCKER DEPLOYMENT
+# ===========================================
+MAZO_PATH=/app/mazo          # Path inside container
+MAZO_TIMEOUT=300
+POSTGRES_PASSWORD=your-secure-password
+
+# ===========================================
+# AUTONOMOUS TRADING
+# ===========================================
+AUTO_TRADING_ENABLED=false   # Set to true to enable
+TRADING_INTERVAL_MINUTES=30  # How often to scan
+
+# ===========================================
+# OPTIONAL - Additional LLM Providers
+# ===========================================
+ANTHROPIC_API_KEY=your-key
+GROQ_API_KEY=your-key
+TAVILY_API_KEY=your-key
 ```
 
 ---
 
-## Project Structure
+## 📦 Deployment Options
 
-```
-mazo-pantheon/
-├── .env                    # Configuration (single source of truth)
-├── .env.example            # Template for new users
-├── app/
-│   ├── backend/            # FastAPI server
-│   │   ├── main.py         # Entry point
-│   │   ├── routes/         # API endpoints
-│   │   ├── services/       # Business logic
-│   │   └── database/       # SQLite models
-│   └── frontend/           # React UI
-│       └── src/
-│           ├── components/ # UI components
-│           ├── contexts/   # React contexts
-│           └── services/   # API clients
-├── integration/            # Unified workflow
-│   ├── unified_workflow.py # Orchestrator
-│   ├── mazo_bridge.py      # Python ↔ Mazo bridge
-│   └── config.py           # Integration config
-├── mazo/                   # Mazo research agent (TypeScript)
-│   ├── .env -> ../.env     # Symlink to root .env
-│   └── src/                # Mazo source code
-├── src/
-│   ├── agents/             # 18 trading agents
-│   ├── backtesting/        # Backtesting engine
-│   ├── llm/                # LLM providers
-│   ├── tools/              # Financial data APIs
-│   └── utils/              # Helpers
-└── docker/                 # Docker deployment files
-```
+### Option 1: Unraid (Recommended for Home Labs)
 
----
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/unified-workflow/run` | POST | Run unified workflow (SSE) |
-| `/hedge-fund/run` | POST | Run AI Hedge Fund only |
-| `/hedge-fund/agents` | GET | List available agents |
-| `/api-keys/` | GET/POST | Manage API keys |
-| `/env-sync/sync` | POST | Sync .env to database |
-
-Full API docs: http://localhost:8000/docs
-
----
-
-## Troubleshooting
-
-### Backend won't start
 ```bash
-# Check if port is in use
-lsof -ti:8000 | xargs kill -9
+# SSH to your Unraid server
+ssh root@your-unraid-server
 
-# Verify virtual environment
-which python  # Should show venv path
+# Clone and deploy
+cd /mnt/user/appdata
+git clone https://github.com/yourusername/mazo-pantheon.git
+cd mazo-pantheon
+
+# Configure
+cp .env.example .env
+nano .env  # Set MAZO_PATH=/app/mazo
+
+# Deploy
+cd docker
+docker-compose -f docker-compose.unraid.yml up -d
 ```
 
-### Frontend won't start
+Access at: `http://your-unraid-ip:5173`
+
+### Option 2: Docker Compose (Any Server)
+
 ```bash
+docker-compose -f docker/docker-compose.unraid.yml up -d
+```
+
+### Option 3: Kubernetes (EKS/AKS/GKE)
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for Kubernetes manifests.
+
+```bash
+# Apply Kubernetes configs
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/secrets.yaml
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/service.yaml
+```
+
+### Option 4: Local Development
+
+```bash
+# Backend
+cd mazo-pantheon
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cd mazo && bun install && cd ..
+uvicorn app.backend.main:app --port 8000
+
+# Frontend (new terminal)
 cd app/frontend
 npm install
 npm run dev
 ```
 
-### API keys not showing in Settings
-```bash
-# Force sync from .env to database
-curl -X POST "http://localhost:8000/env-sync/sync?overwrite=true"
-```
+---
 
-### Rate limit errors
-- The system has built-in rate limiting
-- Check your LLM provider quotas
-- Consider using a proxy with higher limits
+## 🖥️ Using the Web UI
+
+### AI Hedge Fund Tab
+
+The main dashboard for autonomous trading:
+
+1. **Set Your Budget** - How much the AI can allocate per trade
+2. **Choose Risk Level** - Conservative, Balanced, or Aggressive
+3. **Enable Autonomous Mode** - Let the AI trade for you
+4. **Monitor Activity** - Watch trades and performance in real-time
+
+### Trading Dashboard
+
+View your:
+- Portfolio performance
+- Open positions
+- Trade history
+- Win rate and metrics
+
+### Settings
+
+Configure via the web UI (no need to edit files):
+- API Keys
+- LLM providers
+- Data sources
+- Trading parameters
 
 ---
 
-## License
+## 📊 Workflow Modes
 
-MIT License - See LICENSE file for details.
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **Signal Only** | AI agents analyze, no research | Quick signals |
+| **Research Only** | Mazo deep research only | Due diligence |
+| **Pre-Research** | Research first → informed signal | Best accuracy |
+| **Post-Research** | Signal first → Mazo explains | Understanding decisions |
+| **Full** | Complete pipeline | Maximum confidence |
+
+---
+
+## 🔄 Autonomous Trading Schedule
+
+When autonomous mode is enabled, the system runs on this schedule (market hours):
+
+| Time | Task |
+|------|------|
+| 9:35 AM | Morning market scan |
+| 11:00 AM | Mid-morning health check |
+| 2:00 PM | Afternoon analysis |
+| 3:30 PM | Pre-close watchlist monitor |
+| 4:05 PM | Daily performance report |
+| Every 5 min | Position monitor (stop-loss/take-profit) |
+| Every 30 min | Full AI trading cycle |
+
+---
+
+## 📁 Project Structure
+
+```
+mazo-pantheon/
+├── docker/                    # 🐳 Docker deployment
+│   ├── docker-compose.unraid.yml
+│   ├── Dockerfile.backend
+│   └── Dockerfile.frontend
+├── app/
+│   ├── backend/               # 🐍 FastAPI server
+│   │   ├── main.py
+│   │   ├── routes/
+│   │   └── services/
+│   └── frontend/              # ⚛️ React UI
+│       └── src/
+├── src/
+│   ├── agents/                # 🤖 18 AI trading agents
+│   ├── trading/               # 📈 Trading services
+│   └── tools/                 # 🔧 Financial data APIs
+├── mazo/                      # 🔬 Research agent (TypeScript)
+├── integration/               # 🔗 Workflow orchestration
+└── docs/                      # 📚 Documentation
+```
+
+---
+
+## 🛠️ Troubleshooting
+
+### Container won't start
+
+```bash
+# Check logs
+docker logs mazo-backend
+
+# Common issues:
+# - Missing API keys in .env
+# - MAZO_PATH not set to /app/mazo
+# - Port already in use
+```
+
+### CORS errors in browser
+
+The backend allows all origins by default. If you see CORS errors:
+```bash
+docker restart mazo-backend
+```
+
+### API keys not working
+
+Configure via the web UI: Settings → API Keys
+Or sync from .env:
+```bash
+curl -X POST http://localhost:8000/api-keys/sync-to-env
+```
+
+### Black screen on Trading Dashboard
+
+1. Hard refresh (Cmd+Shift+R)
+2. Check browser console for errors
+3. Verify backend is running: `curl http://localhost:8000/`
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
+
+---
+
+## 📄 License
+
+MIT License - See [LICENSE](LICENSE) for details.
+
+---
+
+## 🙏 Acknowledgments
+
+- [LangGraph](https://langchain-ai.github.io/langgraph/) for agent orchestration
+- [Alpaca](https://alpaca.markets/) for trading API
+- [Financial Datasets](https://financialdatasets.ai/) for market data
+- All the legendary investors whose philosophies inspire our AI agents
+
+---
+
+**Built with ❤️ for algorithmic traders who believe in AI-powered decision making.**
