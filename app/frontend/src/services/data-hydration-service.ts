@@ -17,7 +17,6 @@ import type {
   AgentActivityEntry, 
   WorkflowProgress, 
   ConsoleLogEntry,
-  AgentSignal,
 } from '@/types/ai-transparency';
 
 // ==================== TYPES ====================

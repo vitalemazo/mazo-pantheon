@@ -175,7 +175,7 @@ export function AutonomousTradingHub() {
       });
       
       if (response.ok) {
-        setIsAutonomousEnabled(!isAutonomousEnabled);
+        setAutonomousEnabled(!isAutonomousEnabled);
         toast.success(
           isAutonomousEnabled 
             ? 'Autonomous trading paused' 
@@ -1122,10 +1122,10 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
             </div>
           )}
           
-          {result.recommendations && result.recommendations.length > 0 && (
+          {result.reasoning && (
             <div>
-              <div className="text-xs text-slate-400 mb-1">Top Recommendation:</div>
-              <p className="text-sm text-slate-300">{result.recommendations[0]}</p>
+              <div className="text-xs text-slate-400 mb-1">Analysis:</div>
+              <p className="text-sm text-slate-300">{result.reasoning}</p>
             </div>
           )}
         </div>

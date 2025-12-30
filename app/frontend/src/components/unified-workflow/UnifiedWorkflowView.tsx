@@ -27,7 +27,7 @@ import {
   DollarSign
 } from 'lucide-react';
 import { runUnifiedWorkflow, UnifiedWorkflowRequest, UnifiedWorkflowResult } from '@/services/unified-workflow-api';
-import { dataHydrationService, WorkflowResult } from '@/services/data-hydration-service';
+import { dataHydrationService, WorkflowResult as ServiceWorkflowResult } from '@/services/data-hydration-service';
 import { toast } from 'sonner';
 
 interface WorkflowStep {
@@ -216,7 +216,7 @@ export function UnifiedWorkflowView() {
             setIsRunning(false);
             
             // === INTEGRATION: Record in shared store so all tabs see it ===
-            const workflowResult: WorkflowResult = {
+            const workflowResult: ServiceWorkflowResult = {
               id: `workflow-${Date.now()}`,
               timestamp: new Date(),
               tickers: tickerList,
