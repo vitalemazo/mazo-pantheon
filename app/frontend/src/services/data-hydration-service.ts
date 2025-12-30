@@ -106,6 +106,35 @@ export interface PortfolioHealthData {
   timestamp: string;
 }
 
+// Latest workflow result - shared across all tabs
+export interface WorkflowResult {
+  id: string;
+  timestamp: Date;
+  tickers: string[];
+  mode: string;
+  agentSignals: Array<{
+    agent: string;
+    signal: string;
+    confidence: number;
+    reasoning?: string;
+  }>;
+  mazoResearch?: string;
+  pmDecision?: {
+    action: string;
+    ticker: string;
+    quantity: number;
+    reasoning: string;
+  };
+  tradeExecuted?: {
+    orderId: string;
+    action: string;
+    quantity: number;
+    price: number;
+  };
+  success: boolean;
+  error?: string;
+}
+
 // ==================== STORE ====================
 
 interface DataStore {
@@ -118,6 +147,8 @@ interface DataStore {
   watchlist: WatchlistItem[];
   automatedStatus: AutomatedTradingStatus | null;
   portfolioHealth: PortfolioHealthData | null;
+  latestWorkflow: WorkflowResult | null;
+  recentWorkflows: WorkflowResult[];
 
   // Metadata
   lastUpdated: Record<string, Date>;
@@ -134,6 +165,7 @@ interface DataStore {
   setWatchlist: (data: WatchlistItem[]) => void;
   setAutomatedStatus: (data: AutomatedTradingStatus) => void;
   setPortfolioHealth: (data: PortfolioHealthData) => void;
+  setLatestWorkflow: (data: WorkflowResult) => void;
   setError: (key: string, error: string | null) => void;
   setRefreshing: (value: boolean) => void;
   setInitialized: (value: boolean) => void;
@@ -149,6 +181,8 @@ export const useDataStore = create<DataStore>((set) => ({
   watchlist: [],
   automatedStatus: null,
   portfolioHealth: null,
+  latestWorkflow: null,
+  recentWorkflows: [],
 
   lastUpdated: {},
   isInitialized: false,
@@ -187,6 +221,11 @@ export const useDataStore = create<DataStore>((set) => ({
   setPortfolioHealth: (data) => set((state) => ({
     portfolioHealth: data,
     lastUpdated: { ...state.lastUpdated, portfolioHealth: new Date() }
+  })),
+  setLatestWorkflow: (data) => set((state) => ({
+    latestWorkflow: data,
+    recentWorkflows: [data, ...state.recentWorkflows.slice(0, 9)], // Keep last 10
+    lastUpdated: { ...state.lastUpdated, latestWorkflow: new Date() }
   })),
   setError: (key, error) => set((state) => ({
     errors: { ...state.errors, [key]: error }
@@ -342,6 +381,30 @@ class DataHydrationService {
   }
 
   /**
+   * Record a completed workflow result
+   * This updates the store AND triggers refresh of related data
+   * so all tabs see the new trade/positions
+   */
+  async recordWorkflowComplete(result: WorkflowResult): Promise<void> {
+    const store = useDataStore.getState();
+    
+    // Store the workflow result
+    store.setLatestWorkflow(result);
+    
+    // If a trade was executed, refresh positions and trade history
+    if (result.tradeExecuted) {
+      console.log('[DataHydration] Trade executed, refreshing positions and history...');
+      
+      // Refresh in parallel
+      await Promise.all([
+        this.refreshTrades(),
+        this.refreshAgents(),
+        this.backgroundRefresh(), // Updates positions from Alpaca
+      ]);
+    }
+  }
+
+  /**
    * Start background refresh interval
    */
   startBackgroundRefresh(intervalMs = 15000): void {
@@ -387,6 +450,8 @@ export function useHydratedData() {
     watchlist: store.watchlist,
     automatedStatus: store.automatedStatus,
     portfolioHealth: store.portfolioHealth,
+    latestWorkflow: store.latestWorkflow,
+    recentWorkflows: store.recentWorkflows,
 
     // Status
     isInitialized: store.isInitialized,
@@ -398,5 +463,6 @@ export function useHydratedData() {
     refreshAgents: () => dataHydrationService.refreshAgents(),
     refreshPortfolioHealth: () => dataHydrationService.refreshPortfolioHealth(),
     refreshAll: () => dataHydrationService.backgroundRefresh(),
+    recordWorkflowComplete: (result: WorkflowResult) => dataHydrationService.recordWorkflowComplete(result),
   };
 }

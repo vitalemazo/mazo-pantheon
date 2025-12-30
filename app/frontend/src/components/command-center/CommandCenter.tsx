@@ -46,6 +46,7 @@ export function CommandCenter() {
     isRefreshing,
     refreshTrades,
     refreshAgents,
+    recentWorkflows,
   } = useHydratedData();
   
   const [selectedTrade, setSelectedTrade] = useState<any>(null);
@@ -255,7 +256,7 @@ export function CommandCenter() {
               </Card>
             </div>
 
-            {/* Recent Trades Preview */}
+            {/* Recent Trade Decisions - Shows both executed trades AND workflow decisions */}
             <Card className="bg-slate-800/50 border-slate-700">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-white">
@@ -263,17 +264,77 @@ export function CommandCenter() {
                   Recent Trade Decisions
                 </CardTitle>
                 <CardDescription>
-                  Last 5 trades with AI reasoning
+                  Latest AI decisions from Unified Workflow
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {trades.length === 0 ? (
+                {/* Show recent workflows first (includes HOLD decisions) */}
+                {recentWorkflows.length > 0 && (
+                  <div className="space-y-3 mb-4">
+                    {recentWorkflows.slice(0, 3).map((workflow) => (
+                      <div 
+                        key={workflow.id}
+                        className="p-4 bg-slate-700/30 rounded-lg border border-slate-600/50"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-white">{workflow.tickers.join(', ')}</span>
+                            {workflow.pmDecision && (
+                              <Badge className={
+                                workflow.pmDecision.action === 'buy' || workflow.pmDecision.action === 'cover'
+                                  ? 'bg-green-500/20 text-green-400 border-green-500/50'
+                                  : workflow.pmDecision.action === 'sell' || workflow.pmDecision.action === 'short'
+                                  ? 'bg-red-500/20 text-red-400 border-red-500/50'
+                                  : 'bg-slate-500/20 text-slate-400 border-slate-500/50'
+                              }>
+                                {workflow.pmDecision.action.toUpperCase()}
+                              </Badge>
+                            )}
+                            {workflow.tradeExecuted && (
+                              <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/50">
+                                <CheckCircle className="w-3 h-3 mr-1" />
+                                Executed
+                              </Badge>
+                            )}
+                          </div>
+                          <span className="text-xs text-slate-500">
+                            {workflow.timestamp.toLocaleTimeString()}
+                          </span>
+                        </div>
+                        {workflow.pmDecision?.reasoning && (
+                          <p className="text-sm text-slate-400 line-clamp-2">
+                            {workflow.pmDecision.reasoning}
+                          </p>
+                        )}
+                        {workflow.agentSignals.length > 0 && (
+                          <div className="flex gap-1 mt-2 flex-wrap">
+                            {workflow.agentSignals.slice(0, 6).map((sig, i) => (
+                              <span 
+                                key={i}
+                                className={`text-xs px-1.5 py-0.5 rounded ${
+                                  sig.signal === 'BULLISH' ? 'bg-green-500/20 text-green-400' :
+                                  sig.signal === 'BEARISH' ? 'bg-red-500/20 text-red-400' :
+                                  'bg-slate-500/20 text-slate-400'
+                                }`}
+                              >
+                                {sig.agent.split(' ')[0]}: {sig.signal}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {/* Also show executed trades from history */}
+                {trades.length === 0 && recentWorkflows.length === 0 ? (
                   <div className="text-center py-6 text-slate-400">
                     <History className="w-10 h-10 mx-auto mb-2 opacity-50" />
-                    <p>No trades recorded yet</p>
-                    <p className="text-sm mt-1">Trades will appear here after execution</p>
+                    <p>No decisions recorded yet</p>
+                    <p className="text-sm mt-1">Run a workflow from the Unified Workflow tab</p>
                   </div>
-                ) : (
+                ) : trades.length > 0 && (
                   <div className="space-y-3">
                     {trades.slice(0, 5).map((trade) => (
                       <div 
