@@ -768,11 +768,11 @@ def _log_pm_decisions(
                     agent_id=agent_name,
                     ticker=ticker,
                     signal=sig if sig else "neutral",
-                    confidence=conf,
+                    confidence=float(conf) if conf is not None else None,
                     reasoning=reasoning[:500] if reasoning else None,
                 )
-            except Exception:
-                pass  # Don't fail PM logging if agent signal logging fails
+            except Exception as e:
+                logger.warning(f"Agent signal log failed for {agent_name}: {e}")
             
             if "bullish" in sig or "buy" in sig or "long" in sig:
                 bullish_count += 1

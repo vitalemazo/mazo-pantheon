@@ -524,6 +524,26 @@ class UnifiedWorkflow:
 
         results = []
         total_start = datetime.now()
+        
+        # Get event logger for workflow tracking
+        event_logger = None
+        workflow_id = None
+        try:
+            from src.monitoring import get_event_logger
+            event_logger = get_event_logger()
+            if event_logger:
+                import uuid as uuid_module
+                workflow_id = uuid_module.uuid4()
+                # Log workflow start
+                event_logger.log_workflow_event(
+                    workflow_id=workflow_id,
+                    workflow_type="unified_analysis",
+                    step_name="workflow_start",
+                    status="started",
+                    payload={"tickers": tickers, "mode": mode_display if 'mode_display' in dir() else str(mode)}
+                )
+        except ImportError:
+            pass
 
         # Safely get value for display
         mode_display = mode.value if hasattr(mode, 'value') else str(mode)
@@ -565,6 +585,20 @@ class UnifiedWorkflow:
         print(f"\n{'='*60}")
         print(f"All analyses completed in {total_time:.2f}s")
         print(f"{'='*60}\n")
+        
+        # Log workflow completion
+        if event_logger and workflow_id:
+            try:
+                event_logger.log_workflow_event(
+                    workflow_id=workflow_id,
+                    workflow_type="unified_analysis",
+                    step_name="workflow_complete",
+                    status="completed",
+                    duration_ms=int(total_time * 1000),
+                    payload={"tickers_processed": len(tickers), "total_time_s": total_time}
+                )
+            except Exception:
+                pass  # Don't fail workflow on logging error
 
         return results
 
