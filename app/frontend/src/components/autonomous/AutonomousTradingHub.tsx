@@ -99,6 +99,11 @@ export function AutonomousTradingHub() {
     setAutonomousEnabled,
     addAIActivity,
     setTradingConfig,
+    // Transparency sidebar actions
+    addAgentActivity,
+    addConsoleLog,
+    setLiveWorkflowProgress,
+    updateWorkflowProgress,
   } = useHydratedData();
 
   // Local UI state only
@@ -195,13 +200,39 @@ export function AutonomousTradingHub() {
   // Run one AI cycle manually
   const runManualCycle = async () => {
     setIsStarting(true);
-    
+    const workflowId = `cycle_${Date.now()}`;
+
     addActivity({
       type: 'scan',
       message: 'Starting manual AI trading cycle...',
       status: 'running',
     });
-    
+
+    // Initialize workflow progress for sidebars
+    setLiveWorkflowProgress({
+      workflowId,
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      agentsTotal: 18,
+      agentsComplete: 0,
+      agentStatuses: {},
+      signals: {},
+    });
+
+    // Add to transparency sidebar
+    addAgentActivity({
+      timestamp: new Date().toISOString(),
+      type: 'workflow_start',
+      message: 'Starting AI Trading Cycle',
+    });
+
+    addConsoleLog({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      source: 'TradingCycle',
+      message: 'Initiating manual trading cycle',
+    });
+
     try {
       const response = await fetch(`${API_BASE_URL}/trading/automated/run`, {
         method: 'POST',
@@ -211,9 +242,9 @@ export function AutonomousTradingHub() {
           dry_run: false,
         }),
       });
-      
+
       const result = await response.json();
-      
+
       if (result.success !== false) {
         addActivity({
           type: 'execute',
@@ -221,7 +252,43 @@ export function AutonomousTradingHub() {
           status: 'complete',
           details: result,
         });
-        
+
+        // Update sidebars with completion
+        updateWorkflowProgress({
+          status: 'complete',
+          completedAt: new Date().toISOString(),
+          agentsComplete: 18,
+        });
+
+        addAgentActivity({
+          timestamp: new Date().toISOString(),
+          type: 'workflow_complete',
+          message: `Trading cycle complete: ${result.trades_executed || 0} trades executed`,
+          details: result,
+        });
+
+        addConsoleLog({
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          source: 'TradingCycle',
+          message: `Cycle completed successfully with ${result.trades_executed || 0} trades`,
+        });
+
+        // If there are trade decisions, add them to sidebar
+        if (result.decisions) {
+          Object.entries(result.decisions).forEach(([ticker, decision]: [string, any]) => {
+            addAgentActivity({
+              timestamp: new Date().toISOString(),
+              type: 'pm_decision',
+              agentId: 'portfolio_manager',
+              agentName: 'Portfolio Manager',
+              message: `${ticker}: ${decision.action || 'HOLD'}`,
+              ticker,
+              details: { tradeAction: decision.action, reasoning: decision.reasoning },
+            });
+          });
+        }
+
         toast.success(`AI cycle complete! ${result.trades_executed || 0} trades executed.`);
         await dataHydrationService.backgroundRefresh();
       } else {
@@ -233,6 +300,22 @@ export function AutonomousTradingHub() {
         message: `Cycle failed: ${error.message}`,
         status: 'error',
       });
+
+      // Log error to sidebars
+      updateWorkflowProgress({ status: 'error' });
+      addAgentActivity({
+        timestamp: new Date().toISOString(),
+        type: 'error',
+        message: `Trading cycle failed: ${error.message}`,
+        details: { error: error.message },
+      });
+      addConsoleLog({
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        source: 'TradingCycle',
+        message: error.message,
+      });
+
       toast.error(`Cycle failed: ${error.message}`);
     } finally {
       setIsStarting(false);
@@ -792,15 +875,20 @@ interface TickerSuggestion {
 // Quick Analysis Form Component - uses global store for persistence
 function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }) {
   // Use global store for persistence across tab switches
-  const { 
-    quickAnalysisResult: result, 
+  const {
+    quickAnalysisResult: result,
     quickAnalysisTicker: storedTicker,
     setQuickAnalysisResult: setResult,
     setQuickAnalysisTicker: setStoredTicker,
-    activeOperations,
     startOperation,
     endOperation,
     addAIActivity,
+    // Transparency sidebar actions
+    addAgentActivity,
+    addConsoleLog,
+    setAgentStatus,
+    setLiveWorkflowProgress,
+    updateWorkflowProgress,
   } = useHydratedData();
   
   // Local ticker for typing (syncs to store on blur)
@@ -874,13 +962,42 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
     }
 
     const operationId = `quickAnalysis_${Date.now()}`;
+    const workflowId = `workflow_${Date.now()}`;
+    const tickerUpper = ticker.toUpperCase();
     setIsRunning(true);
     setResult(null);
     setShowSuggestions(false);
-    setStoredTicker(ticker.toUpperCase()); // Save to store
-    
+    setStoredTicker(tickerUpper); // Save to store
+
     // Track operation globally so it persists across tabs
-    startOperation(operationId, 'quickAnalysis', `Analyzing ${ticker.toUpperCase()}...`);
+    startOperation(operationId, 'quickAnalysis', `Analyzing ${tickerUpper}...`);
+
+    // Initialize workflow progress for sidebars
+    setLiveWorkflowProgress({
+      workflowId,
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      ticker: tickerUpper,
+      agentsTotal: 18,
+      agentsComplete: 0,
+      agentStatuses: {},
+      signals: {},
+    });
+
+    // Add to transparency sidebar
+    addAgentActivity({
+      timestamp: new Date().toISOString(),
+      type: 'workflow_start',
+      message: `Starting Quick Analysis for ${tickerUpper}`,
+      ticker: tickerUpper,
+    });
+
+    addConsoleLog({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      source: 'QuickAnalysis',
+      message: `Initiating analysis for ${tickerUpper}`,
+    });
 
     try {
       // Start the analysis via POST to get the stream
@@ -888,7 +1005,7 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          tickers: [ticker.toUpperCase()],
+          tickers: [tickerUpper],
           mode: 'signal', // Use signal mode for quick analysis
           depth: 'quick',
           execute_trades: false,
@@ -904,6 +1021,7 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let finalResult: any = null;
+      let agentsComplete = 0;
 
       if (reader) {
         while (true) {
@@ -917,22 +1035,64 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
             if (line.startsWith('data: ')) {
               try {
                 const eventData = JSON.parse(line.slice(6));
-                
+                const eventType = eventData.type || eventData.event || 'unknown';
+                const data = eventData.data || eventData;
+
+                // Log to console sidebar
+                addConsoleLog({
+                  timestamp: new Date().toISOString(),
+                  level: 'debug',
+                  source: eventType,
+                  message: JSON.stringify(data).slice(0, 200),
+                });
+
+                // Handle agent events for sidebar
+                if (eventType === 'progress' && data.message) {
+                  const msg = data.message;
+                  // Check if this is an agent running/completing
+                  const agentMatch = msg.match(/Running (\w+)|(\w+) agent complete/i);
+                  if (agentMatch) {
+                    const agentName = agentMatch[1] || agentMatch[2];
+                    if (msg.toLowerCase().includes('complete')) {
+                      agentsComplete++;
+                      setAgentStatus(agentName.toLowerCase(), 'complete');
+                      addAgentActivity({
+                        timestamp: new Date().toISOString(),
+                        type: 'agent_complete',
+                        agentId: agentName.toLowerCase(),
+                        agentName: agentName,
+                        message: `${agentName} completed analysis`,
+                        ticker: tickerUpper,
+                      });
+                      updateWorkflowProgress({ agentsComplete });
+                    } else {
+                      setAgentStatus(agentName.toLowerCase(), 'running');
+                      addAgentActivity({
+                        timestamp: new Date().toISOString(),
+                        type: 'agent_start',
+                        agentId: agentName.toLowerCase(),
+                        agentName: agentName,
+                        message: `${agentName} analyzing...`,
+                        ticker: tickerUpper,
+                      });
+                    }
+                  }
+                }
+
                 // Look for complete event with results
-                if (eventData.type === 'complete' && eventData.data) {
-                  const results = eventData.data.results || eventData.data;
+                if (eventType === 'complete' && data) {
+                  const results = data.results || data;
                   if (Array.isArray(results) && results.length > 0) {
                     finalResult = results[0];
                   } else if (results.decisions) {
                     // Extract from decisions format
-                    const tickerKey = ticker.toUpperCase();
-                    const decision = results.decisions[tickerKey];
+                    const decision = results.decisions[tickerUpper];
                     if (decision) {
                       finalResult = {
                         signal: decision.action?.toUpperCase() || 'NEUTRAL',
                         confidence: decision.confidence,
                         reasoning: decision.reasoning,
-                        agent_signals: Object.entries(results.analyst_signals?.[tickerKey] || {}).map(
+                        agent_signals: Object.entries(results.analyst_signals?.[tickerUpper] || {}).map(
                           ([name, sig]: [string, any]) => ({
                             agent_name: name,
                             signal: sig.signal?.toUpperCase(),
@@ -942,11 +1102,22 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
                       };
                     }
                   }
+
+                  // Add PM decision activity
+                  addAgentActivity({
+                    timestamp: new Date().toISOString(),
+                    type: 'pm_decision',
+                    agentId: 'portfolio_manager',
+                    agentName: 'Portfolio Manager',
+                    message: `Decision: ${finalResult?.signal || 'NEUTRAL'}`,
+                    ticker: tickerUpper,
+                    details: { tradeAction: finalResult?.signal, reasoning: finalResult?.reasoning },
+                  });
                 }
                 
                 // Also check for hedge_fund_signal in progress events
-                if (eventData.type === 'progress' && eventData.data?.hedge_fund_signal) {
-                  const sig = eventData.data.hedge_fund_signal;
+                if (eventType === 'progress' && data?.hedge_fund_signal) {
+                  const sig = data.hedge_fund_signal;
                   finalResult = {
                     signal: sig.action?.toUpperCase() || sig.signal?.toUpperCase() || 'NEUTRAL',
                     confidence: sig.confidence,
@@ -961,6 +1132,19 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
           }
         }
       }
+
+      // Mark workflow as complete
+      updateWorkflowProgress({
+        status: 'complete',
+        completedAt: new Date().toISOString(),
+      });
+
+      addAgentActivity({
+        timestamp: new Date().toISOString(),
+        type: 'workflow_complete',
+        message: `Quick Analysis complete: ${tickerUpper} → ${finalResult?.signal || 'NEUTRAL'}`,
+        ticker: tickerUpper,
+      });
 
       if (finalResult) {
         finalResult.ticker = ticker.toUpperCase();
@@ -990,6 +1174,22 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
     } catch (error: any) {
       console.error('Analysis error:', error);
       toast.error(`Analysis failed: ${error.message}`);
+      
+      // Log error to sidebars
+      updateWorkflowProgress({ status: 'error' });
+      addAgentActivity({
+        timestamp: new Date().toISOString(),
+        type: 'error',
+        message: `Analysis failed: ${error.message}`,
+        ticker: tickerUpper,
+        details: { error: error.message },
+      });
+      addConsoleLog({
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        source: 'QuickAnalysis',
+        message: error.message,
+      });
     } finally {
       setIsRunning(false);
       endOperation(operationId);
