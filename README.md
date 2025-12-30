@@ -325,6 +325,22 @@ Real-time console output for debugging and monitoring. Shows detailed log entrie
 
 ---
 
+### Sidebar Data Flow
+
+The transparency sidebars receive data from different sources:
+
+| Panel | Data Source | When Populated |
+|-------|-------------|----------------|
+| **Left: AI Activity** | Quick Analysis, Run Cycle, Autonomous Mode | Real-time during operations |
+| **Roster Tab** | Static agent list | Always visible |
+| **Research Tab** | Unified workflow SSE events | During full workflow runs |
+| **Decision Tab** | Portfolio Manager decisions | After analysis completes |
+| **Logs Tab** | Console logging from all components | Real-time during operations |
+
+**Note:** The Research and Decision tabs populate from the unified workflow SSE stream. Quick Analysis and "Ask Mazo" in the bottom panel work independently but don't populate these sidebar tabs - they show results directly in their respective UI sections.
+
+---
+
 ## Bottom Panel
 
 Expandable panel with three tabs for deep-dive information.
@@ -613,6 +629,11 @@ curl -X POST http://localhost:8000/api-keys/sync-to-env
 | 25 | [Live Dashboard](docs/screenshots/live-dashboard-tower.png) | Live server with autonomous trading ON |
 | 26 | [Live TSLA Analysis](docs/screenshots/live-analysis-tsla.png) | Real-time TSLA analysis with agent signals |
 | 27 | [Live Agent Roster](docs/screenshots/live-agent-roster.png) | Agent roster on live server |
+| 28 | [Mazo Research TSLA](docs/screenshots/mazo-research-tsla.png) | Deep Mazo research on TSLA drivers |
+| 29 | [Roster + Research](docs/screenshots/roster-with-mazo-research.png) | Roster tab with Mazo research visible |
+| 30 | [Research Tab Empty](docs/screenshots/sidebar-research-empty.png) | Research sidebar before workflow |
+| 31 | [Decision Tab Empty](docs/screenshots/sidebar-decision-empty.png) | Decision sidebar before workflow |
+| 32 | [Logs Tab Empty](docs/screenshots/sidebar-logs-empty.png) | Logs sidebar before operations |
 
 ---
 
