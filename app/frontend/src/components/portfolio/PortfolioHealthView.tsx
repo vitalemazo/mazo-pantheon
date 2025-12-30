@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+// No useEffect needed - data persists in context across tab switches
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -72,12 +72,9 @@ export function PortfolioHealthView() {
     runHealthCheck 
   } = usePortfolioHealth();
 
-  // Only auto-run if we don't have cached data
-  useEffect(() => {
-    if (!healthData && !loading) {
-      runHealthCheck();
-    }
-  }, []); // Empty deps - only run once on initial mount if no data
+  // NOTE: Portfolio Health is EXPENSIVE (Mazo AI call)
+  // We do NOT auto-run. User must click "Run Health Check" button.
+  // Data persists in context across tab switches - no reload needed!
 
   const grade = healthData ? extractGrade(healthData.analysis) : '?';
   const riskLevel = healthData ? extractRiskLevel(healthData.analysis) : 'UNKNOWN';
@@ -127,6 +124,29 @@ export function PortfolioHealthView() {
           </Card>
         )}
 
+        {/* No data yet - show invitation to run health check */}
+        {!healthData && !loading && (
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardContent className="py-16 text-center">
+              <Shield className="w-16 h-16 mx-auto mb-4 text-slate-500" />
+              <h3 className="text-xl font-semibold text-white mb-2">No Health Check Data Yet</h3>
+              <p className="text-slate-400 mb-6 max-w-md mx-auto">
+                Click "Run Health Check" to get a comprehensive analysis of your portfolio 
+                powered by Mazo AI. This includes risk assessment, diversification analysis, 
+                and personalized recommendations.
+              </p>
+              <Button 
+                onClick={runHealthCheck}
+                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500"
+              >
+                <Zap className="w-4 h-4 mr-2" />
+                Run Health Check Now
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Loading state - only show when actively loading */}
         {loading && !healthData && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {[1, 2, 3].map((i) => (
