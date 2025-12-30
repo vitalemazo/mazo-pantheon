@@ -18,10 +18,11 @@ app = FastAPI(title="AI Hedge Fund API", description="Backend API for AI Hedge F
 # Initialize database tables (this is safe to run multiple times)
 Base.metadata.create_all(bind=engine)
 
-# Configure CORS
+# Configure CORS - allow all origins for flexible deployment
+# In production, you may want to restrict this to specific domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],  # Frontend URLs
+    allow_origins=["*"],  # Allow all origins for Docker/Unraid deployment
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
