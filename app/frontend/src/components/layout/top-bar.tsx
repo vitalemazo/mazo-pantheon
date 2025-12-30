@@ -6,7 +6,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings, Workflow, Activity, BarChart3, Crosshair } from 'lucide-react';
+import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings, Bot, Activity, BarChart3, Crosshair } from 'lucide-react';
 import { useState } from 'react';
 import { KeyboardShortcutsDialog } from './keyboard-shortcuts-dialog';
 
@@ -117,22 +117,22 @@ export function TopBar({
         {/* Divider */}
         <div className="w-px h-5 bg-ramp-grey-700 mx-1" />
 
-        {/* Unified Workflow */}
+        {/* AI Hedge Fund */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="sm"
               onClick={onUnifiedWorkflowClick}
-              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-ramp-grey-700 transition-colors"
-              aria-label="Open unified workflow"
+              className="h-8 w-8 p-0 text-purple-400 hover:text-purple-300 hover:bg-ramp-grey-700 transition-colors"
+              aria-label="Open AI Hedge Fund"
             >
-              <Workflow size={16} />
+              <Bot size={16} />
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="flex flex-col gap-0.5">
-            <span className="font-medium">Unified Workflow</span>
-            <span className="text-xs text-muted-foreground">Mazo Pantheon</span>
+            <span className="font-medium">AI Hedge Fund</span>
+            <span className="text-xs text-muted-foreground">Autonomous trading • Budget control</span>
           </TooltipContent>
         </Tooltip>
 

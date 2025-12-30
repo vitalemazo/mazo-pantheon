@@ -1,6 +1,6 @@
 import { Settings } from '@/components/settings/settings';
 import { FlowTabContent } from '@/components/tabs/flow-tab-content';
-import { DetailedWorkflowView } from '@/components/unified-workflow/DetailedWorkflowView';
+import { AutonomousTradingHub } from '@/components/autonomous/AutonomousTradingHub';
 import { PortfolioHealthView } from '@/components/portfolio/PortfolioHealthView';
 import { TradingDashboard } from '@/components/trading/TradingDashboard';
 import { CommandCenter } from '@/components/command-center/CommandCenter';
@@ -27,7 +27,7 @@ export class TabService {
         return createElement(Settings);
       
       case 'unified-workflow':
-        return createElement(DetailedWorkflowView);
+        return createElement(AutonomousTradingHub);
       
       case 'portfolio':
         return createElement(PortfolioHealthView);
@@ -63,8 +63,8 @@ export class TabService {
   static createUnifiedWorkflowTab(): TabData & { content: ReactNode } {
     return {
       type: 'unified-workflow',
-      title: 'Unified Workflow',
-      content: TabService.createTabContent({ type: 'unified-workflow', title: 'Unified Workflow' }),
+      title: 'AI Hedge Fund',
+      content: TabService.createTabContent({ type: 'unified-workflow', title: 'AI Hedge Fund' }),
     };
   }
 
