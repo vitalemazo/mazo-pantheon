@@ -6,6 +6,26 @@ An autonomous AI trading system that combines 18 specialized trading agents, dee
 
 > ⚠️ **Disclaimer**: This is for **educational and research purposes only**. Not financial advice. Use paper trading to test. Deploy to live trading at your own risk.
 
+![AI Hedge Fund Main Dashboard](docs/screenshots/01-ai-hedge-fund-main.png)
+
+---
+
+## 📸 Screenshots
+
+<details>
+<summary><strong>Click to expand screenshot gallery</strong></summary>
+
+| Feature | Screenshot |
+|---------|------------|
+| **AI Hedge Fund** - Main trading dashboard | ![](docs/screenshots/01-ai-hedge-fund-main.png) |
+| **Quick Analysis** - Instant ticker analysis | ![](docs/screenshots/02-quick-analysis-result.png) |
+| **Portfolio Health** - AI-powered health check | ![](docs/screenshots/04-portfolio-health-result.png) |
+| **Trading Dashboard** - Pipeline & positions | ![](docs/screenshots/06-trading-dashboard.png) |
+| **Command Center** - Unified view | ![](docs/screenshots/07-command-center-overview.png) |
+| **Settings** - API configuration | ![](docs/screenshots/09-settings-api-keys.png) |
+
+</details>
+
 ---
 
 ## 🎯 What Is This?
@@ -258,21 +278,80 @@ The main dashboard for autonomous trading:
 3. **Enable Autonomous Mode** - Let the AI trade for you
 4. **Monitor Activity** - Watch trades and performance in real-time
 
+![AI Hedge Fund Main View](docs/screenshots/01-ai-hedge-fund-main.png)
+
+#### Quick Analysis
+
+Run targeted analysis on any ticker without waiting for the autonomous cycle:
+
+![Quick Analysis Result](docs/screenshots/02-quick-analysis-result.png)
+
+### Portfolio Health
+
+Get comprehensive AI-powered portfolio analysis with actionable recommendations:
+
+![Portfolio Health Analysis](docs/screenshots/04-portfolio-health-result.png)
+
+The Mazo AI provides detailed position-by-position analysis with specific rebalancing recommendations:
+
+![Portfolio Health Mazo Analysis](docs/screenshots/05-portfolio-health-analysis.png)
+
 ### Trading Dashboard
 
-View your:
-- Portfolio performance
-- Open positions
-- Trade history
-- Win rate and metrics
+View your trading pipeline, positions, and AI decisions:
+
+![Trading Dashboard](docs/screenshots/06-trading-dashboard.png)
+
+Features:
+- Real-time portfolio performance
+- Open positions with P&L
+- AI trading pipeline status
+- Latest AI decisions
+- Watchlist and scheduled tasks
+
+### Command Center
+
+Unified view with trade history and agent performance tracking:
+
+![Command Center Overview](docs/screenshots/07-command-center-overview.png)
+
+Track which AI agents give the most accurate signals:
+
+![Agent Leaderboard](docs/screenshots/08-command-center-leaderboard.png)
 
 ### Settings
 
 Configure via the web UI (no need to edit files):
-- API Keys
-- LLM providers
-- Data sources
+
+![Settings API Keys](docs/screenshots/09-settings-api-keys.png)
+
+Features:
+- API Keys for all providers
+- Custom relay URLs
+- Data source fallbacks (Yahoo Finance, FMP)
+- Workflow optimization
 - Trading parameters
+
+---
+
+## 🔍 Transparency Sidebars
+
+The UI includes transparency panels for full insight into AI operations:
+
+### Intelligence Panel (Right Sidebar)
+
+| Tab | Purpose |
+|-----|---------|
+| **Roster** | View all 18 AI agents + Mazo + PM |
+| **Research** | Mazo research reports appear here |
+| **Decision** | Decision tree visualization |
+| **Logs** | Real-time console output |
+
+![Sidebar Research Tab](docs/screenshots/11-sidebar-research.png)
+
+### AI Activity Feed (Left Sidebar)
+
+Real-time timeline of all AI decisions and actions as they happen.
 
 ---
 
