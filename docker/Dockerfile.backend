@@ -12,7 +12,12 @@ RUN apt-get update && apt-get install -y \
     curl \
     gcc \
     g++ \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Bun (required for Mazo)
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
 
 # Set PYTHONPATH
 ENV PYTHONPATH=/app
@@ -32,6 +37,10 @@ RUN poetry config virtualenvs.create false \
 COPY src/ /app/src/
 COPY app/backend/ /app/app/backend/
 COPY integration/ /app/integration/
+COPY mazo/ /app/mazo/
+
+# Install Mazo dependencies
+RUN cd /app/mazo && bun install
 
 # Create data directory
 RUN mkdir -p /app/data
