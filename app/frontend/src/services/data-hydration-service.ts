@@ -434,11 +434,28 @@ export const useDataStore = create<DataStore>()(
       
       setLiveWorkflowProgress: (progress) => set({ liveWorkflowProgress: progress }),
       
-      updateWorkflowProgress: (updates) => set((state) => ({
-        liveWorkflowProgress: state.liveWorkflowProgress
-          ? { ...state.liveWorkflowProgress, ...updates }
-          : null,
-      })),
+      updateWorkflowProgress: (updates) => set((state) => {
+        if (!state.liveWorkflowProgress) return { liveWorkflowProgress: null };
+        
+        // Deep merge for nested objects like signals and agentStatuses
+        const current = state.liveWorkflowProgress;
+        return {
+          liveWorkflowProgress: {
+            ...current,
+            ...updates,
+            // Merge signals object instead of replacing
+            signals: {
+              ...(current.signals || {}),
+              ...(updates.signals || {}),
+            },
+            // Merge agentStatuses object instead of replacing
+            agentStatuses: {
+              ...(current.agentStatuses || {}),
+              ...(updates.agentStatuses || {}),
+            },
+          },
+        };
+      }),
     }),
     {
       name: 'mazo-data-store', // localStorage key

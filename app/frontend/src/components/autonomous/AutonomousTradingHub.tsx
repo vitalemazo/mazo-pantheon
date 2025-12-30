@@ -1064,7 +1064,10 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
                         message: `${agentName} completed analysis`,
                         ticker: tickerUpper,
                       });
-                      updateWorkflowProgress({ agentsComplete });
+                      updateWorkflowProgress({ 
+                        agentsComplete,
+                        agentStatuses: { [agentName.toLowerCase()]: 'complete' as const }
+                      });
                     } else {
                       setAgentStatus(agentName.toLowerCase(), 'running');
                       addAgentActivity({
@@ -1075,7 +1078,47 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
                         message: `${agentName} analyzing...`,
                         ticker: tickerUpper,
                       });
+                      updateWorkflowProgress({
+                        agentStatuses: { [agentName.toLowerCase()]: 'running' as const }
+                      });
                     }
+                  }
+                }
+
+                // Handle Mazo research results for Research tab
+                if (eventType === 'mazo_research' || (eventType === 'progress' && data.mazo_research)) {
+                  const research = data.mazo_research || data;
+                  updateWorkflowProgress({
+                    mazoResearch: {
+                      query: research.query || tickerUpper,
+                      response: research.response || research.content || JSON.stringify(research),
+                      sources: research.sources || [],
+                    }
+                  });
+                  addAgentActivity({
+                    timestamp: new Date().toISOString(),
+                    type: 'mazo_research',
+                    agentId: 'mazo',
+                    agentName: 'Mazo Research',
+                    message: 'Mazo research completed',
+                    ticker: tickerUpper,
+                  });
+                }
+
+                // Handle agent signal results for Decision tab
+                if (eventType === 'agent_signal' || (eventType === 'progress' && data.agent_signal)) {
+                  const agentSig = data.agent_signal || data;
+                  const agentId = agentSig.agent_id || agentSig.agent_name?.toLowerCase();
+                  if (agentId) {
+                    updateWorkflowProgress({
+                      signals: { 
+                        [agentId]: {
+                          signal: agentSig.signal?.toLowerCase() || 'neutral',
+                          confidence: agentSig.confidence || 50,
+                          reasoning: agentSig.reasoning || '',
+                        }
+                      }
+                    });
                   }
                 }
 
@@ -1100,7 +1143,52 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
                           })
                         )
                       };
+
+                      // Populate signals for Decision tab
+                      const agentSignals: Record<string, any> = {};
+                      Object.entries(results.analyst_signals?.[tickerUpper] || {}).forEach(
+                        ([name, sig]: [string, any]) => {
+                          agentSignals[name.toLowerCase()] = {
+                            signal: sig.signal?.toLowerCase() || 'neutral',
+                            confidence: sig.confidence || 50,
+                            reasoning: sig.reasoning || '',
+                          };
+                        }
+                      );
+
+                      // Update workflow progress with final decision and signals
+                      updateWorkflowProgress({
+                        signals: agentSignals,
+                        finalDecision: {
+                          action: (decision.action?.toUpperCase() || 'HOLD') as 'BUY' | 'SELL' | 'HOLD',
+                          confidence: decision.confidence || 50,
+                          reasoning: decision.reasoning || 'Analysis complete',
+                        }
+                      });
                     }
+                  }
+
+                  // Also handle direct signal format
+                  if (finalResult?.agent_signals) {
+                    const agentSignals: Record<string, any> = {};
+                    finalResult.agent_signals.forEach((sig: any) => {
+                      const agentId = sig.agent_name?.toLowerCase() || sig.agent_id;
+                      if (agentId) {
+                        agentSignals[agentId] = {
+                          signal: sig.signal?.toLowerCase() || 'neutral',
+                          confidence: sig.confidence || 50,
+                          reasoning: sig.reasoning || '',
+                        };
+                      }
+                    });
+                    updateWorkflowProgress({
+                      signals: agentSignals,
+                      finalDecision: {
+                        action: (finalResult.signal?.toUpperCase() || 'HOLD') as 'BUY' | 'SELL' | 'HOLD',
+                        confidence: finalResult.confidence || 50,
+                        reasoning: finalResult.reasoning || 'Analysis complete',
+                      }
+                    });
                   }
 
                   // Add PM decision activity
@@ -1124,6 +1212,32 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
                     reasoning: sig.reasoning,
                     agent_signals: sig.agent_signals
                   };
+
+                  // Populate signals for Decision tab from hedge_fund_signal
+                  if (sig.agent_signals) {
+                    const agentSignals: Record<string, any> = {};
+                    (Array.isArray(sig.agent_signals) ? sig.agent_signals : Object.entries(sig.agent_signals)).forEach(
+                      (item: any) => {
+                        const [name, data] = Array.isArray(item) ? item : [item.agent_name || item.agent_id, item];
+                        const agentId = (name || '').toLowerCase();
+                        if (agentId) {
+                          agentSignals[agentId] = {
+                            signal: (data.signal || data)?.toString().toLowerCase() || 'neutral',
+                            confidence: data.confidence || 50,
+                            reasoning: data.reasoning || '',
+                          };
+                        }
+                      }
+                    );
+                    updateWorkflowProgress({
+                      signals: agentSignals,
+                      finalDecision: {
+                        action: (sig.action?.toUpperCase() || sig.signal?.toUpperCase() || 'HOLD') as 'BUY' | 'SELL' | 'HOLD',
+                        confidence: sig.confidence || 50,
+                        reasoning: sig.reasoning || 'Analysis complete',
+                      }
+                    });
+                  }
                 }
               } catch {
                 // Skip non-JSON lines
