@@ -1,16 +1,18 @@
 /**
- * Data Hydration Service
+ * Unified Data Hydration Service
  * 
- * This service implements the Stale-While-Revalidate (SWR) pattern:
- * 1. On app startup, fetch ALL data and cache it
- * 2. Background refresh at configurable intervals
- * 3. Components ALWAYS see cached data immediately (no loading states)
- * 4. When new data arrives, update the cache and notify subscribers
+ * This service implements a Stale-While-Revalidate (SWR) pattern with persistence:
+ * 1. On app startup, load from localStorage first (instant)
+ * 2. Then fetch fresh data from API in background
+ * 3. All components share the same global state
+ * 4. Tab switches NEVER reset state - it's all persisted
  * 
- * The user should NEVER see an empty state unless there truly is no data.
+ * The user should NEVER see loading spinners for cached data.
  */
 
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import { API_BASE_URL } from '@/lib/api-config';
 
 // ==================== TYPES ====================
 
@@ -106,13 +108,18 @@ export interface PortfolioHealthData {
   timestamp: string;
 }
 
-// Latest workflow result - shared across all tabs
 export interface WorkflowResult {
   id: string;
-  timestamp: Date;
+  timestamp: Date | string;
   tickers: string[];
   mode: string;
-  agentSignals: Array<{
+  agent_signals?: Array<{
+    agent: string;
+    signal: string;
+    confidence: number;
+    reasoning?: string;
+  }>;
+  agentSignals?: Array<{
     agent: string;
     signal: string;
     confidence: number;
@@ -135,10 +142,33 @@ export interface WorkflowResult {
   error?: string;
 }
 
+export interface AIActivity {
+  id: string;
+  type: 'scan' | 'research' | 'analyze' | 'decide' | 'execute' | 'monitor';
+  message: string;
+  timestamp: Date | string;
+  ticker?: string;
+  status: 'pending' | 'running' | 'complete' | 'error';
+  details?: any;
+}
+
+export interface QuickAnalysisResult {
+  ticker: string;
+  signal: string;
+  confidence?: number;
+  reasoning?: string;
+  agent_signals?: Array<{
+    agent_name: string;
+    signal: string;
+    confidence?: number;
+  }>;
+  timestamp: string;
+}
+
 // ==================== STORE ====================
 
 interface DataStore {
-  // Data
+  // Core Data
   performance: PerformanceData | null;
   scheduler: SchedulerStatus | null;
   trades: TradeHistoryItem[];
@@ -147,14 +177,36 @@ interface DataStore {
   watchlist: WatchlistItem[];
   automatedStatus: AutomatedTradingStatus | null;
   portfolioHealth: PortfolioHealthData | null;
+  
+  // Workflow Data
   latestWorkflow: WorkflowResult | null;
   recentWorkflows: WorkflowResult[];
+  
+  // AI Hedge Fund State (persisted)
+  isAutonomousEnabled: boolean;
+  aiActivities: AIActivity[];
+  tradingConfig: {
+    budgetPercent: number;
+    riskLevel: 'conservative' | 'balanced' | 'aggressive';
+    maxPositions: number;
+    stopLossPercent: number;
+  };
+  quickAnalysisResult: QuickAnalysisResult | null;
+  quickAnalysisTicker: string;
 
   // Metadata
-  lastUpdated: Record<string, Date>;
+  lastUpdated: Record<string, number>; // timestamp in ms
   isInitialized: boolean;
   isRefreshing: boolean;
   errors: Record<string, string | null>;
+  
+  // Global loading states - visible across all tabs
+  activeOperations: Record<string, {
+    type: string;
+    message: string;
+    progress?: number;
+    startedAt: number;
+  }>;
 
   // Actions
   setPerformance: (data: PerformanceData) => void;
@@ -169,76 +221,165 @@ interface DataStore {
   setError: (key: string, error: string | null) => void;
   setRefreshing: (value: boolean) => void;
   setInitialized: (value: boolean) => void;
+  
+  // AI Hedge Fund Actions
+  setAutonomousEnabled: (enabled: boolean) => void;
+  addAIActivity: (activity: Omit<AIActivity, 'id' | 'timestamp'>) => void;
+  setTradingConfig: (config: Partial<DataStore['tradingConfig']>) => void;
+  setQuickAnalysisResult: (result: QuickAnalysisResult | null) => void;
+  setQuickAnalysisTicker: (ticker: string) => void;
+  
+  // Operation tracking
+  startOperation: (id: string, type: string, message: string) => void;
+  updateOperation: (id: string, updates: { message?: string; progress?: number }) => void;
+  endOperation: (id: string) => void;
 }
 
-export const useDataStore = create<DataStore>((set) => ({
-  // Initial empty state
-  performance: null,
-  scheduler: null,
-  trades: [],
-  agents: [],
-  metrics: null,
-  watchlist: [],
-  automatedStatus: null,
-  portfolioHealth: null,
-  latestWorkflow: null,
-  recentWorkflows: [],
+export const useDataStore = create<DataStore>()(
+  persist(
+    (set, get) => ({
+      // Initial empty state
+      performance: null,
+      scheduler: null,
+      trades: [],
+      agents: [],
+      metrics: null,
+      watchlist: [],
+      automatedStatus: null,
+      portfolioHealth: null,
+      latestWorkflow: null,
+      recentWorkflows: [],
+      
+      // AI Hedge Fund defaults
+      isAutonomousEnabled: false,
+      aiActivities: [],
+      tradingConfig: {
+        budgetPercent: 25,
+        riskLevel: 'balanced',
+        maxPositions: 5,
+        stopLossPercent: 5,
+      },
+      quickAnalysisResult: null,
+      quickAnalysisTicker: '',
 
-  lastUpdated: {},
-  isInitialized: false,
-  isRefreshing: false,
-  errors: {},
+      lastUpdated: {},
+      isInitialized: false,
+      isRefreshing: false,
+      errors: {},
+      activeOperations: {},
 
-  // Setters that update lastUpdated timestamp
-  setPerformance: (data) => set((state) => ({
-    performance: data,
-    lastUpdated: { ...state.lastUpdated, performance: new Date() }
-  })),
-  setScheduler: (data) => set((state) => ({
-    scheduler: data,
-    lastUpdated: { ...state.lastUpdated, scheduler: new Date() }
-  })),
-  setTrades: (data) => set((state) => ({
-    trades: data,
-    lastUpdated: { ...state.lastUpdated, trades: new Date() }
-  })),
-  setAgents: (data) => set((state) => ({
-    agents: data,
-    lastUpdated: { ...state.lastUpdated, agents: new Date() }
-  })),
-  setMetrics: (data) => set((state) => ({
-    metrics: data,
-    lastUpdated: { ...state.lastUpdated, metrics: new Date() }
-  })),
-  setWatchlist: (data) => set((state) => ({
-    watchlist: data,
-    lastUpdated: { ...state.lastUpdated, watchlist: new Date() }
-  })),
-  setAutomatedStatus: (data) => set((state) => ({
-    automatedStatus: data,
-    lastUpdated: { ...state.lastUpdated, automatedStatus: new Date() }
-  })),
-  setPortfolioHealth: (data) => set((state) => ({
-    portfolioHealth: data,
-    lastUpdated: { ...state.lastUpdated, portfolioHealth: new Date() }
-  })),
-  setLatestWorkflow: (data) => set((state) => ({
-    latestWorkflow: data,
-    recentWorkflows: [data, ...state.recentWorkflows.slice(0, 9)], // Keep last 10
-    lastUpdated: { ...state.lastUpdated, latestWorkflow: new Date() }
-  })),
-  setError: (key, error) => set((state) => ({
-    errors: { ...state.errors, [key]: error }
-  })),
-  setRefreshing: (value) => set({ isRefreshing: value }),
-  setInitialized: (value) => set({ isInitialized: value }),
-}));
+      // Setters that update lastUpdated timestamp
+      setPerformance: (data) => set((state) => ({
+        performance: data,
+        lastUpdated: { ...state.lastUpdated, performance: Date.now() }
+      })),
+      setScheduler: (data) => set((state) => ({
+        scheduler: data,
+        lastUpdated: { ...state.lastUpdated, scheduler: Date.now() }
+      })),
+      setTrades: (data) => set((state) => ({
+        trades: data,
+        lastUpdated: { ...state.lastUpdated, trades: Date.now() }
+      })),
+      setAgents: (data) => set((state) => ({
+        agents: data,
+        lastUpdated: { ...state.lastUpdated, agents: Date.now() }
+      })),
+      setMetrics: (data) => set((state) => ({
+        metrics: data,
+        lastUpdated: { ...state.lastUpdated, metrics: Date.now() }
+      })),
+      setWatchlist: (data) => set((state) => ({
+        watchlist: data,
+        lastUpdated: { ...state.lastUpdated, watchlist: Date.now() }
+      })),
+      setAutomatedStatus: (data) => set((state) => ({
+        automatedStatus: data,
+        lastUpdated: { ...state.lastUpdated, automatedStatus: Date.now() }
+      })),
+      setPortfolioHealth: (data) => set((state) => ({
+        portfolioHealth: data,
+        lastUpdated: { ...state.lastUpdated, portfolioHealth: Date.now() }
+      })),
+      setLatestWorkflow: (data) => set((state) => ({
+        latestWorkflow: data,
+        recentWorkflows: [data, ...state.recentWorkflows.slice(0, 9)],
+        lastUpdated: { ...state.lastUpdated, latestWorkflow: Date.now() }
+      })),
+      setError: (key, error) => set((state) => ({
+        errors: { ...state.errors, [key]: error }
+      })),
+      setRefreshing: (value) => set({ isRefreshing: value }),
+      setInitialized: (value) => set({ isInitialized: value }),
+      
+      // AI Hedge Fund Actions
+      setAutonomousEnabled: (enabled) => set({ isAutonomousEnabled: enabled }),
+      
+      addAIActivity: (activity) => set((state) => {
+        const newActivity: AIActivity = {
+          ...activity,
+          id: `activity_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          timestamp: new Date().toISOString(),
+        };
+        // Keep last 50 activities
+        return {
+          aiActivities: [newActivity, ...state.aiActivities.slice(0, 49)],
+        };
+      }),
+      
+      setTradingConfig: (config) => set((state) => ({
+        tradingConfig: { ...state.tradingConfig, ...config },
+      })),
+      
+      setQuickAnalysisResult: (result) => set({ quickAnalysisResult: result }),
+      setQuickAnalysisTicker: (ticker) => set({ quickAnalysisTicker: ticker }),
+      
+      // Operation tracking for global loading states
+      startOperation: (id, type, message) => set((state) => ({
+        activeOperations: {
+          ...state.activeOperations,
+          [id]: { type, message, startedAt: Date.now() },
+        },
+      })),
+      
+      updateOperation: (id, updates) => set((state) => {
+        const op = state.activeOperations[id];
+        if (!op) return state;
+        return {
+          activeOperations: {
+            ...state.activeOperations,
+            [id]: { ...op, ...updates },
+          },
+        };
+      }),
+      
+      endOperation: (id) => set((state) => {
+        const { [id]: removed, ...rest } = state.activeOperations;
+        return { activeOperations: rest };
+      }),
+    }),
+    {
+      name: 'mazo-data-store', // localStorage key
+      storage: createJSONStorage(() => localStorage),
+      // Only persist these fields
+      partialize: (state) => ({
+        isAutonomousEnabled: state.isAutonomousEnabled,
+        aiActivities: state.aiActivities.slice(0, 20), // Keep last 20 in storage
+        tradingConfig: state.tradingConfig,
+        quickAnalysisResult: state.quickAnalysisResult,
+        quickAnalysisTicker: state.quickAnalysisTicker,
+        performance: state.performance,
+        scheduler: state.scheduler,
+        trades: state.trades.slice(0, 20),
+        agents: state.agents,
+        metrics: state.metrics,
+        lastUpdated: state.lastUpdated,
+      }),
+    }
+  )
+);
 
 // ==================== FETCH FUNCTIONS ====================
-
-import { API_BASE_URL } from '@/lib/api-config';
-
-const API_BASE = API_BASE_URL;
 
 async function fetchWithTimeout(url: string, timeout = 10000): Promise<Response> {
   const controller = new AbortController();
@@ -255,7 +396,7 @@ async function fetchWithTimeout(url: string, timeout = 10000): Promise<Response>
 
 async function safeFetch<T>(url: string, fallback: T): Promise<T> {
   try {
-    const response = await fetchWithTimeout(`${API_BASE}${url}`);
+    const response = await fetchWithTimeout(`${API_BASE_URL}${url}`);
     if (!response.ok) return fallback;
     return await response.json();
   } catch {
@@ -268,19 +409,29 @@ async function safeFetch<T>(url: string, fallback: T): Promise<T> {
 class DataHydrationService {
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
   private isHydrating = false;
+  private lastHydrationTime = 0;
 
   /**
    * Initial hydration - fetch ALL data on app startup
-   * This runs once when the app loads
+   * Skips if data was fetched recently (within 30 seconds)
    */
-  async hydrateAll(): Promise<void> {
+  async hydrateAll(force = false): Promise<void> {
     if (this.isHydrating) return;
+    
+    // Skip if recently hydrated (unless forced)
+    const now = Date.now();
+    if (!force && now - this.lastHydrationTime < 30000) {
+      console.log('[DataHydration] Skipping - recently hydrated');
+      return;
+    }
+
     this.isHydrating = true;
+    this.lastHydrationTime = now;
 
     const store = useDataStore.getState();
     store.setRefreshing(true);
 
-    console.log('[DataHydration] Starting initial hydration...');
+    console.log('[DataHydration] Starting hydration...');
 
     try {
       // Fetch all data in parallel for speed
@@ -304,7 +455,13 @@ class DataHydrationService {
 
       // Update store with fetched data
       if (perfData) store.setPerformance(perfData);
-      if (schedulerData) store.setScheduler(schedulerData);
+      if (schedulerData) {
+        store.setScheduler(schedulerData);
+        // Sync autonomous state from backend
+        if (schedulerData.is_running !== undefined) {
+          store.setAutonomousEnabled(schedulerData.is_running);
+        }
+      }
       if (tradesData?.trades) store.setTrades(tradesData.trades);
       if (agentsData?.agents) store.setAgents(agentsData.agents);
       if (metricsData?.summary) store.setMetrics(metricsData.summary);
@@ -312,7 +469,7 @@ class DataHydrationService {
       if (automatedData) store.setAutomatedStatus(automatedData);
 
       store.setInitialized(true);
-      console.log('[DataHydration] Initial hydration complete');
+      console.log('[DataHydration] Hydration complete');
 
     } catch (error) {
       console.error('[DataHydration] Hydration failed:', error);
@@ -324,13 +481,10 @@ class DataHydrationService {
 
   /**
    * Background refresh - updates data without showing loading states
-   * Runs every N seconds in the background
+   * Silent failure - never disrupts the UI
    */
   async backgroundRefresh(): Promise<void> {
     const store = useDataStore.getState();
-    
-    // Don't show loading state for background refresh
-    // The UI keeps showing old data while new data loads
 
     try {
       const [perfData, schedulerData, automatedData] = await Promise.all([
@@ -341,11 +495,16 @@ class DataHydrationService {
 
       // Only update if we got data - never clear existing data
       if (perfData) store.setPerformance(perfData);
-      if (schedulerData) store.setScheduler(schedulerData);
+      if (schedulerData) {
+        store.setScheduler(schedulerData);
+        if (schedulerData.is_running !== undefined) {
+          store.setAutonomousEnabled(schedulerData.is_running);
+        }
+      }
       if (automatedData) store.setAutomatedStatus(automatedData);
 
     } catch (error) {
-      // Silent fail for background refresh - don't disrupt UI
+      // Silent fail for background refresh
       console.warn('[DataHydration] Background refresh failed:', error);
     }
   }
@@ -368,7 +527,7 @@ class DataHydrationService {
   async refreshPortfolioHealth(): Promise<void> {
     const store = useDataStore.getState();
     try {
-      const response = await fetch(`${API_BASE}/unified-workflow/portfolio-health-check`, {
+      const response = await fetch(`${API_BASE_URL}/unified-workflow/portfolio-health-check`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
@@ -384,8 +543,6 @@ class DataHydrationService {
 
   /**
    * Record a completed workflow result
-   * This updates the store AND triggers refresh of related data
-   * so all tabs see the new trade/positions
    */
   async recordWorkflowComplete(result: WorkflowResult): Promise<void> {
     const store = useDataStore.getState();
@@ -393,15 +550,21 @@ class DataHydrationService {
     // Store the workflow result
     store.setLatestWorkflow(result);
     
+    // Add activity
+    store.addAIActivity({
+      type: 'analyze',
+      message: `Analysis complete for ${result.tickers?.join(', ') || 'unknown'}`,
+      status: 'complete',
+      details: result,
+    });
+    
     // If a trade was executed, refresh positions and trade history
     if (result.tradeExecuted) {
-      console.log('[DataHydration] Trade executed, refreshing positions and history...');
-      
-      // Refresh in parallel
+      console.log('[DataHydration] Trade executed, refreshing...');
       await Promise.all([
         this.refreshTrades(),
         this.refreshAgents(),
-        this.backgroundRefresh(), // Updates positions from Alpaca
+        this.backgroundRefresh(),
       ]);
     }
   }
@@ -443,7 +606,7 @@ export function useHydratedData() {
   const store = useDataStore();
 
   return {
-    // Data (always available after first load)
+    // Core Data
     performance: store.performance,
     scheduler: store.scheduler,
     trades: store.trades,
@@ -454,6 +617,16 @@ export function useHydratedData() {
     portfolioHealth: store.portfolioHealth,
     latestWorkflow: store.latestWorkflow,
     recentWorkflows: store.recentWorkflows,
+    
+    // AI Hedge Fund State
+    isAutonomousEnabled: store.isAutonomousEnabled,
+    aiActivities: store.aiActivities,
+    tradingConfig: store.tradingConfig,
+    quickAnalysisResult: store.quickAnalysisResult,
+    quickAnalysisTicker: store.quickAnalysisTicker,
+    
+    // Active operations (loading states)
+    activeOperations: store.activeOperations,
 
     // Status
     isInitialized: store.isInitialized,
@@ -466,5 +639,31 @@ export function useHydratedData() {
     refreshPortfolioHealth: () => dataHydrationService.refreshPortfolioHealth(),
     refreshAll: () => dataHydrationService.backgroundRefresh(),
     recordWorkflowComplete: (result: WorkflowResult) => dataHydrationService.recordWorkflowComplete(result),
+    
+    // AI Hedge Fund Actions
+    setAutonomousEnabled: store.setAutonomousEnabled,
+    addAIActivity: store.addAIActivity,
+    setTradingConfig: store.setTradingConfig,
+    setQuickAnalysisResult: store.setQuickAnalysisResult,
+    setQuickAnalysisTicker: store.setQuickAnalysisTicker,
+    
+    // Operation tracking
+    startOperation: store.startOperation,
+    updateOperation: store.updateOperation,
+    endOperation: store.endOperation,
   };
+}
+
+// ==================== GLOBAL INITIALIZATION ====================
+
+/**
+ * Initialize data hydration on app startup
+ * Call this once in your app entry point
+ */
+export async function initializeDataHydration() {
+  // Start background refresh
+  dataHydrationService.startBackgroundRefresh(15000);
+  
+  // Hydrate all data
+  await dataHydrationService.hydrateAll();
 }

@@ -92,61 +92,44 @@ function formatPercent(value: number): string {
 
 export function AutonomousTradingHub() {
   // Use hydrated data from shared store
+  // Use unified global store - state persists across all tabs
   const { 
     performance, 
     scheduler, 
     metrics,
     recentWorkflows,
     automatedStatus,
+    // AI Hedge Fund persisted state from global store
+    isAutonomousEnabled,
+    aiActivities: activities,
+    tradingConfig,
+    activeOperations,
+    // Actions
+    setAutonomousEnabled,
+    addAIActivity,
+    setTradingConfig,
+    startOperation,
+    endOperation,
   } = useHydratedData();
 
-  // Persist config to localStorage
-  const [config, setConfig] = useState<TradingConfig>(() => {
-    try {
-      const saved = localStorage.getItem('aiHedgeFund_config');
-      return saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : DEFAULT_CONFIG;
-    } catch { return DEFAULT_CONFIG; }
-  });
-  
-  // Persist activities to localStorage (keep last 20)
-  const [activities, setActivities] = useState<AIActivity[]>(() => {
-    try {
-      const saved = localStorage.getItem('aiHedgeFund_activities');
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
-  
-  // Autonomous state synced from scheduler
-  const [isAutonomousEnabled, setIsAutonomousEnabled] = useState(() => {
-    try {
-      return localStorage.getItem('aiHedgeFund_autonomous') === 'true';
-    } catch { return false; }
-  });
-  
+  // Local UI state only
   const [isStarting, setIsStarting] = useState(false);
   
-  // Persist config changes
-  useEffect(() => {
-    try {
-      localStorage.setItem('aiHedgeFund_config', JSON.stringify(config));
-    } catch {}
-  }, [config]);
+  // Map store config to component config format
+  const config: TradingConfig = {
+    budgetPercent: tradingConfig.budgetPercent,
+    riskLevel: tradingConfig.riskLevel,
+    maxPositions: tradingConfig.maxPositions,
+    stopLossPercent: tradingConfig.stopLossPercent,
+  };
   
-  // Persist activities changes
-  useEffect(() => {
-    try {
-      // Keep only last 20 activities
-      const toSave = activities.slice(0, 20);
-      localStorage.setItem('aiHedgeFund_activities', JSON.stringify(toSave));
-    } catch {}
-  }, [activities]);
-  
-  // Persist autonomous state
-  useEffect(() => {
-    try {
-      localStorage.setItem('aiHedgeFund_autonomous', String(isAutonomousEnabled));
-    } catch {}
-  }, [isAutonomousEnabled]);
+  const setConfig = (updater: TradingConfig | ((prev: TradingConfig) => TradingConfig)) => {
+    if (typeof updater === 'function') {
+      setTradingConfig(updater(config));
+    } else {
+      setTradingConfig(updater);
+    }
+  };
 
   // Calculate budget in dollars
   const portfolioValue = performance?.equity || 0;
@@ -154,51 +137,17 @@ export function AutonomousTradingHub() {
   const cashAvailable = performance?.cash || 0;
   const effectiveBudget = Math.min(allocatedBudget, cashAvailable);
 
-  // Sync with scheduler status
+  // Sync with scheduler status from store
   useEffect(() => {
     if (scheduler?.is_running !== undefined) {
-      setIsAutonomousEnabled(scheduler.is_running);
+      setAutonomousEnabled(scheduler.is_running);
     }
-  }, [scheduler?.is_running]);
-  
-  // Poll for automated trading status and add activities
-  useEffect(() => {
-    const checkAutomatedStatus = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/trading/automated/status`);
-        if (response.ok) {
-          const data = await response.json();
-          // If there's a new run, add activity
-          if (data.last_run && data.total_runs > 0) {
-            const lastRunTime = new Date(data.last_run).getTime();
-            const now = Date.now();
-            // Only add if run was in last 5 minutes and not already in activities
-            if (now - lastRunTime < 5 * 60 * 1000) {
-              const runId = `run_${data.last_run}`;
-              if (!activities.some(a => a.id === runId)) {
-                const result = data.last_result;
-                if (result) {
-                  addActivity({
-                    type: 'analyze',
-                    message: `AI cycle complete: ${result.signals_found || 0} signals, ${result.trades_executed || 0} trades`,
-                    status: 'complete',
-                    details: result,
-                  });
-                }
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.error('Failed to check automated status:', e);
-      }
-    };
+  }, [scheduler?.is_running, setAutonomousEnabled]);
 
-    // Check immediately and then every 30 seconds
-    checkAutomatedStatus();
-    const interval = setInterval(checkAutomatedStatus, 30000);
-    return () => clearInterval(interval);
-  }, [activities]);
+  // Helper to add activity using store action
+  const addActivity = useCallback((activity: Omit<AIActivity, 'id' | 'timestamp'>) => {
+    addAIActivity(activity);
+  }, [addAIActivity]);
 
   // Handle risk level change
   const handleRiskChange = (level: TradingConfig['riskLevel']) => {
@@ -299,38 +248,6 @@ export function AutonomousTradingHub() {
       setIsStarting(false);
     }
   };
-
-  // Add activity to feed
-  const addActivity = useCallback((activity: Omit<AIActivity, 'id' | 'timestamp'>) => {
-    setActivities(prev => [{
-      ...activity,
-      id: `activity-${Date.now()}`,
-      timestamp: new Date(),
-    }, ...prev.slice(0, 49)]); // Keep last 50
-  }, []);
-
-  // Convert recent workflows to activities
-  useEffect(() => {
-    if (recentWorkflows.length > 0) {
-      const newActivities: AIActivity[] = recentWorkflows.slice(0, 5).map(wf => ({
-        id: wf.id,
-        timestamp: wf.timestamp,
-        type: wf.tradeExecuted ? 'execute' : 'decide',
-        message: wf.pmDecision 
-          ? `${wf.pmDecision.action.toUpperCase()} decision for ${wf.tickers.join(', ')}`
-          : `Analysis complete for ${wf.tickers.join(', ')}`,
-        ticker: wf.tickers[0],
-        status: 'complete' as const,
-        details: wf,
-      }));
-      
-      setActivities(prev => {
-        const existingIds = new Set(prev.map(a => a.id));
-        const newOnes = newActivities.filter(a => !existingIds.has(a.id));
-        return [...newOnes, ...prev].slice(0, 50);
-      });
-    }
-  }, [recentWorkflows]);
 
   return (
     <div className="h-full overflow-auto bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
@@ -882,21 +799,23 @@ interface TickerSuggestion {
   exchange?: string;
 }
 
-// Quick Analysis Form Component with ticker autocomplete and persistence
+// Quick Analysis Form Component - uses global store for persistence
 function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }) {
-  // Load persisted state from localStorage
-  const [ticker, setTicker] = useState(() => {
-    try {
-      return localStorage.getItem('quickAnalysis_ticker') || '';
-    } catch { return ''; }
-  });
+  // Use global store for persistence across tab switches
+  const { 
+    quickAnalysisResult: result, 
+    quickAnalysisTicker: storedTicker,
+    setQuickAnalysisResult: setResult,
+    setQuickAnalysisTicker: setStoredTicker,
+    activeOperations,
+    startOperation,
+    endOperation,
+    addAIActivity,
+  } = useHydratedData();
+  
+  // Local ticker for typing (syncs to store on blur)
+  const [ticker, setTicker] = useState(storedTicker);
   const [isRunning, setIsRunning] = useState(false);
-  const [result, setResult] = useState<any>(() => {
-    try {
-      const saved = localStorage.getItem('quickAnalysis_result');
-      return saved ? JSON.parse(saved) : null;
-    } catch { return null; }
-  });
   
   // Autocomplete state
   const [suggestions, setSuggestions] = useState<TickerSuggestion[]>([]);
@@ -905,20 +824,15 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Persist ticker and result to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem('quickAnalysis_ticker', ticker);
-    } catch {}
-  }, [ticker]);
+  // Check if there's a global analysis running
+  const globalAnalysisRunning = Object.values(activeOperations).some(
+    op => op.type === 'quickAnalysis'
+  );
 
+  // Sync from store when it changes
   useEffect(() => {
-    try {
-      if (result) {
-        localStorage.setItem('quickAnalysis_result', JSON.stringify(result));
-      }
-    } catch {}
-  }, [result]);
+    setTicker(storedTicker);
+  }, [storedTicker]);
 
   // Search for ticker suggestions from Alpaca
   const searchTickers = useCallback(async (query: string) => {
@@ -974,9 +888,14 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
       return;
     }
 
+    const operationId = `quickAnalysis_${Date.now()}`;
     setIsRunning(true);
     setResult(null);
     setShowSuggestions(false);
+    setStoredTicker(ticker.toUpperCase()); // Save to store
+    
+    // Track operation globally so it persists across tabs
+    startOperation(operationId, 'quickAnalysis', `Analyzing ${ticker.toUpperCase()}...`);
 
     try {
       // Start the analysis via POST to get the stream
@@ -1064,6 +983,15 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
         setResult(finalResult);
         onComplete({ ticker: ticker.toUpperCase(), ...finalResult });
         toast.success(`Analysis complete for ${ticker.toUpperCase()}`);
+        
+        // Add to activity log
+        addAIActivity({
+          type: 'analyze',
+          message: `Quick analysis: ${ticker.toUpperCase()} → ${finalResult.signal}`,
+          ticker: ticker.toUpperCase(),
+          status: 'complete',
+          details: finalResult,
+        });
       } else {
         const neutralResult = { 
           signal: 'NEUTRAL', 
@@ -1079,6 +1007,7 @@ function QuickAnalysisForm({ onComplete }: { onComplete: (result: any) => void }
       toast.error(`Analysis failed: ${error.message}`);
     } finally {
       setIsRunning(false);
+      endOperation(operationId);
     }
   };
 
