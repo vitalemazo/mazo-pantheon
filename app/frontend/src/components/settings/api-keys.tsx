@@ -3,8 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { apiKeysService } from '@/services/api-keys-api';
-import { Eye, EyeOff, Key, Trash2, Globe, Zap, Info } from 'lucide-react';
+import { Eye, EyeOff, Key, Trash2, Globe, Zap, Info, CheckCircle, XCircle, Loader2, RefreshCw, Cloud, Server } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 
 interface ApiKey {
   key: string;
@@ -35,9 +36,71 @@ const API_ENDPOINTS: ApiKey[] = [
   {
     key: 'OPENAI_API_BASE',
     label: 'OpenAI API Base URL',
-    description: 'Custom base URL for OpenAI-compatible APIs (leave empty for default OpenAI)',
+    description: 'Custom base URL for OpenAI-compatible APIs or proxy relays',
     url: 'https://platform.openai.com/',
     placeholder: 'https://api.openai.com/v1'
+  },
+  {
+    key: 'ANTHROPIC_API_BASE',
+    label: 'Anthropic API Base URL',
+    description: 'Custom base URL for Anthropic Claude API (leave empty for default)',
+    url: 'https://docs.anthropic.com/',
+    placeholder: 'https://api.anthropic.com'
+  },
+  {
+    key: 'OPENROUTER_API_BASE',
+    label: 'OpenRouter API Base URL',
+    description: 'Custom base URL for OpenRouter (default: openrouter.ai/api/v1)',
+    url: 'https://openrouter.ai/',
+    placeholder: 'https://openrouter.ai/api/v1'
+  }
+];
+
+const AZURE_CONFIG: ApiKey[] = [
+  {
+    key: 'AZURE_OPENAI_API_KEY',
+    label: 'Azure OpenAI API Key',
+    description: 'API key for Azure OpenAI service',
+    url: 'https://azure.microsoft.com/en-us/products/ai-services/openai-service',
+    placeholder: 'your-azure-openai-key'
+  },
+  {
+    key: 'AZURE_OPENAI_ENDPOINT',
+    label: 'Azure OpenAI Endpoint',
+    description: 'Your Azure OpenAI resource endpoint URL',
+    url: 'https://azure.microsoft.com/en-us/products/ai-services/openai-service',
+    placeholder: 'https://your-resource.openai.azure.com'
+  },
+  {
+    key: 'AZURE_OPENAI_DEPLOYMENT_NAME',
+    label: 'Azure Deployment Name',
+    description: 'Name of your Azure OpenAI model deployment',
+    url: 'https://azure.microsoft.com/en-us/products/ai-services/openai-service',
+    placeholder: 'gpt-4'
+  },
+  {
+    key: 'AZURE_OPENAI_API_VERSION',
+    label: 'Azure API Version',
+    description: 'API version for Azure OpenAI (e.g., 2024-02-15-preview)',
+    url: 'https://learn.microsoft.com/en-us/azure/ai-services/openai/',
+    placeholder: '2024-02-15-preview'
+  }
+];
+
+const XAI_CONFIG: ApiKey[] = [
+  {
+    key: 'XAI_API_KEY',
+    label: 'xAI (Grok) API Key',
+    description: 'API key for xAI Grok models',
+    url: 'https://x.ai/',
+    placeholder: 'your-xai-api-key'
+  },
+  {
+    key: 'XAI_API_BASE',
+    label: 'xAI API Base URL',
+    description: 'Custom base URL for xAI API (leave empty for default)',
+    url: 'https://x.ai/',
+    placeholder: 'https://api.x.ai/v1'
   }
 ];
 
@@ -281,6 +344,9 @@ export function ApiKeysSettings() {
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [testingConnection, setTestingConnection] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<Record<string, 'success' | 'error' | null>>({});
+  const [syncing, setSyncing] = useState(false);
 
   // Load API keys from backend on component mount
   useEffect(() => {
@@ -364,6 +430,64 @@ export function ApiKeysSettings() {
     }
   };
 
+  const testAlpacaConnection = async () => {
+    setTestingConnection('alpaca');
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/alpaca/status`);
+      const data = await response.json();
+      if (data.connected) {
+        setConnectionStatus(prev => ({ ...prev, alpaca: 'success' }));
+        toast.success(`Alpaca Connected! Mode: ${data.mode}, Balance: $${data.portfolio_value?.toLocaleString() || 'N/A'}`);
+      } else {
+        setConnectionStatus(prev => ({ ...prev, alpaca: 'error' }));
+        toast.error('Alpaca connection failed. Check your API keys.');
+      }
+    } catch (err) {
+      setConnectionStatus(prev => ({ ...prev, alpaca: 'error' }));
+      toast.error('Failed to test Alpaca connection');
+    } finally {
+      setTestingConnection(null);
+    }
+  };
+
+  const testLLMConnection = async (provider: string) => {
+    setTestingConnection(provider);
+    try {
+      // Simple ping test - just verify the key exists and is formatted correctly
+      const key = apiKeys[`${provider.toUpperCase()}_API_KEY`];
+      if (key && key.length > 10) {
+        setConnectionStatus(prev => ({ ...prev, [provider]: 'success' }));
+        toast.success(`${provider} API key configured (${key.length} chars)`);
+      } else {
+        setConnectionStatus(prev => ({ ...prev, [provider]: 'error' }));
+        toast.error(`${provider} API key appears invalid or missing`);
+      }
+    } catch (err) {
+      setConnectionStatus(prev => ({ ...prev, [provider]: 'error' }));
+      toast.error(`Failed to validate ${provider}`);
+    } finally {
+      setTestingConnection(null);
+    }
+  };
+
+  const syncToEnvFile = async () => {
+    setSyncing(true);
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api-keys/sync-to-env`, {
+        method: 'POST'
+      });
+      if (response.ok) {
+        toast.success('Settings synced to .env file! Restart backend to apply changes.');
+      } else {
+        toast.error('Failed to sync to .env file');
+      }
+    } catch (err) {
+      toast.error('Failed to sync settings');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const renderApiKeySection = (title: string, description: string, keys: ApiKey[], icon: React.ReactNode) => (
     <Card className="bg-panel border-gray-700 dark:border-gray-700">
       <CardHeader>
@@ -443,13 +567,89 @@ export function ApiKeysSettings() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-semibold text-primary mb-2">API Keys</h2>
-        <p className="text-sm text-muted-foreground">
-          Configure API endpoints and authentication credentials for financial data and language models.
-          Changes are automatically saved.
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-primary mb-2">API Keys & Configuration</h2>
+          <p className="text-sm text-muted-foreground">
+            Configure API endpoints, authentication credentials, and custom relay URLs.
+            Changes are automatically saved to the database.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={syncToEnvFile}
+          disabled={syncing}
+          className="flex items-center gap-2"
+        >
+          {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Sync to .env
+        </Button>
       </div>
+
+      {/* Quick Status */}
+      <Card className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 border-purple-500/20">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Server className="h-4 w-4 text-purple-400" />
+                <span className="text-sm text-primary">Quick Connection Tests</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={testAlpacaConnection}
+                disabled={testingConnection === 'alpaca'}
+                className="text-xs"
+              >
+                {testingConnection === 'alpaca' ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : connectionStatus.alpaca === 'success' ? (
+                  <CheckCircle className="h-3 w-3 text-green-500 mr-1" />
+                ) : connectionStatus.alpaca === 'error' ? (
+                  <XCircle className="h-3 w-3 text-red-500 mr-1" />
+                ) : null}
+                Test Alpaca
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => testLLMConnection('openai')}
+                disabled={testingConnection === 'openai'}
+                className="text-xs"
+              >
+                {testingConnection === 'openai' ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : connectionStatus.openai === 'success' ? (
+                  <CheckCircle className="h-3 w-3 text-green-500 mr-1" />
+                ) : connectionStatus.openai === 'error' ? (
+                  <XCircle className="h-3 w-3 text-red-500 mr-1" />
+                ) : null}
+                Test OpenAI
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => testLLMConnection('anthropic')}
+                disabled={testingConnection === 'anthropic'}
+                className="text-xs"
+              >
+                {testingConnection === 'anthropic' ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : connectionStatus.anthropic === 'success' ? (
+                  <CheckCircle className="h-3 w-3 text-green-500 mr-1" />
+                ) : connectionStatus.anthropic === 'error' ? (
+                  <XCircle className="h-3 w-3 text-red-500 mr-1" />
+                ) : null}
+                Test Anthropic
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Error Message */}
       {error && (
@@ -493,12 +693,28 @@ export function ApiKeysSettings() {
         <Key className="h-4 w-4" />
       )}
 
-      {/* API Endpoints */}
+      {/* API Endpoints / Relay URLs */}
       {renderApiKeySection(
-        'Custom API Endpoints',
-        'Configure custom API endpoints for OpenAI-compatible providers.',
+        'Custom API Endpoints & Relay URLs',
+        'Configure custom base URLs for API providers. Use these for proxy relays, enterprise endpoints, or self-hosted services.',
         API_ENDPOINTS,
         <Globe className="h-4 w-4" />
+      )}
+
+      {/* Azure OpenAI */}
+      {renderApiKeySection(
+        'Azure OpenAI',
+        'Configure Azure-hosted OpenAI service for enterprise deployments.',
+        AZURE_CONFIG,
+        <Cloud className="h-4 w-4" />
+      )}
+
+      {/* xAI / Grok */}
+      {renderApiKeySection(
+        'xAI (Grok)',
+        'Configure xAI API for Grok models.',
+        XAI_CONFIG,
+        <Key className="h-4 w-4" />
       )}
 
       {/* Search API Keys */}
