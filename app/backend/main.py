@@ -32,6 +32,12 @@ app.add_middleware(
 # Include all routes
 app.include_router(api_router)
 
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Docker/Kubernetes."""
+    return {"status": "healthy", "service": "mazo-pantheon-backend"}
+
 @app.on_event("startup")
 async def startup_event():
     """Startup event to sync env vars, check Ollama, and start autonomous trading."""
