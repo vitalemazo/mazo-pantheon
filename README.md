@@ -278,7 +278,7 @@ Four tabs providing deep insight into AI operations.
 
 #### Roster Tab - Your AI Team
 
-View all 20 AI entities at a glance:
+View all 20 AI entities at a glance. Click any agent button to see their details and current signal status.
 
 ![Agent Roster](docs/screenshots/21-roster-with-agents.png)
 
@@ -287,15 +287,31 @@ View all 20 AI entities at a glance:
 - **1 Research Agent** - Mazo (deep research)
 - **1 Management Agent** - PM (Portfolio Manager)
 
+**Clicking an Agent Button** shows an info card:
+
+![Buffett Agent Card](docs/screenshots/roster-agent-buffett.png)
+
+Each agent card displays:
+- **Name** - The agent's identity (e.g., "Warren Buffett", "Portfolio Manager")
+- **Specialty** - What they focus on:
+  - Warren Buffett: "Value investing, economic moats"
+  - Michael Burry: "Contrarian, deep value"
+  - Mazo Research: "Deep web research, comprehensive analysis"
+  - Portfolio Manager: "Final decision maker, signal consolidation"
+- **Signal Status** - Current signal ("No signal yet" or BULLISH/BEARISH/NEUTRAL)
+- **Close Button** - Dismisses the card
+
+![PM Agent Card](docs/screenshots/roster-agent-pm.png)
+
 #### Research Tab
 
-Displays Mazo research reports from workflow runs.
+Displays Mazo research reports from workflow runs. Populates when the unified workflow runs with SSE streaming.
 
 ![Research Sidebar](docs/screenshots/11-sidebar-research.png)
 
 #### Decision Tab
 
-Visualizes the decision tree - how the PM arrived at its conclusion.
+Visualizes the decision tree - how the PM arrived at its conclusion. Shows the final recommendation and confidence level.
 
 ![Decision Sidebar](docs/screenshots/12-sidebar-decision.png)
 
@@ -634,6 +650,9 @@ curl -X POST http://localhost:8000/api-keys/sync-to-env
 | 30 | [Research Tab Empty](docs/screenshots/sidebar-research-empty.png) | Research sidebar before workflow |
 | 31 | [Decision Tab Empty](docs/screenshots/sidebar-decision-empty.png) | Decision sidebar before workflow |
 | 32 | [Logs Tab Empty](docs/screenshots/sidebar-logs-empty.png) | Logs sidebar before operations |
+| 33 | [Buffett Agent Card](docs/screenshots/roster-agent-buffett.png) | Clickable agent info card |
+| 34 | [PM Agent Card](docs/screenshots/roster-agent-pm.png) | Portfolio Manager info card |
+| 35 | [Full Interface](docs/screenshots/full-interface-sidebars.png) | Complete 3-column layout |
 
 ---
 
