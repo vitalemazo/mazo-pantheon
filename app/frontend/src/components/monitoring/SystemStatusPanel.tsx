@@ -47,13 +47,13 @@ function StatusIcon({ status }: { status: string }) {
   }
 }
 
-function RateLimitGauge({ 
-  name, 
-  utilization, 
-  remaining 
-}: { 
-  name: string; 
-  utilization: number; 
+function RateLimitGauge({
+  name,
+  utilization,
+  remaining
+}: {
+  name: string;
+  utilization: number;
   remaining?: number;
 }) {
   const getColor = (pct: number) => {
@@ -61,11 +61,23 @@ function RateLimitGauge({
     if (pct >= 70) return 'bg-yellow-500';
     return 'bg-green-500';
   };
-  
+
+  // Friendly display names for API services
+  const getDisplayName = (apiName: string) => {
+    const displayNames: Record<string, string> = {
+      'openai_proxy': 'OpenAI Proxy (xcmfai)',
+      'openai': 'OpenAI Direct',
+      'financial_datasets': 'Financial Datasets',
+      'alpaca': 'Alpaca Trading',
+      'anthropic': 'Anthropic',
+    };
+    return displayNames[apiName] || apiName.replace(/_/g, ' ');
+  };
+
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-sm">
-        <span className="capitalize">{name.replace(/_/g, ' ')}</span>
+        <span className="capitalize">{getDisplayName(name)}</span>
         <span className={utilization >= 80 ? 'text-red-500 font-medium' : 'text-muted-foreground'}>
           {utilization.toFixed(0)}%
         </span>

@@ -73,6 +73,7 @@ class RateLimitMonitor:
     DEFAULT_LIMITS = {
         "financial_datasets": 60,  # ~1 per second
         "openai": 500,
+        "openai_proxy": 500,  # Custom proxy (e.g., xcmfai)
         "anthropic": 60,
         "alpaca": 200,
     }

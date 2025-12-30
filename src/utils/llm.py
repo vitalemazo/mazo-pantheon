@@ -46,6 +46,28 @@ def _get_rate_limit_monitor():
     return _rate_limit_monitor
 
 
+def _get_api_name_for_provider(model_provider: str, api_keys: dict = None) -> str:
+    """
+    Determine the API name for rate limit tracking.
+    If using a custom proxy (OPENAI_API_BASE), track separately.
+    """
+    provider_lower = model_provider.lower()
+    
+    if provider_lower == "openai":
+        # Check if using a custom proxy
+        base_url = None
+        if api_keys:
+            base_url = api_keys.get("OPENAI_API_BASE")
+        if not base_url:
+            base_url = os.getenv("OPENAI_API_BASE")
+        
+        if base_url:
+            # Using a proxy - track as "openai_proxy"
+            return "openai_proxy"
+    
+    return provider_lower
+
+
 def _estimate_tokens(text: str) -> int:
     """Rough token estimation (4 chars per token)."""
     if not text:
@@ -277,8 +299,9 @@ def call_llm(
             
             # Track rate limit usage
             if rate_monitor:
+                api_name = _get_api_name_for_provider(model_provider, api_keys)
                 rate_monitor.record_call(
-                    api_name=model_provider.lower(),
+                    api_name=api_name,
                     success=True,
                     latency_ms=attempt_latency_ms,
                 )
@@ -334,8 +357,9 @@ def call_llm(
                 
                 # Track rate limit hit
                 if rate_monitor:
+                    api_name = _get_api_name_for_provider(model_provider, api_keys)
                     rate_monitor.record_call(
-                        api_name=model_provider.lower(),
+                        api_name=api_name,
                         success=False,
                     )
             elif "timeout" in error_str:
