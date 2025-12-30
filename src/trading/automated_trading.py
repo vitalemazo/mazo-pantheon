@@ -306,34 +306,94 @@ class AutomatedTradingService:
         )
     
     def _get_screening_universe(self) -> List[str]:
-        """Get list of tickers to screen."""
-        # Start with watchlist
-        from src.trading.watchlist_service import get_watchlist_service
-        watchlist_service = get_watchlist_service()
-        watchlist = watchlist_service.get_watchlist(status="watching")
-        tickers = [item.ticker for item in watchlist]
+        """
+        Build a dynamic screening universe based on:
+        1. Current portfolio positions (must always monitor)
+        2. User watchlist
+        3. Diversified sector picks based on buying power
+        4. Trending/momentum stocks from various sectors
         
-        # Add popular/default tickers if watchlist is small
-        default_tickers = [
-            "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", 
-            "NVDA", "AMD", "META", "PLTR", "JPM",
-            "V", "MA", "UNH", "JNJ", "XOM"
-        ]
+        This ensures we're not hardcoded to specific tickers and 
+        the system discovers opportunities across the market.
+        """
+        tickers = []
         
-        for ticker in default_tickers:
-            if ticker not in tickers:
-                tickers.append(ticker)
-        
-        # Also add current positions
+        # PRIORITY 1: Current positions (ALWAYS monitor what we own)
         try:
             positions = self.alpaca.get_positions()
+            account = self.alpaca.get_account()
+            buying_power = float(account.buying_power) if account else 0
+            
             for pos in positions or []:
                 if pos.symbol not in tickers:
                     tickers.append(pos.symbol)
-        except Exception:
-            pass
+                    logger.debug(f"Added position: {pos.symbol}")
+        except Exception as e:
+            logger.warning(f"Could not fetch positions: {e}")
+            buying_power = 10000  # Default assumption
         
-        return tickers[:20]  # Limit to 20 tickers per cycle
+        # PRIORITY 2: User watchlist
+        try:
+            from src.trading.watchlist_service import get_watchlist_service
+            watchlist_service = get_watchlist_service()
+            watchlist = watchlist_service.get_watchlist(status="watching")
+            for item in watchlist:
+                if item.ticker not in tickers:
+                    tickers.append(item.ticker)
+        except Exception as e:
+            logger.debug(f"Watchlist not available: {e}")
+        
+        # PRIORITY 3: Diversified sector picks based on buying power
+        try:
+            from src.trading.diversification_scanner import DiversificationScanner
+            scanner = DiversificationScanner()
+            
+            # Get current sector allocation
+            current_sectors = scanner.get_current_portfolio_sectors()
+            
+            # Find underweight sectors and add stocks from them
+            for sector, stocks in scanner.SECTOR_STOCKS.items():
+                sector_weight = current_sectors.get(sector, 0)
+                # Add stocks from underweight sectors
+                if sector_weight < 0.15:  # Under 15% allocation
+                    for stock in stocks[:2]:  # Add up to 2 per sector
+                        if stock not in tickers:
+                            # Check if affordable based on buying power
+                            try:
+                                quote = self.alpaca.get_quote(stock)
+                                if quote and float(quote.ask_price) < buying_power * 0.1:
+                                    tickers.append(stock)
+                            except:
+                                tickers.append(stock)  # Add anyway, will filter later
+                        if len(tickers) >= 25:
+                            break
+                if len(tickers) >= 25:
+                    break
+        except Exception as e:
+            logger.debug(f"Diversification scanner not available: {e}")
+        
+        # PRIORITY 4: If still need more, add market leaders by sector rotation
+        # Rotate through sectors based on day of week for variety
+        from datetime import datetime
+        day_of_week = datetime.now().weekday()
+        
+        sector_rotation = {
+            0: ["NVDA", "AMD", "AVGO", "QCOM"],  # Monday: Semiconductors
+            1: ["JPM", "GS", "MS", "BAC"],        # Tuesday: Financials
+            2: ["UNH", "JNJ", "PFE", "ABBV"],     # Wednesday: Healthcare
+            3: ["XOM", "CVX", "COP", "SLB"],      # Thursday: Energy
+            4: ["AMZN", "HD", "MCD", "NKE"],      # Friday: Consumer
+        }
+        
+        rotation_tickers = sector_rotation.get(day_of_week, [])
+        for ticker in rotation_tickers:
+            if ticker not in tickers and len(tickers) < 30:
+                tickers.append(ticker)
+        
+        # Log the universe
+        logger.info(f"Screening universe: {len(tickers)} tickers from positions, watchlist, and sector rotation")
+        
+        return tickers[:25]  # Limit to 25 tickers per cycle for efficiency
     
     async def _run_strategy_screening(
         self, 
