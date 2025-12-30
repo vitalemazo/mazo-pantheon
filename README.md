@@ -215,20 +215,38 @@ Configure everything via the web UI - no file editing needed.
 
 ## Transparency Sidebars
 
-The UI includes **transparency panels** on both sides for full insight into AI operations.
+The UI includes **transparency panels** on both sides for full insight into AI operations. These sidebars populate with **real-time data** as you run analyses, trading cycles, or any AI workflow.
 
 ### Left Sidebar: AI Activity Feed
 
-Real-time timeline showing every AI action as it happens.
+Real-time timeline showing every AI action as it happens. The sidebar automatically updates when you:
+- Run a **Quick Analysis** on a ticker
+- Click **Run Cycle Now** for a manual trading cycle
+- Enable **Autonomous Mode** (continuous trading)
 
-![AI Activity Feed](docs/screenshots/14-live-activity-with-data.png)
+![AI Activity Feed with Data](docs/screenshots/left-sidebar-activity.png)
 
-**Shows:**
-- Analysis started/completed events
-- Agent signals as they come in
-- Trade executions
-- Autonomous mode toggles
-- Errors and warnings
+**Each Activity Entry Shows:**
+- **Ticker Badge** - The stock symbol being analyzed (e.g., NVDA)
+- **Action Message** - What happened (e.g., "Starting Quick Analysis for NVDA")
+- **Timestamp** - When the event occurred
+- **Status Indicators** - Success, error, or in-progress states
+- **Pin Button** - Pin important activities for reference
+
+**Event Types Captured:**
+| Icon | Type | Description |
+|------|------|-------------|
+| ⏳ | `workflow_start` | Analysis or cycle beginning |
+| ✅ | `agent_complete` | Individual agent finished |
+| 🧠 | `pm_decision` | Portfolio Manager made a decision |
+| ⚡ | `trade_executed` | Trade was placed |
+| ❌ | `error` | Something went wrong |
+
+**Toolbar Features:**
+- 🔍 **Search** - Filter activities by ticker or keyword
+- 📥 **Export** - Download activity log as JSON
+- 🗑️ **Clear** - Reset the activity feed
+- 🔽 **Auto-scroll** - Follow new events in real-time
 
 ---
 
@@ -259,11 +277,29 @@ Visualizes the decision tree - how the PM arrived at its conclusion.
 
 ![Decision Sidebar](docs/screenshots/12-sidebar-decision.png)
 
-#### Logs Tab
+#### Logs Tab - Console Output
 
-Real-time console output for debugging.
+Real-time console output for debugging and monitoring. Shows detailed log entries as the system operates.
 
-![Logs Sidebar](docs/screenshots/13-sidebar-logs.png)
+![Logs Tab with Data](docs/screenshots/right-sidebar-logs.png)
+
+**Log Entry Format:**
+```
+12:18:48 AM [QuickAnalysis] Initiating analysis for NVDA
+12:18:48 AM [QuickAnalysis] Failed to fetch
+```
+
+**Each Log Entry Contains:**
+- **Timestamp** - Precise time of the event
+- **Source Tag** - Which component generated the log (e.g., `QuickAnalysis`, `TradingCycle`, `Mazo`)
+- **Message** - The log content
+- **Log Level** - Color-coded: Info (blue), Debug (gray), Error (red)
+
+**Toolbar Features:**
+- 🔍 **Filter** - Search logs by keyword
+- 📋 **Copy** - Copy log to clipboard
+- 🗑️ **Clear** - Reset the console
+- 🔽 **Auto-scroll** - Follow new logs
 
 ---
 
@@ -549,6 +585,9 @@ curl -X POST http://localhost:8000/api-keys/sync-to-env
 | 19 | [Mazo Research Result](docs/screenshots/19-mazo-research-result.png) | NVDA growth analysis |
 | 20 | [Research with Sidebar](docs/screenshots/20-research-with-sidebar.png) | Research + sidebar view |
 | 21 | [Agent Roster](docs/screenshots/21-roster-with-agents.png) | 18 agents + Mazo + PM |
+| 22 | [Left Sidebar Activity](docs/screenshots/left-sidebar-activity.png) | AI Activity Feed populated with analysis events |
+| 23 | [Right Sidebar Logs](docs/screenshots/right-sidebar-logs.png) | Console Logs tab with real-time output |
+| 24 | [Sidebars Working](docs/screenshots/sidebars-working.png) | Both sidebars showing live data |
 
 ---
 
