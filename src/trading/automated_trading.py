@@ -367,9 +367,9 @@ class AutomatedTradingService:
         for signal in signals:
             try:
                 # Run quick Mazo research
+                direction_str = signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction)
                 research = self.mazo.research(
-                    signal.ticker,
-                    depth=self.MAZO_VALIDATION_DEPTH
+                    f"Should I {direction_str} {signal.ticker}? Current price is ${signal.entry_price:.2f}. Give a quick buy/sell/hold recommendation."
                 )
                 
                 if not research or not research.answer:
@@ -430,7 +430,7 @@ class AutomatedTradingService:
                     validated.append((signal, validation))
                     logger.info(f"✓ {signal.ticker}: Mazo {mazo_sentiment} (agrees: {mazo_agrees})")
                 else:
-                    logger.info(f"✗ {signal.ticker}: Mazo {mazo_sentiment} disagrees with {signal.direction.value}")
+                    logger.info(f"✗ {signal.ticker}: Mazo {mazo_sentiment} disagrees with {direction_str}")
                     
             except Exception as e:
                 logger.warning(f"Mazo validation failed for {signal.ticker}: {e}")
@@ -463,16 +463,16 @@ class AutomatedTradingService:
         try:
             # Create workflow
             workflow = UnifiedWorkflow()
-            
+
             # Run the hedge fund analysis pipeline
             # This will run all AI agents and PM
-            result = workflow.run(
+            results = workflow.analyze(
                 tickers=[signal.ticker],
-                mode="full",
-                depth="standard",
-                show_reasoning=True,
-                execute_trades=False,  # We'll execute separately
+                mode="signal",  # Just get signals from agents
             )
+            
+            # Get first result
+            result = results[0] if results else None
             
             if not result:
                 return None
@@ -528,12 +528,13 @@ class AutomatedTradingService:
             
             # Fallback: Use strategy signal directly for PM decision
             # This allows trading even if full pipeline fails
-            action = "buy" if signal.direction == SignalDirection.LONG else "short"
+            direction_value = signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction)
+            action = "buy" if direction_value == "long" else "short"
             
             return AnalysisResult(
                 ticker=signal.ticker,
                 analyst_signals={},
-                consensus_direction=signal.direction.value,
+                consensus_direction=direction_value,
                 consensus_confidence=signal.confidence,
                 pm_decision={
                     "action": action,
