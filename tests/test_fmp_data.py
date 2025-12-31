@@ -364,7 +364,8 @@ class TestFMPIntegration:
         metrics = client.get_key_metrics_ttm("AAPL")
         
         assert metrics is not None
-        assert "peRatioTTM" in metrics or metrics.get("peRatioTTM") is not None
+        # Check for fields that FMP actually returns
+        assert "marketCap" in metrics or "returnOnEquityTTM" in metrics
     
     def test_real_news_fetch(self):
         """Test real news fetch from FMP."""
@@ -476,7 +477,7 @@ class TestFinancialMetricsMapping:
         mock_client.get_key_metrics_ttm.return_value = mock_metrics
         mock_client.get_ratios_ttm.return_value = mock_ratios
         
-        with patch("src.tools.api.get_fmp_data_client", return_value=mock_client):
+        with patch("src.tools.fmp_data.get_fmp_data_client", return_value=mock_client):
             with patch.dict(os.environ, {"PRIMARY_DATA_SOURCE": "fmp"}):
                 from src.tools.api import get_financial_metrics
                 
@@ -535,7 +536,7 @@ class TestFinancialMetricsMapping:
         mock_client.get_key_metrics_ttm.return_value = mock_metrics
         mock_client.get_ratios_ttm.return_value = mock_ratios
         
-        with patch("src.tools.api.get_fmp_data_client", return_value=mock_client):
+        with patch("src.tools.fmp_data.get_fmp_data_client", return_value=mock_client):
             with patch.dict(os.environ, {"PRIMARY_DATA_SOURCE": "fmp"}):
                 from src.tools.api import get_financial_metrics
                 

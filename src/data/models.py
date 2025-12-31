@@ -8,6 +8,7 @@ class Price(BaseModel):
     low: float
     volume: int
     time: str
+    ticker: str | None = None  # Optional for backward compatibility
 
 
 class PriceResponse(BaseModel):
