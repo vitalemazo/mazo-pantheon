@@ -298,8 +298,8 @@ class AlpacaService:
                 try:
                     error_data = response.json()
                     error_msg = error_data.get("message", response.text)
-                except:
-                    pass
+                except (ValueError, KeyError):
+                    pass  # Keep original error_msg if JSON parsing fails
                 
                 # Log failed call
                 if rate_monitor:

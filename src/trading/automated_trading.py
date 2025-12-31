@@ -548,7 +548,7 @@ class AutomatedTradingService:
                                 quote = self.alpaca.get_quote(stock)
                                 if quote and float(quote.ask_price) < buying_power * 0.1:
                                     tickers.append(stock)
-                            except:
+                            except Exception:
                                 tickers.append(stock)  # Add anyway, will filter later
                         if len(tickers) >= 25:
                             break

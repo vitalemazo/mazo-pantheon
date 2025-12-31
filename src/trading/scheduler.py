@@ -818,8 +818,8 @@ async def _emit_heartbeat(scheduler_id: str, hostname: str, jobs_pending: int):
             process = psutil.Process()
             memory_mb = process.memory_info().rss / (1024 * 1024)
             cpu_percent = process.cpu_percent(interval=None)
-        except:
-            pass
+        except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
+            pass  # Process metrics not available
         
         event_logger.log_heartbeat(
             scheduler_id=scheduler_id,
