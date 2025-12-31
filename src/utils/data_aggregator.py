@@ -3,22 +3,39 @@ Data Aggregator - Pre-fetch and share financial data across agents
 
 This module aggregates all financial data needed by agents BEFORE they run,
 preventing duplicate API calls and allowing agents to share cached data.
+
+Supports multiple data sources with automatic fallback:
+1. Financial Datasets API (if key is configured)
+2. Yahoo Finance (free, unlimited - primary fallback)
+3. Polygon.io, FMP, Finnhub (if keys are configured)
 """
 
-from typing import Dict, List, Optional
+import logging
+from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 
+# Import both old API (for compatibility) and new multi-source provider
 from src.tools.api import (
     get_financial_metrics,
     get_market_cap,
     search_line_items,
-    get_prices,
+    get_prices as get_prices_legacy,
     get_company_news,
     get_insider_trades,
 )
 from src.utils.api_key import get_api_key_from_state
 from src.graph.state import AgentState
+
+logger = logging.getLogger(__name__)
+
+# Try to import multi-source data provider
+try:
+    from src.tools.data_providers import get_data_provider, get_available_data_sources
+    MULTI_SOURCE_AVAILABLE = True
+except ImportError:
+    MULTI_SOURCE_AVAILABLE = False
+    logger.warning("Multi-source data provider not available, using legacy API only")
 
 
 @dataclass
@@ -152,13 +169,28 @@ def aggregate_financial_data(
             print(f"    Error: {e}")
             aggregated.market_caps[ticker] = None
         
-        # Prices
+        # Prices - Use multi-source provider with fallback
         try:
             print(f"  - Price history...")
-            aggregated.prices[ticker] = get_prices(ticker, start_date, end_date)
+            if MULTI_SOURCE_AVAILABLE:
+                data_provider = get_data_provider()
+                price_df, source = data_provider.get_prices(ticker, start_date, end_date)
+                if not price_df.empty:
+                    # Convert DataFrame to list of dicts for compatibility
+                    aggregated.prices[ticker] = price_df.to_dict('records')
+                    print(f"    ✓ Got {len(price_df)} prices from {source.value}")
+                else:
+                    # Fall back to legacy API
+                    aggregated.prices[ticker] = get_prices_legacy(ticker, start_date, end_date)
+            else:
+                aggregated.prices[ticker] = get_prices_legacy(ticker, start_date, end_date)
         except Exception as e:
             print(f"    Error: {e}")
-            aggregated.prices[ticker] = []
+            # Try legacy API as last resort
+            try:
+                aggregated.prices[ticker] = get_prices_legacy(ticker, start_date, end_date)
+            except:
+                aggregated.prices[ticker] = []
         
         # News (last year)
         try:

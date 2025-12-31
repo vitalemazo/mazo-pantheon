@@ -20,6 +20,7 @@ from enum import Enum
 from src.trading.strategy_engine import get_strategy_engine, TradingSignal, SignalDirection
 from src.trading.alpaca_service import AlpacaService
 from src.trading.performance_tracker import get_performance_tracker
+from src.trading.config import get_signal_config, get_capital_config, get_scanner_config
 from src.graph.portfolio_context import build_portfolio_context, PortfolioContext
 from integration.mazo_bridge import MazoBridge
 from integration.unified_workflow import UnifiedWorkflow, execute_trades
@@ -104,11 +105,6 @@ class AutomatedTradingService:
     5. Trades execute automatically on Alpaca
     """
     
-    # Configuration
-    MIN_SIGNAL_CONFIDENCE = 60  # Minimum strategy confidence to proceed
-    MAX_SIGNALS_PER_CYCLE = 5   # Max signals to process per cycle
-    MAZO_VALIDATION_DEPTH = "quick"  # quick, standard, deep
-    
     def __init__(self):
         self.strategy_engine = get_strategy_engine()
         self.alpaca = AlpacaService()
@@ -145,8 +141,9 @@ class AutomatedTradingService:
         start_time = datetime.now()
         self.is_running = True
         
-        min_conf = min_confidence or self.MIN_SIGNAL_CONFIDENCE
-        max_sig = max_signals or self.MAX_SIGNALS_PER_CYCLE
+        signal_config = get_signal_config()
+        min_conf = min_confidence or signal_config.min_signal_confidence
+        max_sig = max_signals or signal_config.max_signals_per_cycle
         
         result = AutomatedTradeResult(
             timestamp=start_time,
@@ -329,9 +326,10 @@ class AutomatedTradingService:
         2. Positions near breakeven with no momentum
         3. Oldest positions (capital has been tied up too long)
         """
-        MIN_BUYING_POWER_PCT = 0.10  # Need at least 10% of portfolio as buying power
-        MAX_POSITION_AGE_HOURS = 48  # Consider rotating positions older than 48 hours
-        ROTATION_THRESHOLD_PCT = 0.02  # Positions within +/- 2% are rotation candidates
+        capital_config = get_capital_config()
+        MIN_BUYING_POWER_PCT = capital_config.min_buying_power_pct
+        MAX_POSITION_AGE_HOURS = capital_config.max_position_age_hours
+        ROTATION_THRESHOLD_PCT = capital_config.rotation_threshold_pct
         
         try:
             account = self.alpaca.get_account()
@@ -524,18 +522,9 @@ class AutomatedTradingService:
         
         # PRIORITY 4: If still need more, add market leaders by sector rotation
         # Rotate through sectors based on day of week for variety
-        from datetime import datetime
         day_of_week = datetime.now().weekday()
-        
-        sector_rotation = {
-            0: ["NVDA", "AMD", "AVGO", "QCOM"],  # Monday: Semiconductors
-            1: ["JPM", "GS", "MS", "BAC"],        # Tuesday: Financials
-            2: ["UNH", "JNJ", "PFE", "ABBV"],     # Wednesday: Healthcare
-            3: ["XOM", "CVX", "COP", "SLB"],      # Thursday: Energy
-            4: ["AMZN", "HD", "MCD", "NKE"],      # Friday: Consumer
-        }
-        
-        rotation_tickers = sector_rotation.get(day_of_week, [])
+        scanner_config = get_scanner_config()
+        rotation_tickers = scanner_config.sector_rotation.get(day_of_week, [])
         for ticker in rotation_tickers:
             if ticker not in tickers and len(tickers) < 30:
                 tickers.append(ticker)

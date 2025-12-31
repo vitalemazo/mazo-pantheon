@@ -524,9 +524,32 @@ def extract_json_from_response(content: str) -> dict | None:
     return None
 
 
+# Agents that benefit from deeper reasoning (thinking models)
+# These agents make critical decisions and benefit from chain-of-thought
+THINKING_MODEL_AGENTS = {
+    "portfolio_manager",
+    "risk_manager", 
+    "michael_burry",  # Contrarian analysis requires deep thinking
+    "warren_buffett",  # Value investing requires careful reasoning
+    "ben_graham",  # Fundamental analysis
+}
+
+# Default model for regular agents (faster, cheaper)
+DEFAULT_AGENT_MODEL = os.environ.get("DEFAULT_MODEL", "claude-opus-4-5-20251101")
+
+# Thinking model for critical decision agents
+THINKING_AGENT_MODEL = os.environ.get("THINKING_MODEL", "claude-opus-4-5-20251101-thinking")
+
+
 def get_agent_model_config(state, agent_name):
     """
     Get model configuration for a specific agent from the state.
+    
+    Uses thinking models for critical decision-making agents:
+    - Portfolio Manager (final trading decisions)
+    - Risk Manager (risk assessment)
+    - Key value investors (Buffett, Graham, Burry)
+    
     Falls back to global model configuration if agent-specific config is not available.
     Always returns valid model_name and model_provider values.
     """
@@ -539,8 +562,17 @@ def get_agent_model_config(state, agent_name):
         if model_name and model_provider:
             return model_name, model_provider.value if hasattr(model_provider, 'value') else str(model_provider)
     
+    # Check if this agent should use thinking model
+    agent_name_lower = agent_name.lower().replace(" ", "_") if agent_name else ""
+    use_thinking = any(thinking_agent in agent_name_lower for thinking_agent in THINKING_MODEL_AGENTS)
+    
     # Fall back to global configuration (system defaults)
-    model_name = state.get("metadata", {}).get("model_name") or os.environ.get("DEFAULT_MODEL", "claude-opus-4-5-20251101")
+    if use_thinking:
+        model_name = state.get("metadata", {}).get("thinking_model") or THINKING_AGENT_MODEL
+        logger.debug(f"Using thinking model for {agent_name}: {model_name}")
+    else:
+        model_name = state.get("metadata", {}).get("model_name") or DEFAULT_AGENT_MODEL
+    
     model_provider = state.get("metadata", {}).get("model_provider") or "OPENAI"
     
     # Convert enum to string if necessary
