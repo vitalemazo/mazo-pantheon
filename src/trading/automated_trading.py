@@ -167,6 +167,13 @@ class AutomatedTradingService:
             logger.info(f"🔍 Starting trading cycle - Screening {len(tickers)} tickers")
             
             # =============================================
+            # STEP 0: Capital Management & Position Rotation
+            # =============================================
+            # Industry standard: Free up capital by closing weak positions
+            # before looking for new opportunities
+            await self._manage_capital_rotation(result, execute_trades_flag, dry_run)
+            
+            # =============================================
             # STEP 1: Strategy Engine Quick Screening
             # =============================================
             logger.info("📊 Step 1: Strategy Engine Screening...")
@@ -304,6 +311,149 @@ class AutomatedTradingService:
             f"{result.trades_executed} executed "
             f"({result.total_execution_time_ms:.0f}ms)"
         )
+    
+    async def _manage_capital_rotation(
+        self, 
+        result: AutomatedTradeResult, 
+        execute_trades: bool,
+        dry_run: bool
+    ) -> None:
+        """
+        Capital Rotation - Industry Standard Intraday Practice
+        
+        Before looking for new opportunities, check if we need to free up capital
+        by closing weak/stale positions. This is critical for active trading.
+        
+        Rotation Criteria (in priority order):
+        1. Positions with negative P/L and low conviction
+        2. Positions near breakeven with no momentum
+        3. Oldest positions (capital has been tied up too long)
+        """
+        MIN_BUYING_POWER_PCT = 0.10  # Need at least 10% of portfolio as buying power
+        MAX_POSITION_AGE_HOURS = 48  # Consider rotating positions older than 48 hours
+        ROTATION_THRESHOLD_PCT = 0.02  # Positions within +/- 2% are rotation candidates
+        
+        try:
+            account = self.alpaca.get_account()
+            positions = self.alpaca.get_positions()
+            
+            if not positions or not account:
+                return
+            
+            portfolio_value = float(account.portfolio_value)
+            buying_power = float(account.buying_power)
+            buying_power_pct = buying_power / portfolio_value if portfolio_value > 0 else 0
+            
+            logger.info(f"💰 Capital Check: ${buying_power:.2f} buying power ({buying_power_pct*100:.1f}% of portfolio)")
+            
+            # If we have enough buying power, no rotation needed
+            if buying_power_pct >= MIN_BUYING_POWER_PCT:
+                logger.info(f"✓ Sufficient buying power for new trades")
+                return
+            
+            logger.warning(f"⚠️ Low buying power ({buying_power_pct*100:.1f}% < {MIN_BUYING_POWER_PCT*100}%) - evaluating positions for rotation")
+            
+            # Evaluate each position for rotation potential
+            rotation_candidates = []
+            
+            for pos in positions:
+                ticker = pos.symbol
+                qty = float(pos.qty)
+                entry_price = float(pos.avg_entry_price)
+                current_price = float(pos.current_price)
+                unrealized_pnl = float(pos.unrealized_pl)
+                unrealized_pnl_pct = float(pos.unrealized_plpc) * 100
+                market_value = abs(float(pos.market_value))
+                side = "short" if qty < 0 else "long"
+                
+                # Calculate rotation score (lower = better candidate to close)
+                # Factors: P/L %, position size, market value freed up
+                score = 0
+                reasons = []
+                
+                # Negative P/L = higher priority to close
+                if unrealized_pnl_pct < 0:
+                    score += 30 + abs(unrealized_pnl_pct) * 5  # More negative = higher score
+                    reasons.append(f"losing {unrealized_pnl_pct:.1f}%")
+                
+                # Near breakeven (stale) = rotation candidate
+                elif abs(unrealized_pnl_pct) < ROTATION_THRESHOLD_PCT * 100:
+                    score += 20
+                    reasons.append("near breakeven (stale)")
+                
+                # Positive P/L = lower priority (but small gains might still rotate)
+                else:
+                    score += 10 - min(unrealized_pnl_pct, 10)  # Lower score for bigger gains
+                    reasons.append(f"profitable {unrealized_pnl_pct:.1f}%")
+                
+                # Larger positions free more capital
+                capital_freed = market_value
+                score += (capital_freed / portfolio_value) * 20  # Bonus for freeing more capital
+                
+                rotation_candidates.append({
+                    "ticker": ticker,
+                    "side": side,
+                    "qty": abs(qty),
+                    "pnl_pct": unrealized_pnl_pct,
+                    "market_value": market_value,
+                    "score": score,
+                    "reasons": reasons,
+                    "action": "cover" if side == "short" else "sell"
+                })
+            
+            # Sort by score (highest = best rotation candidate)
+            rotation_candidates.sort(key=lambda x: x["score"], reverse=True)
+            
+            if not rotation_candidates:
+                logger.info("No rotation candidates found")
+                return
+            
+            # Select the best candidate to rotate out
+            best_candidate = rotation_candidates[0]
+            
+            logger.info(f"🔄 Best rotation candidate: {best_candidate['ticker']}")
+            logger.info(f"   Side: {best_candidate['side']}, P/L: {best_candidate['pnl_pct']:.2f}%")
+            logger.info(f"   Reasons: {', '.join(best_candidate['reasons'])}")
+            logger.info(f"   Capital to free: ${best_candidate['market_value']:.2f}")
+            
+            # Execute the rotation (close the position)
+            if execute_trades and not dry_run:
+                try:
+                    close_result = self.alpaca.close_position(
+                        best_candidate["ticker"],
+                        qty=best_candidate["qty"]
+                    )
+                    
+                    if close_result.success:
+                        logger.info(f"✅ Rotated out of {best_candidate['ticker']}: {close_result.message}")
+                        result.trades_executed += 1
+                        result.results.append({
+                            "ticker": best_candidate["ticker"],
+                            "action": f"rotation_{best_candidate['action']}",
+                            "reason": f"Capital rotation: {', '.join(best_candidate['reasons'])}",
+                            "capital_freed": best_candidate["market_value"],
+                            "pnl_pct": best_candidate["pnl_pct"]
+                        })
+                    else:
+                        logger.warning(f"Failed to rotate {best_candidate['ticker']}: {close_result.error}")
+                        result.errors.append(f"Rotation failed for {best_candidate['ticker']}: {close_result.error}")
+                        
+                except Exception as e:
+                    logger.error(f"Rotation execution error: {e}")
+                    result.errors.append(f"Rotation error: {e}")
+            else:
+                logger.info(f"🔄 [DRY RUN] Would rotate out of {best_candidate['ticker']}")
+                result.results.append({
+                    "ticker": best_candidate["ticker"],
+                    "action": f"rotation_{best_candidate['action']}_dry_run",
+                    "reason": f"Capital rotation: {', '.join(best_candidate['reasons'])}",
+                    "capital_freed": best_candidate["market_value"],
+                    "pnl_pct": best_candidate["pnl_pct"]
+                })
+                
+        except Exception as e:
+            logger.error(f"Capital rotation check failed: {e}")
+            # Don't fail the whole cycle if rotation check fails
     
     def _get_screening_universe(self) -> List[str]:
         """
@@ -581,16 +731,26 @@ class AutomatedTradingService:
             
             for agent_signal in result_agent_signals:
                 # Handle both dict and dataclass formats
-                if hasattr(agent_signal, 'agent'):
+                if hasattr(agent_signal, 'agent_name'):
+                    # AgentSignal dataclass
+                    agent_name = agent_signal.agent_name
+                    sig = getattr(agent_signal, 'signal', 'neutral')
+                    sig = sig.lower() if sig else 'neutral'
+                    conf = getattr(agent_signal, 'confidence', 50) or 50
+                    reasoning = getattr(agent_signal, 'reasoning', '') or ''
+                elif hasattr(agent_signal, 'agent'):
+                    # Alternative dataclass format
                     agent_name = agent_signal.agent
-                    sig = getattr(agent_signal, 'signal', 'neutral').lower()
-                    conf = getattr(agent_signal, 'confidence', 50)
-                    reasoning = getattr(agent_signal, 'reasoning', '')
+                    sig = getattr(agent_signal, 'signal', 'neutral')
+                    sig = sig.lower() if sig else 'neutral'
+                    conf = getattr(agent_signal, 'confidence', 50) or 50
+                    reasoning = getattr(agent_signal, 'reasoning', '') or ''
                 elif isinstance(agent_signal, dict):
-                    agent_name = agent_signal.get("agent", "unknown")
-                    sig = agent_signal.get("signal", "neutral").lower()
-                    conf = agent_signal.get("confidence", 50)
-                    reasoning = agent_signal.get("reasoning", "")
+                    agent_name = agent_signal.get("agent", agent_signal.get("agent_name", "unknown"))
+                    sig = agent_signal.get("signal", "neutral")
+                    sig = sig.lower() if sig else 'neutral'
+                    conf = agent_signal.get("confidence", 50) or 50
+                    reasoning = agent_signal.get("reasoning", "") or ""
                 else:
                     continue
                 
@@ -616,7 +776,16 @@ class AutomatedTradingService:
                     total_confidence += conf
             
             # Convert back to dict for compatibility
-            agent_signals = {signal.ticker: {s.agent if hasattr(s, 'agent') else s.get('agent', 'unknown'): s for s in result_agent_signals}} if result_agent_signals else {}
+            def get_agent_name(s):
+                if hasattr(s, 'agent'):
+                    return s.agent
+                elif hasattr(s, 'agent_name'):
+                    return s.agent_name
+                elif isinstance(s, dict):
+                    return s.get('agent', s.get('agent_name', 'unknown'))
+                return 'unknown'
+            
+            agent_signals = {signal.ticker: {get_agent_name(s): s for s in result_agent_signals}} if result_agent_signals else {}
             
             total = bullish_count + bearish_count
             if total > 0:
