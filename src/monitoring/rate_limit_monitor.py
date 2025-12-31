@@ -71,6 +71,7 @@ class RateLimitMonitor:
     
     # Default rate limits (requests per minute)
     DEFAULT_LIMITS = {
+        "fmp_data": 300,  # FMP Ultimate - generous limits
         "financial_datasets": 60,  # ~1 per second
         "openai": 500,
         "openai_proxy": 500,  # Custom proxy (e.g., xcmfai)

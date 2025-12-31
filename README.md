@@ -280,25 +280,27 @@ Configure everything via the web UI - no file editing needed.
 ![Settings](docs/screenshots/09-settings-api-keys.png)
 
 **Configuration Sections:**
-- **Financial Data APIs** - Financial Datasets, FMP
+- **Financial Data APIs** - FMP (Primary), Financial Datasets
 - **Language Models** - OpenAI, Anthropic, Groq, DeepSeek, Google
 - **Custom Relay URLs** - For proxy/enterprise endpoints
 - **Azure OpenAI** - Enterprise Azure configuration
 - **Trading Integration** - Alpaca API keys and mode (paper/live)
 - **Mazo Research** - Path, timeout, default depth
-- **Data Source Fallbacks** - Yahoo Finance, FMP as backups
+- **Data Source Fallbacks** - Yahoo Finance, Financial Datasets as backups
 - **Primary Data Source** - Select which API to use first for market data
 
 ### Data Sources
 
-| Source | Prices | News | Fundamentals | API Key Required |
-|--------|:------:|:----:|:------------:|:----------------:|
-| **Alpaca Market Data** | ✅ | ✅ | ❌ | Yes (trading keys) |
-| **Financial Datasets** | ✅ | ✅ | ✅ | Yes |
-| **Yahoo Finance** | ✅ | ✅ | ✅ | No |
-| **FMP** | ✅ | ✅ | ✅ | Yes |
+| Source | Prices | News | Fundamentals | Insider Trades | API Key Required |
+|--------|:------:|:----:|:------------:|:--------------:|:----------------:|
+| **FMP Ultimate** ⭐ | ✅ | ✅ | ✅ | ✅ | Yes |
+| **Alpaca Market Data** | ✅ | ✅ | ❌ | ❌ | Yes (trading keys) |
+| **Financial Datasets** | ✅ | ✅ | ✅ | ✅ | Yes |
+| **Yahoo Finance** | ✅ | ✅ | ✅ | ❌ | No |
 
-> **Note:** When using Alpaca as primary, fundamentals (P/E ratios, financial statements, etc.) automatically fall back to Yahoo Finance or FMP. Alpaca uses your existing trading API keys.
+> **Recommended Setup:** Use **FMP Ultimate** as your primary data source for comprehensive coverage. Alpaca remains your trading execution provider. Yahoo Finance serves as a free fallback.
+>
+> **Note:** When using Alpaca as primary data source, fundamentals (P/E ratios, financial statements, etc.) automatically fall back to Yahoo Finance or FMP. Alpaca uses your existing trading API keys.
 
 ---
 
@@ -531,7 +533,7 @@ Deep autonomous research that:
 
 | Key | Purpose | Get It |
 |-----|---------|--------|
-| `FINANCIAL_DATASETS_API_KEY` | Stock data, metrics, news | [financialdatasets.ai](https://financialdatasets.ai/) |
+| `FMP_API_KEY` | Primary data source (prices, fundamentals, news, insider trades) | [financialmodelingprep.com](https://financialmodelingprep.com/) |
 | `OPENAI_API_KEY` | LLM for AI agents | [platform.openai.com](https://platform.openai.com/) |
 | `ALPACA_API_KEY` + `ALPACA_SECRET_KEY` | Trade execution | [alpaca.markets](https://alpaca.markets/) |
 
@@ -543,7 +545,7 @@ Deep autonomous research that:
 | `GROQ_API_KEY` | Fast inference |
 | `GOOGLE_API_KEY` | Gemini models |
 | `TAVILY_API_KEY` | Web search for research |
-| `FMP_API_KEY` | Alternative financial data |
+| `FINANCIAL_DATASETS_API_KEY` | Alternative financial data source |
 
 ### Environment Variables
 
@@ -551,12 +553,17 @@ Deep autonomous research that:
 # ===========================================
 # REQUIRED - Core Functionality
 # ===========================================
-FINANCIAL_DATASETS_API_KEY=your-key
+FMP_API_KEY=your-fmp-api-key           # Primary data source
 OPENAI_API_KEY=your-key
 ALPACA_API_KEY=your-key
 ALPACA_SECRET_KEY=your-secret
 ALPACA_BASE_URL=https://paper-api.alpaca.markets/v2
 ALPACA_TRADING_MODE=paper
+
+# ===========================================
+# DATA SOURCE CONFIGURATION
+# ===========================================
+PRIMARY_DATA_SOURCE=fmp                 # Options: fmp, alpaca, financial_datasets, yahoo_finance
 
 # ===========================================
 # DOCKER DEPLOYMENT

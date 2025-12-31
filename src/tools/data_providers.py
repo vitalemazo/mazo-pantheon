@@ -1,22 +1,30 @@
 """
 Multi-Source Market Data Provider with Automatic Fallback
 
-This module provides a unified interface to multiple free market data APIs,
+This module provides a unified interface to multiple market data APIs,
 with automatic fallback when primary sources fail or hit rate limits.
 
-Supported Data Sources (Priority Order):
-1. Financial Datasets API (Primary - if key configured)
-2. Yahoo Finance (yfinance - free, unlimited, no key needed)
-3. Polygon.io (5 calls/min free tier)
-4. FMP - Financial Modeling Prep (250 calls/day free tier)
-5. Finnhub (60 calls/min free tier)
-6. Alpha Vantage (25 calls/day - last resort)
+Primary Data Sources (configurable via PRIMARY_DATA_SOURCE env var):
+1. FMP - Financial Modeling Prep (Recommended - comprehensive coverage)
+2. Alpaca Market Data (prices & news only, uses trading API keys)
+3. Financial Datasets API
+4. Yahoo Finance (free fallback, no key needed)
+
+Fallback Data Sources:
+- Polygon.io (5 calls/min free tier)
+- Finnhub (60 calls/min free tier)
+- Alpha Vantage (25 calls/day - last resort)
 
 Data Types:
-- Prices: yfinance (primary), Polygon, FMP
-- Fundamentals: yfinance (primary), FMP
-- News: Finnhub (primary), Tavily
-- Insider Trading: FMP, SEC Direct
+- Prices: FMP > Alpaca > Financial Datasets > Yahoo
+- Fundamentals: FMP > Financial Datasets > Yahoo (Alpaca NOT supported)
+- News: FMP > Alpaca > Finnhub > Financial Datasets
+- Insider Trading: FMP > Financial Datasets
+
+Configuration:
+    Set PRIMARY_DATA_SOURCE=fmp for FMP Ultimate (recommended)
+    Set PRIMARY_DATA_SOURCE=alpaca for Alpaca Market Data
+    Set PRIMARY_DATA_SOURCE=financial_datasets for Financial Datasets API
 """
 
 import os
@@ -94,13 +102,13 @@ DATA_SOURCES = {
         priority=3,
     ),
     DataSource.FMP: DataSourceConfig(
-        name="Financial Modeling Prep",
+        name="FMP Ultimate",
         source=DataSource.FMP,
         api_key_env="FMP_API_KEY",
-        rate_limit_per_minute=None,
-        rate_limit_per_day=250,
+        rate_limit_per_minute=300,  # FMP Ultimate has generous limits
+        rate_limit_per_day=None,  # No daily limit on Ultimate
         requires_key=True,
-        priority=4,
+        priority=0,  # Highest priority when selected as primary
     ),
     DataSource.FINNHUB: DataSourceConfig(
         name="Finnhub",
@@ -232,11 +240,21 @@ class MultiSourceDataProvider:
         available_for_type = source_capabilities.get(data_type, [])
         available = [s for s in available_for_type if self._is_source_available(s)]
         
-        # If PRIMARY_DATA_SOURCE is set to alpaca, move it to front for supported types
-        if primary_source == "alpaca" and data_type in ["prices", "news"]:
+        # Route based on PRIMARY_DATA_SOURCE setting
+        if primary_source == "fmp":
+            # FMP is the primary source for all data types
+            if DataSource.FMP in available:
+                available.remove(DataSource.FMP)
+                available.insert(0, DataSource.FMP)
+        elif primary_source == "alpaca" and data_type in ["prices", "news"]:
+            # Alpaca only supports prices and news
             if DataSource.ALPACA_DATA in available:
                 available.remove(DataSource.ALPACA_DATA)
                 available.insert(0, DataSource.ALPACA_DATA)
+        elif primary_source == "financial_datasets":
+            if DataSource.FINANCIAL_DATASETS in available:
+                available.remove(DataSource.FINANCIAL_DATASETS)
+                available.insert(0, DataSource.FINANCIAL_DATASETS)
         
         return available
 
@@ -287,6 +305,22 @@ class MultiSourceDataProvider:
         
         logger.error(f"All sources failed for {ticker} prices")
         return pd.DataFrame(), DataSource.YFINANCE
+    
+    def _get_prices_fmp(
+        self, ticker: str, start_date: str, end_date: str
+    ) -> pd.DataFrame:
+        """Get prices from FMP (Financial Modeling Prep) API."""
+        try:
+            from src.tools.fmp_data import get_fmp_data_client
+        except ImportError:
+            logger.warning("fmp_data module not available")
+            return pd.DataFrame()
+        
+        client = get_fmp_data_client()
+        if not client.is_configured():
+            return pd.DataFrame()
+        
+        return client.get_historical_prices(ticker, start_date, end_date)
     
     def _get_prices_alpaca(
         self, ticker: str, start_date: str, end_date: str
@@ -366,34 +400,7 @@ class MultiSourceDataProvider:
         
         return df[["time", "open", "high", "low", "close", "volume"]]
     
-    def _get_prices_fmp(
-        self, ticker: str, start_date: str, end_date: str
-    ) -> pd.DataFrame:
-        """Get prices from Financial Modeling Prep."""
-        import requests
-        
-        api_key = os.environ.get("FMP_API_KEY")
-        if not api_key:
-            return pd.DataFrame()
-        
-        url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}"
-        params = {"apikey": api_key, "from": start_date, "to": end_date}
-        
-        response = requests.get(url, params=params, timeout=30)
-        if response.status_code != 200:
-            return pd.DataFrame()
-        
-        data = response.json()
-        historical = data.get("historical", [])
-        
-        if not historical:
-            return pd.DataFrame()
-        
-        df = pd.DataFrame(historical)
-        df["time"] = pd.to_datetime(df["date"])
-        df = df.rename(columns={"adjClose": "close"})
-        
-        return df[["time", "open", "high", "low", "close", "volume"]].sort_values("time")
+    # Note: _get_prices_fmp is defined earlier using fmp_data module
     
     def _get_prices_alpha_vantage(
         self, ticker: str, start_date: str, end_date: str
@@ -552,40 +559,14 @@ class MultiSourceDataProvider:
         }
     
     def _get_fundamentals_fmp(self, ticker: str) -> Dict[str, Any]:
-        """Get fundamentals from FMP."""
-        import requests
-        
-        api_key = os.environ.get("FMP_API_KEY")
-        if not api_key:
+        """Get fundamentals from FMP using the dedicated client."""
+        try:
+            from src.tools.fmp_data import get_fmp_fundamentals
+        except ImportError:
+            logger.warning("fmp_data module not available")
             return {}
         
-        # Get key metrics
-        url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{ticker}"
-        params = {"apikey": api_key}
-        
-        response = requests.get(url, params=params, timeout=30)
-        if response.status_code != 200:
-            return {}
-        
-        data = response.json()
-        if not data:
-            return {}
-        
-        m = data[0]
-        return {
-            "ticker": ticker,
-            "pe_ratio": m.get("peRatioTTM"),
-            "pb_ratio": m.get("priceToBookRatioTTM"),
-            "ps_ratio": m.get("priceToSalesRatioTTM"),
-            "dividend_yield": m.get("dividendYieldTTM"),
-            "roe": m.get("roeTTM"),
-            "roa": m.get("roaTTM"),
-            "debt_to_equity": m.get("debtToEquityTTM"),
-            "current_ratio": m.get("currentRatioTTM"),
-            "market_cap": m.get("marketCapTTM"),
-            "enterprise_value": m.get("enterpriseValueTTM"),
-            "source": "fmp",
-        }
+        return get_fmp_fundamentals(ticker)
 
     # ========================================================================
     # NEWS DATA
@@ -694,33 +675,14 @@ class MultiSourceDataProvider:
         ]
     
     def _get_news_fmp(self, ticker: str, limit: int) -> List[Dict]:
-        """Get news from FMP."""
-        import requests
-        
-        api_key = os.environ.get("FMP_API_KEY")
-        if not api_key:
+        """Get news from FMP using the dedicated client."""
+        try:
+            from src.tools.fmp_data import get_fmp_news
+        except ImportError:
+            logger.warning("fmp_data module not available")
             return []
         
-        url = f"https://financialmodelingprep.com/api/v3/stock_news"
-        params = {"tickers": ticker, "limit": limit, "apikey": api_key}
-        
-        response = requests.get(url, params=params, timeout=30)
-        if response.status_code != 200:
-            return []
-        
-        articles = response.json()
-        
-        return [
-            {
-                "title": a.get("title"),
-                "summary": a.get("text"),
-                "source": a.get("site"),
-                "url": a.get("url"),
-                "date": a.get("publishedDate"),
-                "symbol": a.get("symbol"),
-            }
-            for a in articles
-        ]
+        return get_fmp_news(ticker, limit=limit)
 
 
 # Global instance

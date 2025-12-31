@@ -31,6 +31,8 @@ function recordError(error: ApiError): void {
 /**
  * Get fallback settings from environment variables.
  * These are synced from the database by the backend.
+ * 
+ * Default primary data source is now FMP (Financial Modeling Prep).
  */
 export function getFallbackSettings(): {
   useYahooFinanceFallback: boolean;
@@ -38,6 +40,7 @@ export function getFallbackSettings(): {
   yahooFinanceForMetrics: boolean;
   yahooFinanceForNews: boolean;
   primaryDataSource: string;
+  isFmpPrimary: boolean;
   isAlpacaPrimary: boolean;
 } {
   const envTrue = (key: string, defaultVal: boolean = true): boolean => {
@@ -46,7 +49,8 @@ export function getFallbackSettings(): {
     return val.toLowerCase() === 'true';
   };
 
-  const primaryDataSource = process.env.PRIMARY_DATA_SOURCE || 'financial_datasets';
+  // Default to FMP as primary data source
+  const primaryDataSource = process.env.PRIMARY_DATA_SOURCE || 'fmp';
 
   return {
     useYahooFinanceFallback: envTrue('USE_YAHOO_FINANCE_FALLBACK', true),
@@ -54,8 +58,17 @@ export function getFallbackSettings(): {
     yahooFinanceForMetrics: envTrue('YAHOO_FINANCE_FOR_METRICS', true),
     yahooFinanceForNews: envTrue('YAHOO_FINANCE_FOR_NEWS', true),
     primaryDataSource,
+    isFmpPrimary: primaryDataSource === 'fmp',
     isAlpacaPrimary: primaryDataSource === 'alpaca',
   };
+}
+
+/**
+ * Check if FMP is the primary data source.
+ * When FMP is primary, all data types (prices, fundamentals, news) come from FMP first.
+ */
+export function isFmpPrimary(): boolean {
+  return getFallbackSettings().isFmpPrimary;
 }
 
 /**
@@ -72,6 +85,7 @@ export function isAlpacaPrimary(): boolean {
  */
 export function getDataSourceInfo(): {
   primary: string;
+  fmpEnabled: boolean;
   alpacaEnabled: boolean;
   yahooFallbackEnabled: boolean;
   fmpFallbackEnabled: boolean;
@@ -79,6 +93,7 @@ export function getDataSourceInfo(): {
   const settings = getFallbackSettings();
   return {
     primary: settings.primaryDataSource,
+    fmpEnabled: settings.isFmpPrimary,
     alpacaEnabled: settings.isAlpacaPrimary,
     yahooFallbackEnabled: settings.useYahooFinanceFallback,
     fmpFallbackEnabled: shouldUseFmpFallback('all'),

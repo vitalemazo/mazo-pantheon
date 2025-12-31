@@ -18,18 +18,18 @@ interface ApiKey {
 
 const FINANCIAL_API_KEYS: ApiKey[] = [
   {
-    key: 'FINANCIAL_DATASETS_API_KEY',
-    label: 'Financial Datasets API',
-    description: 'Primary source for financial data (prices, metrics, news, insider trades)',
-    url: 'https://financialdatasets.ai/',
-    placeholder: 'your-financial-datasets-api-key'
-  },
-  {
     key: 'FMP_API_KEY',
-    label: 'FMP (Financial Modeling Prep)',
-    description: 'Alternative data source with 100+ endpoints for stocks, financials, and news',
+    label: 'FMP Ultimate (Primary)',
+    description: 'Recommended primary data source - comprehensive coverage with 100+ endpoints',
     url: 'https://financialmodelingprep.com/',
     placeholder: 'your-fmp-api-key'
+  },
+  {
+    key: 'FINANCIAL_DATASETS_API_KEY',
+    label: 'Financial Datasets API',
+    description: 'Alternative source for financial data (prices, metrics, news, insider trades)',
+    url: 'https://financialdatasets.ai/',
+    placeholder: 'your-financial-datasets-api-key'
   }
 ];
 
@@ -272,24 +272,24 @@ interface DataSourceOption {
 
 const PRIMARY_DATA_SOURCES: DataSourceOption[] = [
   {
+    value: 'fmp',
+    label: 'FMP Ultimate (Recommended)',
+    description: 'Comprehensive data: prices, fundamentals, news, insider trades, 100+ endpoints'
+  },
+  {
     value: 'alpaca',
     label: 'Alpaca Market Data',
-    description: 'Real-time prices & news (uses trading API keys, no fundamentals)'
+    description: 'Real-time prices & news only (uses trading API keys, no fundamentals)'
   },
   {
     value: 'financial_datasets',
     label: 'Financial Datasets API',
-    description: 'Premium financial data (recommended)'
-  },
-  {
-    value: 'fmp',
-    label: 'FMP (Financial Modeling Prep)',
-    description: '100+ endpoints, requires API key'
+    description: 'Premium financial data with focus on fundamentals'
   },
   {
     value: 'yahoo_finance',
     label: 'Yahoo Finance',
-    description: 'Free data source (limited features)'
+    description: 'Free fallback (limited features, may be rate limited)'
   }
 ];
 
@@ -825,7 +825,7 @@ export function ApiKeysSettings() {
             </div>
             <select
               className="w-full bg-background border border-input rounded-md px-3 py-2 text-sm"
-              value={apiKeys['PRIMARY_DATA_SOURCE'] || 'financial_datasets'}
+              value={apiKeys['PRIMARY_DATA_SOURCE'] || 'fmp'}
               onChange={(e) => handleKeyChange('PRIMARY_DATA_SOURCE', e.target.value)}
             >
               {PRIMARY_DATA_SOURCES.map((source) => (
@@ -834,6 +834,23 @@ export function ApiKeysSettings() {
                 </option>
               ))}
             </select>
+            
+            {/* FMP-specific note */}
+            {(apiKeys['PRIMARY_DATA_SOURCE'] === 'fmp' || !apiKeys['PRIMARY_DATA_SOURCE']) && (
+              <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 mt-3">
+                <div className="flex items-start gap-2">
+                  <Info className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
+                  <div className="text-xs text-muted-foreground">
+                    <p className="font-medium text-green-500 mb-1">FMP Ultimate - Full Coverage</p>
+                    <p>FMP provides <strong>comprehensive data</strong>: prices, fundamentals, financial statements, key metrics, news, insider trades, analyst estimates, and more.</p>
+                    <p className="mt-1">Requires FMP_API_KEY (add it in Financial Data APIs above). Alpaca is used only for trade execution.</p>
+                    {!apiKeys['FMP_API_KEY'] && (
+                      <p className="mt-2 text-amber-500 font-medium">⚠️ FMP API Key not configured - add it above to enable FMP data.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
             
             {/* Alpaca-specific note */}
             {apiKeys['PRIMARY_DATA_SOURCE'] === 'alpaca' && (

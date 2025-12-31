@@ -237,12 +237,39 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
 def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None) -> list[Price]:
     """Fetch price data from cache or API.
     
-    If PRIMARY_DATA_SOURCE=alpaca, tries Alpaca first before falling back
-    to Financial Datasets API.
+    Routes through data sources based on PRIMARY_DATA_SOURCE:
+    - fmp: FMP Ultimate first, then fallback
+    - alpaca: Alpaca Market Data first, then fallback  
+    - financial_datasets: Financial Datasets API (default)
     """
-    # Check if we should use Alpaca as primary source
-    primary_source = os.environ.get("PRIMARY_DATA_SOURCE", "financial_datasets")
+    primary_source = os.environ.get("PRIMARY_DATA_SOURCE", "fmp")
     
+    # Try FMP first when selected as primary
+    if primary_source == "fmp":
+        try:
+            from src.tools.fmp_data import get_fmp_data_client
+            client = get_fmp_data_client()
+            if client.is_configured():
+                df = client.get_historical_prices(ticker, start_date, end_date)
+                if df is not None and not df.empty:
+                    prices = []
+                    for _, row in df.iterrows():
+                        prices.append(Price(
+                            ticker=ticker,
+                            time=row["time"].isoformat() if hasattr(row["time"], "isoformat") else str(row["time"]),
+                            open=float(row["open"]),
+                            high=float(row["high"]),
+                            low=float(row["low"]),
+                            close=float(row["close"]),
+                            volume=int(row["volume"]),
+                        ))
+                    if prices:
+                        logger.info(f"Got {len(prices)} prices for {ticker} from FMP")
+                        return prices
+        except Exception as e:
+            logger.warning(f"FMP prices failed for {ticker}, falling back: {e}")
+    
+    # Try Alpaca when selected as primary
     if primary_source == "alpaca":
         try:
             from src.tools.alpaca_data import get_alpaca_data_client
@@ -250,7 +277,6 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
             if client.is_configured():
                 df = client.get_bars(ticker, start_date, end_date)
                 if df is not None and not df.empty:
-                    # Convert DataFrame to Price objects
                     prices = []
                     for _, row in df.iterrows():
                         prices.append(Price(
@@ -309,7 +335,53 @@ def get_financial_metrics(
     limit: int = 10,
     api_key: str = None,
 ) -> list[FinancialMetrics]:
-    """Fetch financial metrics from cache or API."""
+    """Fetch financial metrics from cache or API.
+    
+    Routes through data sources based on PRIMARY_DATA_SOURCE:
+    - fmp: FMP Ultimate first (comprehensive fundamentals)
+    - Others: Financial Datasets API
+    """
+    primary_source = os.environ.get("PRIMARY_DATA_SOURCE", "fmp")
+    
+    # Try FMP first when selected as primary
+    if primary_source == "fmp":
+        try:
+            from src.tools.fmp_data import get_fmp_data_client
+            client = get_fmp_data_client()
+            if client.is_configured():
+                metrics_ttm = client.get_key_metrics_ttm(ticker)
+                ratios_ttm = client.get_ratios_ttm(ticker)
+                
+                if metrics_ttm or ratios_ttm:
+                    m = metrics_ttm or {}
+                    r = ratios_ttm or {}
+                    
+                    # Build FinancialMetrics from FMP data
+                    fmp_metrics = FinancialMetrics(
+                        ticker=ticker,
+                        report_period=end_date,
+                        period=period,
+                        pe_ratio_ttm=m.get("peRatioTTM"),
+                        price_to_book_ratio=m.get("pbRatioTTM") or r.get("priceToBookRatioTTM"),
+                        price_to_sales_ratio_ttm=m.get("priceToSalesRatioTTM") or r.get("priceToSalesRatioTTM"),
+                        net_margin=r.get("netProfitMarginTTM"),
+                        operating_margin=r.get("operatingProfitMarginTTM"),
+                        gross_margin=r.get("grossProfitMarginTTM"),
+                        return_on_equity=m.get("roeTTM") or r.get("returnOnEquityTTM"),
+                        return_on_assets=m.get("roaTTM") or r.get("returnOnAssetsTTM"),
+                        debt_to_equity=m.get("debtToEquityTTM") or r.get("debtEquityRatioTTM"),
+                        current_ratio=m.get("currentRatioTTM") or r.get("currentRatioTTM"),
+                        market_cap=m.get("marketCapTTM"),
+                        enterprise_value=m.get("enterpriseValueTTM"),
+                        revenue_growth_yoy=m.get("revenueGrowthTTM"),
+                        earnings_growth_yoy=m.get("netIncomeGrowthTTM"),
+                    )
+                    logger.info(f"Got financial metrics for {ticker} from FMP")
+                    return [fmp_metrics]
+        except Exception as e:
+            logger.warning(f"FMP metrics failed for {ticker}, falling back: {e}")
+    
+    # Fall back to Financial Datasets API
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{period}_{end_date}_{limit}"
     
@@ -391,7 +463,42 @@ def get_insider_trades(
     limit: int = 1000,
     api_key: str = None,
 ) -> list[InsiderTrade]:
-    """Fetch insider trades from cache or API."""
+    """Fetch insider trades from cache or API.
+    
+    Routes through data sources based on PRIMARY_DATA_SOURCE:
+    - fmp: FMP Ultimate first (comprehensive insider data)
+    - Others: Financial Datasets API
+    """
+    primary_source = os.environ.get("PRIMARY_DATA_SOURCE", "fmp")
+    
+    # Try FMP first when selected as primary
+    if primary_source == "fmp":
+        try:
+            from src.tools.fmp_data import get_fmp_data_client
+            client = get_fmp_data_client()
+            if client.is_configured():
+                fmp_trades = client.get_insider_trades(symbol=ticker, limit=min(limit, 100))
+                if fmp_trades:
+                    trades_list = []
+                    for trade in fmp_trades:
+                        trades_list.append(InsiderTrade(
+                            ticker=ticker,
+                            issuer_name=trade.get("reportingName", ""),
+                            owner_name=trade.get("reportingName", ""),
+                            owner_title=trade.get("typeOfOwner", ""),
+                            transaction_type=trade.get("transactionType", ""),
+                            transaction_shares=trade.get("securitiesTransacted"),
+                            transaction_price_per_share=trade.get("price"),
+                            shares_owned_after_transaction=trade.get("securitiesOwned"),
+                            filing_date=trade.get("filingDate", end_date),
+                        ))
+                    if trades_list:
+                        logger.info(f"Got {len(trades_list)} insider trades for {ticker} from FMP")
+                        return trades_list
+        except Exception as e:
+            logger.warning(f"FMP insider trades failed for {ticker}, falling back: {e}")
+    
+    # Fall back to Financial Datasets API
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
     
@@ -458,12 +565,38 @@ def get_company_news(
 ) -> list[CompanyNews]:
     """Fetch company news from cache or API.
     
-    If PRIMARY_DATA_SOURCE=alpaca, tries Alpaca first before falling back
-    to Financial Datasets API.
+    Routes through data sources based on PRIMARY_DATA_SOURCE:
+    - fmp: FMP Ultimate first (comprehensive news)
+    - alpaca: Alpaca Market Data first
+    - Others: Financial Datasets API
     """
-    # Check if we should use Alpaca as primary source
-    primary_source = os.environ.get("PRIMARY_DATA_SOURCE", "financial_datasets")
+    primary_source = os.environ.get("PRIMARY_DATA_SOURCE", "fmp")
     
+    # Try FMP first when selected as primary
+    if primary_source == "fmp":
+        try:
+            from src.tools.fmp_data import get_fmp_data_client
+            client = get_fmp_data_client()
+            if client.is_configured():
+                fmp_news = client.get_stock_news(symbols=[ticker], limit=min(limit, 100))
+                if fmp_news:
+                    news_list = []
+                    for article in fmp_news:
+                        news_list.append(CompanyNews(
+                            ticker=ticker,
+                            title=article.title,
+                            description=article.text[:500] if article.text else "",
+                            source=article.site,
+                            url=article.url,
+                            date=article.published_date.isoformat() if article.published_date else None,
+                        ))
+                    if news_list:
+                        logger.info(f"Got {len(news_list)} news articles for {ticker} from FMP")
+                        return news_list
+        except Exception as e:
+            logger.warning(f"FMP news failed for {ticker}, falling back: {e}")
+    
+    # Try Alpaca when selected as primary
     if primary_source == "alpaca":
         try:
             from src.tools.alpaca_data import get_alpaca_data_client
@@ -476,7 +609,6 @@ def get_company_news(
                     limit=min(limit, 50),  # Alpaca max is 50
                 )
                 if alpaca_news:
-                    # Convert to CompanyNews objects
                     news_list = []
                     for article in alpaca_news:
                         news_list.append(CompanyNews(
