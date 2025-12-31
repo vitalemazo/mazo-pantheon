@@ -683,6 +683,159 @@ async def get_workflow_detail(workflow_id: str):
 
 
 # =============================================================================
+# LATEST WORKFLOW FOR SIDEBARS
+# =============================================================================
+
+@router.get("/workflows/latest")
+async def get_latest_workflow_for_sidebar():
+    """
+    Get the latest workflow data for populating sidebars.
+    
+    Returns data in format expected by Intelligence Panel:
+    - Agent statuses and signals
+    - Mazo research
+    - PM decision
+    - Console logs (last 50 workflow events)
+    """
+    try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        
+        result = {
+            "agentStatuses": {},
+            "signals": {},
+            "mazoResearch": None,
+            "finalDecision": None,
+            "consoleLogs": [],
+        }
+        
+        with engine.connect() as conn:
+            # Get latest workflow ID
+            latest_query = """
+                SELECT DISTINCT workflow_id, MAX(timestamp) as last_update
+                FROM workflow_events
+                WHERE timestamp > NOW() - INTERVAL '24 hours'
+                GROUP BY workflow_id
+                ORDER BY last_update DESC
+                LIMIT 1
+            """
+            latest_result = conn.execute(text(latest_query))
+            latest_row = latest_result.fetchone()
+            
+            if not latest_row:
+                return result
+            
+            workflow_id = str(latest_row[0])
+            result["workflowId"] = workflow_id
+            
+            # Get agent signals
+            signals_query = """
+                SELECT agent_id, ticker, signal, confidence, reasoning, timestamp
+                FROM agent_signals
+                WHERE workflow_id = :workflow_id::uuid
+                ORDER BY timestamp DESC
+            """
+            signal_rows = conn.execute(text(signals_query), {"workflow_id": workflow_id}).fetchall()
+            
+            for row in signal_rows:
+                agent_id = row[0]
+                result["agentStatuses"][agent_id] = "complete"
+                result["signals"][agent_id] = {
+                    "signal": row[2],
+                    "confidence": float(row[3]) if row[3] else 50,
+                    "reasoning": row[4][:300] if row[4] else None,
+                    "ticker": row[1],
+                }
+            
+            # Get Mazo research
+            mazo_query = """
+                SELECT ticker, query, response, sources, sentiment, sentiment_confidence
+                FROM mazo_research
+                WHERE workflow_id = :workflow_id::uuid
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """
+            try:
+                mazo_result = conn.execute(text(mazo_query), {"workflow_id": workflow_id})
+                mazo_row = mazo_result.fetchone()
+                if mazo_row:
+                    result["mazoResearch"] = {
+                        "ticker": mazo_row[0],
+                        "query": mazo_row[1],
+                        "response": mazo_row[2][:2000] if mazo_row[2] else None,
+                        "sources": mazo_row[3] or [],
+                        "sentiment": mazo_row[4],
+                        "confidence": mazo_row[5],
+                    }
+            except Exception:
+                pass  # Table might not exist
+            
+            # Get PM decision
+            pm_query = """
+                SELECT ticker, action, confidence, reasoning_raw, bullish_count, bearish_count, neutral_count
+                FROM pm_decisions
+                WHERE workflow_id = :workflow_id::uuid
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """
+            try:
+                pm_result = conn.execute(text(pm_query), {"workflow_id": workflow_id})
+                pm_row = pm_result.fetchone()
+                if pm_row:
+                    result["finalDecision"] = {
+                        "ticker": pm_row[0],
+                        "action": pm_row[1],
+                        "confidence": float(pm_row[2]) if pm_row[2] else None,
+                        "reasoning": pm_row[3][:500] if pm_row[3] else None,
+                        "bullishCount": pm_row[4],
+                        "bearishCount": pm_row[5],
+                        "neutralCount": pm_row[6],
+                    }
+            except Exception:
+                pass
+            
+            # Get recent workflow events as console logs
+            events_query = """
+                SELECT step_name, status, timestamp, duration_ms, ticker, error_message
+                FROM workflow_events
+                WHERE workflow_id = :workflow_id::uuid
+                ORDER BY timestamp DESC
+                LIMIT 50
+            """
+            event_rows = conn.execute(text(events_query), {"workflow_id": workflow_id}).fetchall()
+            
+            for row in event_rows:
+                level = "info"
+                if row[1] == "failed":
+                    level = "error"
+                elif row[1] == "started":
+                    level = "debug"
+                    
+                result["consoleLogs"].append({
+                    "id": f"log_{row[2].isoformat() if row[2] else 'unknown'}",
+                    "timestamp": row[2].isoformat() if row[2] else None,
+                    "level": level,
+                    "source": row[0],
+                    "message": f"{row[0]}: {row[1]}" + (f" ({row[3]}ms)" if row[3] else "") + (f" - {row[4]}" if row[4] else ""),
+                })
+            
+            result["consoleLogs"].reverse()  # Chronological order
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Failed to get latest workflow: {e}")
+        return {
+            "agentStatuses": {},
+            "signals": {},
+            "mazoResearch": None,
+            "finalDecision": None,
+            "consoleLogs": [],
+            "error": str(e),
+        }
+
+
+# =============================================================================
 # TRADE JOURNAL ENDPOINTS
 # =============================================================================
 

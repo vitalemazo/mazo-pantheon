@@ -10,10 +10,11 @@
 
 import { useResizable } from '@/hooks/use-resizable';
 import { cn } from '@/lib/utils';
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useEffect, useState, useCallback } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { useDataStore } from '@/services/data-hydration-service';
+import { API_BASE_URL } from '@/lib/api-config';
 import {
   Users,
   Brain,
@@ -50,6 +51,60 @@ export function IntelligencePanel({
   // Get counts for badges
   const workflowProgress = useDataStore((state) => state.liveWorkflowProgress);
   const consoleLogs = useDataStore((state) => state.consoleLogs);
+  const setLiveWorkflowProgress = useDataStore((state) => state.setLiveWorkflowProgress);
+  const addConsoleLog = useDataStore((state) => state.addConsoleLog);
+  const setAgentStatus = useDataStore((state) => state.setAgentStatus);
+
+  // Fetch latest workflow data on mount
+  const fetchLatestWorkflow = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/monitoring/workflows/latest`);
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Populate agent statuses
+        if (data.agentStatuses) {
+          Object.entries(data.agentStatuses).forEach(([agentId, status]) => {
+            setAgentStatus(agentId, status as 'pending' | 'running' | 'complete' | 'error');
+          });
+        }
+        
+        // Populate workflow progress
+        if (data.signals && Object.keys(data.signals).length > 0) {
+          setLiveWorkflowProgress({
+            workflowId: data.workflowId || 'latest',
+            status: 'complete',
+            startedAt: new Date().toISOString(),
+            agentsTotal: Object.keys(data.signals).length,
+            agentsComplete: Object.keys(data.signals).length,
+            agentStatuses: data.agentStatuses || {},
+            signals: data.signals || {},
+            mazoResearch: data.mazoResearch || undefined,
+            finalDecision: data.finalDecision || undefined,
+          });
+        }
+        
+        // Populate console logs (only if we don't have any)
+        if (data.consoleLogs && consoleLogs.length === 0) {
+          data.consoleLogs.forEach((log: any) => {
+            addConsoleLog({
+              timestamp: log.timestamp,
+              level: log.level,
+              source: log.source,
+              message: log.message,
+            });
+          });
+        }
+      }
+    } catch (error) {
+      console.debug('Failed to fetch latest workflow:', error);
+    }
+  }, [setAgentStatus, setLiveWorkflowProgress, addConsoleLog, consoleLogs.length]);
+
+  // Fetch on mount
+  useEffect(() => {
+    fetchLatestWorkflow();
+  }, [fetchLatestWorkflow]);
 
   const agentCount = workflowProgress?.agentsComplete || 0;
   const hasResearch = !!workflowProgress?.mazoResearch;
