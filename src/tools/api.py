@@ -55,6 +55,135 @@ logger = logging.getLogger(__name__)
 _cache = get_cache()
 
 
+class FallbackTracker:
+    """
+    Tracks fallback usage to detect when primary data sources are failing.
+    
+    Alerts when:
+    - Fallback rate exceeds threshold (e.g., >50% of requests using fallback)
+    - Consecutive fallbacks exceed limit (e.g., 5+ in a row)
+    """
+    
+    def __init__(
+        self,
+        fallback_threshold: float = 0.5,  # Alert if >50% are fallbacks
+        consecutive_limit: int = 5,  # Alert if 5+ consecutive fallbacks
+        window_size: int = 20,  # Track last 20 requests
+    ):
+        self.fallback_threshold = fallback_threshold
+        self.consecutive_limit = consecutive_limit
+        self.window_size = window_size
+        
+        self._lock = Lock()
+        self._history: list[tuple[str, str, bool]] = []  # (data_type, source, was_fallback)
+        self._consecutive_fallbacks = 0
+        self._alert_cooldown = 0  # Prevent alert spam
+    
+    def record_success(self, data_type: str, source: str, was_fallback: bool = False):
+        """Record a successful data fetch."""
+        with self._lock:
+            self._history.append((data_type, source, was_fallback))
+            if len(self._history) > self.window_size:
+                self._history.pop(0)
+            
+            if was_fallback:
+                self._consecutive_fallbacks += 1
+                logger.warning(
+                    f"Data fallback used: {data_type} from {source} "
+                    f"(consecutive: {self._consecutive_fallbacks})"
+                )
+                self._check_alerts(data_type)
+            else:
+                self._consecutive_fallbacks = 0
+                self._alert_cooldown = max(0, self._alert_cooldown - 1)
+    
+    def record_primary_failure(self, data_type: str, primary_source: str, error: str):
+        """Record when the primary source fails."""
+        logger.warning(f"Primary data source failed: {primary_source} for {data_type}: {error}")
+        
+        # Log to event logger if available
+        event_logger = _get_event_logger()
+        if event_logger:
+            try:
+                event_logger.log_event(
+                    "data_source_failure",
+                    {
+                        "data_type": data_type,
+                        "source": primary_source,
+                        "error": str(error)[:200],
+                    },
+                    severity="warning"
+                )
+            except Exception:
+                pass
+    
+    def _check_alerts(self, data_type: str):
+        """Check if alert thresholds are exceeded."""
+        if self._alert_cooldown > 0:
+            return
+        
+        # Check consecutive fallbacks
+        if self._consecutive_fallbacks >= self.consecutive_limit:
+            self._trigger_alert(
+                f"Primary data source appears down: {self._consecutive_fallbacks} "
+                f"consecutive fallbacks for {data_type}"
+            )
+            self._alert_cooldown = 10  # Cool down for 10 requests
+            return
+        
+        # Check fallback rate
+        if len(self._history) >= self.window_size // 2:
+            fallback_count = sum(1 for _, _, fb in self._history if fb)
+            fallback_rate = fallback_count / len(self._history)
+            
+            if fallback_rate > self.fallback_threshold:
+                self._trigger_alert(
+                    f"High fallback rate: {fallback_rate:.0%} of last "
+                    f"{len(self._history)} requests used fallback"
+                )
+                self._alert_cooldown = 10
+    
+    def _trigger_alert(self, message: str):
+        """Trigger an alert for fallback issues."""
+        logger.error(f"[DATA ALERT] {message}")
+        
+        # Log to event logger if available
+        event_logger = _get_event_logger()
+        if event_logger:
+            try:
+                event_logger.log_event(
+                    "data_fallback_alert",
+                    {"message": message, "consecutive": self._consecutive_fallbacks},
+                    severity="error"
+                )
+            except Exception:
+                pass
+    
+    def get_stats(self) -> dict:
+        """Get fallback statistics."""
+        with self._lock:
+            if not self._history:
+                return {"total": 0, "fallback_count": 0, "fallback_rate": 0.0}
+            
+            fallback_count = sum(1 for _, _, fb in self._history if fb)
+            return {
+                "total": len(self._history),
+                "fallback_count": fallback_count,
+                "fallback_rate": fallback_count / len(self._history),
+                "consecutive_fallbacks": self._consecutive_fallbacks,
+                "sources_used": list(set(src for _, src, _ in self._history)),
+            }
+
+
+# Global fallback tracker instance
+_fallback_tracker = FallbackTracker()
+
+
+def get_fallback_stats() -> dict:
+    """Get current fallback statistics."""
+    return _fallback_tracker.get_stats()
+
+
 class DataAPIRateLimiter:
     """
     Rate limiter for Financial Datasets API calls.
@@ -301,23 +430,29 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
         # FMP → Alpaca → Financial Datasets
         result = try_fmp()
         if result:
+            _fallback_tracker.record_success("prices", "FMP", was_fallback=False)
             return result
+        _fallback_tracker.record_primary_failure("prices", "FMP", "No data returned")
         logger.info(f"FMP failed for {ticker}, trying Alpaca fallback...")
         result = try_alpaca()
         if result:
+            _fallback_tracker.record_success("prices", "Alpaca", was_fallback=True)
             return result
         logger.info(f"Alpaca fallback failed for {ticker}, trying Financial Datasets...")
     elif primary_source == "alpaca":
         # Alpaca → FMP → Financial Datasets
         result = try_alpaca()
         if result:
+            _fallback_tracker.record_success("prices", "Alpaca", was_fallback=False)
             return result
+        _fallback_tracker.record_primary_failure("prices", "Alpaca", "No data returned")
         logger.info(f"Alpaca failed for {ticker}, trying FMP fallback...")
         result = try_fmp()
         if result:
+            _fallback_tracker.record_success("prices", "FMP", was_fallback=True)
             return result
         logger.info(f"FMP fallback failed for {ticker}, trying Financial Datasets...")
-    
+
     # Fall back to Financial Datasets API
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{start_date}_{end_date}"
@@ -694,23 +829,29 @@ def get_company_news(
         # FMP → Alpaca → Financial Datasets
         result = try_fmp()
         if result:
+            _fallback_tracker.record_success("news", "FMP", was_fallback=False)
             return result
+        _fallback_tracker.record_primary_failure("news", "FMP", "No data returned")
         logger.info(f"FMP news failed for {ticker}, trying Alpaca fallback...")
         result = try_alpaca()
         if result:
+            _fallback_tracker.record_success("news", "Alpaca", was_fallback=True)
             return result
         logger.info(f"Alpaca news fallback failed for {ticker}, trying Financial Datasets...")
     elif primary_source == "alpaca":
         # Alpaca → FMP → Financial Datasets
         result = try_alpaca()
         if result:
+            _fallback_tracker.record_success("news", "Alpaca", was_fallback=False)
             return result
+        _fallback_tracker.record_primary_failure("news", "Alpaca", "No data returned")
         logger.info(f"Alpaca news failed for {ticker}, trying FMP fallback...")
         result = try_fmp()
         if result:
+            _fallback_tracker.record_success("news", "FMP", was_fallback=True)
             return result
         logger.info(f"FMP news fallback failed for {ticker}, trying Financial Datasets...")
-    
+
     # Fall back to Financial Datasets API
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
