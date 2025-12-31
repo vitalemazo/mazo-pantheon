@@ -18,6 +18,7 @@ from src.trading.strategy_engine import get_strategy_engine
 from src.trading.watchlist_service import get_watchlist_service
 from src.trading.performance_tracker import get_performance_tracker
 from src.trading.automated_trading import get_automated_trading_service
+from src.trading.position_monitor import get_position_monitor
 
 
 router = APIRouter(prefix="/trading", tags=["trading"])
@@ -586,3 +587,48 @@ async def run_automated_trading_dry_run(request: AutomatedTradingRequest):
         "dry_run": True,
         "result": result.to_dict(),
     }
+
+
+# ==================== Position Monitor Endpoints ====================
+
+@router.get("/position-monitor/status")
+async def get_position_monitor_status():
+    """Get position monitor status and recent activity."""
+    try:
+        monitor = get_position_monitor()
+        status = monitor.get_status()
+        
+        return {
+            "success": True,
+            "is_running": status.get("is_running", False),
+            "last_check": status.get("last_check"),
+            "check_count": status.get("check_count", 0),
+            "exits_executed": status.get("exits_executed", 0),
+            "recent_alerts": status.get("recent_alerts", []),
+            "position_rules": status.get("position_rules", {}),
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/position-monitor/set-rules")
+async def set_position_rules(
+    ticker: str,
+    stop_loss_pct: Optional[float] = None,
+    take_profit_pct: Optional[float] = None,
+):
+    """Set custom risk rules for a specific position."""
+    try:
+        monitor = get_position_monitor()
+        monitor.set_position_rules(ticker.upper(), stop_loss_pct, take_profit_pct)
+        
+        return {
+            "success": True,
+            "ticker": ticker.upper(),
+            "rules": {
+                "stop_loss_pct": stop_loss_pct,
+                "take_profit_pct": take_profit_pct,
+            },
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}

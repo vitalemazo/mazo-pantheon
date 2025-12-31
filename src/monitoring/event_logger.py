@@ -610,14 +610,64 @@ class EventLogger:
         cpu_percent: float = None,
     ):
         """Log scheduler heartbeat."""
-        self._store_event("scheduler_heartbeats", {
+        # Store extra details as JSON since table has limited columns
+        details = {
             "scheduler_id": scheduler_id,
             "hostname": hostname,
-            "jobs_pending": jobs_pending,
             "jobs_running": jobs_running,
             "memory_mb": memory_mb,
             "cpu_percent": cpu_percent,
+        }
+        
+        self._store_event("scheduler_heartbeats", {
+            "status": "running",
+            "active_jobs": jobs_pending or 0,
+            "details": details,
         })
+    
+    def update_pm_execution(
+        self,
+        workflow_id: uuid.UUID,
+        ticker: str,
+        order_id: str,
+        was_executed: bool = True,
+        actual_return: float = None,
+        was_profitable: bool = None,
+    ):
+        """Update PM decision with execution outcome."""
+        session = self._get_session()
+        if not session:
+            return
+        
+        try:
+            from sqlalchemy import text
+            
+            update_query = text("""
+                UPDATE pm_decisions 
+                SET was_executed = :was_executed,
+                    execution_order_id = :order_id,
+                    actual_return = :actual_return,
+                    was_profitable = :was_profitable
+                WHERE workflow_id = :workflow_id 
+                  AND ticker = :ticker
+                  AND was_executed IS NULL
+            """)
+            
+            session.execute(update_query, {
+                "was_executed": was_executed,
+                "order_id": order_id,
+                "actual_return": actual_return,
+                "was_profitable": was_profitable,
+                "workflow_id": str(workflow_id),
+                "ticker": ticker,
+            })
+            session.commit()
+            
+        except Exception as e:
+            logger.error(f"Failed to update PM execution: {e}")
+            session.rollback()
+        finally:
+            session.close()
     
     # =========================================================================
     # UTILITY METHODS

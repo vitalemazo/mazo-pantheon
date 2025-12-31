@@ -451,21 +451,14 @@ class RateLimitTracking(Base):
 class SchedulerHeartbeat(Base):
     """Scheduler heartbeat for liveness detection - hypertable on timestamp"""
     __tablename__ = "scheduler_heartbeats"
-    
+
     timestamp = Column(DateTime(timezone=True), primary_key=True, server_default=func.now())
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    
-    # Scheduler info
-    scheduler_id = Column(String(100), nullable=False)  # Unique scheduler instance ID
-    hostname = Column(String(200), nullable=True)
-    
-    # Status
-    jobs_pending = Column(Integer, nullable=True)
-    jobs_running = Column(Integer, nullable=True)
-    
-    # Memory/CPU (optional)
-    memory_mb = Column(Float, nullable=True)
-    cpu_percent = Column(Float, nullable=True)
+
+    # Status - matches actual table schema
+    status = Column(Text, nullable=False, default="running")
+    active_jobs = Column(Integer, nullable=True, default=0)
+    details = Column(JSONB, nullable=True)  # Store extra info as JSON
 
 
 # =============================================================================

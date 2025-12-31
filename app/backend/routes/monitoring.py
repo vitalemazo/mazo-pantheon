@@ -74,48 +74,57 @@ class AgentPerformanceResponse(BaseModel):
 # ALERTS ENDPOINTS
 # =============================================================================
 
-@router.get("/alerts", response_model=List[AlertResponse])
+@router.get("/alerts")
 async def get_alerts(
     priority: Optional[str] = Query(None, description="Filter by priority (P0, P1, P2)"),
     resolved: Optional[bool] = Query(False, description="Include resolved alerts"),
     limit: int = Query(50, ge=1, le=500),
 ):
-    """Get active alerts."""
+    """Get active alerts from database."""
     try:
-        from src.monitoring import get_alert_manager, AlertPriority
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
         
-        alert_manager = get_alert_manager()
+        query = """
+            SELECT 
+                id, timestamp, priority, category, title, 
+                details, acknowledged, resolved
+            FROM alerts
+            WHERE 1=1
+        """
+        params = {"limit": limit}
         
         if priority:
-            try:
-                priority_filter = AlertPriority(priority)
-            except ValueError:
-                raise HTTPException(400, f"Invalid priority: {priority}")
-            alerts = alert_manager.get_active_alerts(priority=priority_filter)
-        else:
-            alerts = alert_manager.get_active_alerts()
+            query += " AND priority = :priority"
+            params["priority"] = priority
         
-        # Filter resolved if needed
         if not resolved:
-            alerts = [a for a in alerts if not a.resolved]
+            query += " AND resolved = false"
         
-        return [
-            AlertResponse(
-                id=str(a.id),
-                timestamp=a.timestamp.isoformat(),
-                priority=a.priority.value,
-                category=a.category.value,
-                title=a.title,
-                details=a.details,
-                acknowledged=a.acknowledged,
-                resolved=a.resolved,
-            )
-            for a in alerts[:limit]
-        ]
+        query += " ORDER BY timestamp DESC LIMIT :limit"
+        
+        with engine.connect() as conn:
+            result = conn.execute(text(query), params)
+            rows = result.fetchall()
+        
+        alerts = []
+        for row in rows:
+            alerts.append({
+                "id": str(row[0]),
+                "timestamp": row[1].isoformat() if row[1] else None,
+                "priority": row[2],
+                "category": row[3],
+                "title": row[4],
+                "details": row[5] if isinstance(row[5], dict) else {},
+                "acknowledged": row[6] or False,
+                "resolved": row[7] or False,
+            })
+        
+        return alerts
         
     except Exception as e:
         logger.error(f"Failed to get alerts: {e}")
-        raise HTTPException(500, str(e))
+        return []
 
 
 @router.post("/alerts/{alert_id}/acknowledge")
@@ -262,13 +271,72 @@ async def get_system_status():
 
 @router.get("/system/rate-limits")
 async def get_rate_limits():
-    """Get current rate limit status for all APIs."""
+    """Get current rate limit status for all APIs from database."""
     try:
-        from src.monitoring import get_rate_limit_monitor
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
         
-        monitor = get_rate_limit_monitor()
-        return monitor.get_all_status()
+        # Get latest rate limit status for each API from database
+        query = """
+            WITH latest AS (
+                SELECT DISTINCT ON (api_name) 
+                    api_name, calls_made, calls_remaining, 
+                    utilization_pct, window_resets_at, timestamp
+                FROM rate_limit_tracking
+                ORDER BY api_name, timestamp DESC
+            )
+            SELECT * FROM latest ORDER BY api_name
+        """
         
+        with engine.connect() as conn:
+            result = conn.execute(text(query))
+            rows = result.fetchall()
+        
+        rate_limits = {}
+        for row in rows:
+            rate_limits[row[0]] = {
+                "calls_made": row[1],
+                "calls_remaining": row[2],
+                "utilization_pct": round(row[3], 2) if row[3] else 0.0,
+                "resets_at": row[4].isoformat() if row[4] else None,
+                "last_call_at": row[5].isoformat() if row[5] else None,
+            }
+        
+        # Add LLM call counts from llm_api_calls table
+        llm_query = """
+            SELECT provider, COUNT(*), AVG(latency_ms), MAX(timestamp)
+            FROM llm_api_calls 
+            WHERE timestamp > NOW() - INTERVAL '1 hour'
+            GROUP BY provider
+        """
+        with engine.connect() as conn:
+            llm_result = conn.execute(text(llm_query))
+            llm_rows = llm_result.fetchall()
+        
+        for row in llm_rows:
+            provider = row[0].lower()
+            api_key = f"{provider}_proxy" if provider == "openai" else provider
+            if api_key not in rate_limits:
+                rate_limits[api_key] = {}
+            rate_limits[api_key]["calls_made"] = row[1] or 0
+            rate_limits[api_key]["avg_latency_ms"] = round(row[2], 2) if row[2] else None
+            rate_limits[api_key]["last_call_at"] = row[3].isoformat() if row[3] else None
+            rate_limits[api_key]["utilization_pct"] = min(100, (row[1] or 0) / 5)  # Estimate
+        
+        # Add default entries for APIs not in database yet
+        default_apis = ["openai", "openai_proxy", "anthropic", "financial_datasets", "alpaca"]
+        for api in default_apis:
+            if api not in rate_limits:
+                rate_limits[api] = {
+                    "calls_made": 0,
+                    "calls_remaining": None,
+                    "utilization_pct": 0.0,
+                    "resets_at": None,
+                    "last_call_at": None,
+                }
+        
+        return rate_limits
+
     except Exception as e:
         logger.error(f"Failed to get rate limits: {e}")
         raise HTTPException(500, str(e))
@@ -644,8 +712,42 @@ async def get_trade_journal(
 @router.get("/trades/{order_id}")
 async def get_trade_detail(order_id: str):
     """Get full trade detail with decision chain."""
-    # TODO: Implement when database is populated
-    return {
-        "message": "Trade detail will be available once monitoring data is collected",
-        "order_id": order_id,
-    }
+    try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        
+        query = """
+            SELECT 
+                order_id, ticker, side, quantity, order_type, status,
+                submitted_at, filled_at, filled_qty, filled_avg_price,
+                stop_loss_price, take_profit_price, reject_reason
+            FROM trade_executions
+            WHERE order_id = :order_id
+        """
+        
+        with engine.connect() as conn:
+            result = conn.execute(text(query), {"order_id": order_id})
+            row = result.fetchone()
+        
+        if not row:
+            return {"error": "Trade not found", "order_id": order_id}
+        
+        return {
+            "order_id": row[0],
+            "ticker": row[1],
+            "side": row[2],
+            "quantity": row[3],
+            "order_type": row[4],
+            "status": row[5],
+            "submitted_at": row[6].isoformat() if row[6] else None,
+            "filled_at": row[7].isoformat() if row[7] else None,
+            "filled_qty": row[8],
+            "filled_avg_price": row[9],
+            "stop_loss_price": row[10],
+            "take_profit_price": row[11],
+            "reject_reason": row[12],
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get trade detail: {e}")
+        return {"error": str(e), "order_id": order_id}

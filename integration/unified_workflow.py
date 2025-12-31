@@ -164,6 +164,7 @@ class UnifiedResult:
     trade: Optional[TradeResult] = None
     workflow_mode: str = "full"
     execution_time: float = 0.0
+    workflow_id: Optional[str] = None  # Added for PM decision tracking
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     # Raw PM decision for trade execution
     pm_decision: Optional[Dict[str, Any]] = None
@@ -674,7 +675,8 @@ class UnifiedWorkflow:
         return UnifiedResult(
             ticker=ticker,
             research_report=research.answer if research else "Research failed",
-            recommendations=self._extract_research_recommendations(research) if research else []
+            recommendations=self._extract_research_recommendations(research) if research else [],
+            workflow_id=str(workflow_id) if workflow_id else None
         )
 
     def _pre_research_flow(
@@ -741,7 +743,8 @@ class UnifiedWorkflow:
             agent_signals=agent_signals,
             research_report=research.answer,
             recommendations=recommendations,
-            pm_decision=pm_decision
+            pm_decision=pm_decision,
+            workflow_id=str(workflow_id) if workflow_id else None
         )
 
     def _post_research_flow(
@@ -818,7 +821,8 @@ class UnifiedWorkflow:
             agent_signals=agent_signals,
             research_report=research.answer,
             recommendations=recommendations,
-            pm_decision=pm_decision
+            pm_decision=pm_decision,
+            workflow_id=str(workflow_id) if workflow_id else None
         )
 
     def _full_flow(
@@ -940,7 +944,8 @@ class UnifiedWorkflow:
             agent_signals=agent_signals,
             research_report=full_report,
             recommendations=recommendations,
-            pm_decision=pm_decision
+            pm_decision=pm_decision,
+            workflow_id=str(workflow_id) if workflow_id else None
         )
 
     def _build_research_query(self, ticker: str, depth: ResearchDepth) -> str:

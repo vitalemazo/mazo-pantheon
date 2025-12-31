@@ -64,6 +64,7 @@ class AnalysisResult:
     consensus_confidence: float
     pm_decision: Dict[str, Any]
     reasoning: str
+    workflow_id: str = None  # Added for PM decision tracking
 
 
 @dataclass
@@ -231,11 +232,26 @@ class AutomatedTradingService:
                                 trade_result = await self._execute_trade(
                                     signal.ticker,
                                     analysis.pm_decision,
-                                    portfolio_context
+                                    portfolio_context,
+                                    workflow_id=analysis.workflow_id
                                 )
                                 
                                 if trade_result.get("success"):
                                     result.trades_executed += 1
+                                    
+                                    # Update PM decision with execution status
+                                    if analysis.workflow_id:
+                                        try:
+                                            from src.monitoring import get_event_logger
+                                            event_logger = get_event_logger()
+                                            event_logger.update_pm_execution(
+                                                workflow_id=analysis.workflow_id,
+                                                ticker=signal.ticker,
+                                                order_id=trade_result.get("order_id", ""),
+                                                was_executed=True,
+                                            )
+                                        except Exception as pm_err:
+                                            logger.debug(f"Failed to update PM execution: {pm_err}")
                                     
                                     # Track in performance tracker
                                     self.performance_tracker.record_trade(
@@ -586,12 +602,50 @@ class AutomatedTradingService:
         
         for signal in signals:
             try:
+                import time
+                import uuid as uuid_module
+                mazo_start = time.time()
+                
                 # Run quick Mazo research
                 direction_str = signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction)
-                research = self.mazo.research(
-                    f"Should I {direction_str} {signal.ticker}? Current price is ${signal.entry_price:.2f}. Give a quick buy/sell/hold recommendation."
-                )
+                query = f"Should I {direction_str} {signal.ticker}? Current price is ${signal.entry_price:.2f}. Give a quick buy/sell/hold recommendation."
+                research = self.mazo.research(query)
+                mazo_latency_ms = int((time.time() - mazo_start) * 1000)
                 
+                # Log the Mazo research
+                try:
+                    from src.monitoring import get_event_logger
+                    event_logger = get_event_logger()
+                    workflow_id = uuid_module.uuid4()  # Generate ID for this validation
+                    
+                    # Parse sentiment early for logging
+                    sentiment = "unknown"
+                    if research and research.answer:
+                        answer_lower = research.answer.lower()
+                        if any(w in answer_lower for w in ["bullish", "buy", "strong buy"]):
+                            sentiment = "bullish"
+                        elif any(w in answer_lower for w in ["bearish", "sell", "short"]):
+                            sentiment = "bearish"
+                        else:
+                            sentiment = "neutral"
+                    
+                    event_logger.log_mazo_research(
+                        workflow_id=workflow_id,
+                        ticker=signal.ticker,
+                        query=query,
+                        mode="automated_validation",
+                        response=research.answer if research else None,
+                        sources=[{"source": s} for s in (research.sources or [])] if research else None,
+                        sentiment=sentiment,
+                        sentiment_confidence="medium",
+                        key_points=[],
+                        success=research is not None and research.answer is not None,
+                        error=None,
+                        latency_ms=mazo_latency_ms,
+                    )
+                except Exception as log_err:
+                    logger.debug(f"Failed to log Mazo research: {log_err}")
+
                 if not research or not research.answer:
                     # Mazo returned nothing - allow through if high confidence
                     if signal.confidence >= 65:
@@ -811,7 +865,8 @@ class AutomatedTradingService:
                 consensus_direction=consensus_direction,
                 consensus_confidence=consensus_confidence,
                 pm_decision=pm_decision or {},
-                reasoning=result.portfolio_manager_reasoning if hasattr(result, 'portfolio_manager_reasoning') else ""
+                reasoning=result.portfolio_manager_reasoning if hasattr(result, 'portfolio_manager_reasoning') else "",
+                workflow_id=result.workflow_id if hasattr(result, 'workflow_id') else None
             )
             
         except Exception as e:
@@ -822,6 +877,7 @@ class AutomatedTradingService:
             direction_value = signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction)
             action = "buy" if direction_value == "long" else "short"
             
+            import uuid as uuid_module
             return AnalysisResult(
                 ticker=signal.ticker,
                 analyst_signals={},
@@ -835,7 +891,8 @@ class AutomatedTradingService:
                     "stop_loss_pct": 5,
                     "take_profit_pct": 10,
                 },
-                reasoning=f"Fallback: {signal.reasoning}"
+                reasoning=f"Fallback: {signal.reasoning}",
+                workflow_id=str(uuid_module.uuid4())  # Generate new ID for fallback
             )
     
     def _calculate_position_size(

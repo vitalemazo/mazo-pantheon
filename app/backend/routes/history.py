@@ -240,40 +240,45 @@ async def get_performance_summary(
 async def get_agent_performance(
     db: Session = Depends(get_db)
 ):
-    """Get performance metrics for all AI agents."""
+    """Get performance metrics for all AI agents from agent_signals table."""
     try:
-        agents = db.query(AgentPerformance).order_by(
-            AgentPerformance.accuracy_rate.desc().nullslast()
-        ).all()
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        
+        # Query aggregated data from agent_signals table
+        query = """
+            SELECT 
+                agent_id,
+                COUNT(*) as total_signals,
+                AVG(confidence) as avg_confidence,
+                COUNT(CASE WHEN signal = 'bullish' THEN 1 END) as bullish_count,
+                COUNT(CASE WHEN signal = 'bearish' THEN 1 END) as bearish_count,
+                COUNT(CASE WHEN signal = 'neutral' OR signal = 'hold' THEN 1 END) as neutral_count,
+                MAX(timestamp) as last_signal
+            FROM agent_signals
+            GROUP BY agent_id
+            ORDER BY total_signals DESC
+        """
+        
+        with engine.connect() as conn:
+            result = conn.execute(text(query))
+            rows = result.fetchall()
+        
+        agents = []
+        for row in rows:
+            agents.append({
+                "name": row[0],
+                "total_signals": row[1],
+                "avg_confidence": round(float(row[2]), 2) if row[2] else None,
+                "bullish_signals": row[3] or 0,
+                "bearish_signals": row[4] or 0,
+                "neutral_signals": row[5] or 0,
+                "last_signal": row[6].isoformat() if row[6] else None,
+            })
         
         return {
             "success": True,
-            "agents": [
-                {
-                    "name": a.agent_name,
-                    "type": a.agent_type,
-                    "total_signals": a.total_signals,
-                    "bullish_signals": a.bullish_signals,
-                    "bearish_signals": a.bearish_signals,
-                    "neutral_signals": a.neutral_signals,
-                    "accuracy_rate": round(a.accuracy_rate, 2) if a.accuracy_rate else None,
-                    "correct_predictions": a.correct_predictions,
-                    "incorrect_predictions": a.incorrect_predictions,
-                    "trades_following": a.trades_following_signal,
-                    "avg_return_when_followed": round(a.avg_return_when_followed, 2) if a.avg_return_when_followed else None,
-                    "total_pnl_when_followed": round(a.total_pnl_when_followed, 2),
-                    "best_call": {
-                        "ticker": a.best_call_ticker,
-                        "return": a.best_call_return,
-                    } if a.best_call_ticker else None,
-                    "worst_call": {
-                        "ticker": a.worst_call_ticker,
-                        "return": a.worst_call_return,
-                    } if a.worst_call_ticker else None,
-                    "last_signal": a.last_signal_date.isoformat() if a.last_signal_date else None,
-                }
-                for a in agents
-            ],
+            "agents": agents,
             "count": len(agents),
         }
         

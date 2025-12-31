@@ -154,7 +154,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'scheduler' || exit 1"]
+      test: ["CMD-SHELL", "ps aux | grep -v grep | grep -q scheduler"]
       interval: 60s
       timeout: 10s
       retries: 3
