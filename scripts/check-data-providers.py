@@ -68,15 +68,23 @@ def test_fmp_connection(verbose: bool = False) -> bool:
             print_status("FMP Connection", False, "API key not configured")
             return False
         
-        # Try to fetch a quote
+        # Try to fetch a quote - returns FMPQuote dataclass or dict
         quote = client.get_quote("AAPL")
-        if quote and quote.get("price"):
-            price = quote.get("price")
-            print_status("FMP Connection", True, f"AAPL price: ${price:.2f}")
-            return True
-        else:
-            print_status("FMP Connection", False, "No data returned")
-            return False
+        if quote:
+            # Handle both dict and dataclass
+            if hasattr(quote, 'price'):
+                price = quote.price
+            elif isinstance(quote, dict):
+                price = quote.get("price")
+            else:
+                price = None
+            
+            if price:
+                print_status("FMP Connection", True, f"AAPL price: ${price:.2f}")
+                return True
+        
+        print_status("FMP Connection", False, "No data returned")
+        return False
             
     except Exception as e:
         print_status("FMP Connection", False, str(e)[:50])
@@ -96,10 +104,14 @@ def test_alpaca_connection(verbose: bool = False) -> bool:
             print_status("Alpaca Connection", False, "API keys not configured")
             return False
         
-        # Try to get account info or a snapshot
-        snapshot = client.get_snapshots(["AAPL"])
-        if snapshot and len(snapshot) > 0:
-            print_status("Alpaca Connection", True, "Connected successfully")
+        # Try to get bars (more reliable than snapshots)
+        from datetime import datetime, timedelta
+        end = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+        
+        df = client.get_bars("AAPL", start, end)
+        if df is not None and not df.empty:
+            print_status("Alpaca Connection", True, f"Got {len(df)} price bars")
             return True
         else:
             print_status("Alpaca Connection", False, "No data returned")
