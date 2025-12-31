@@ -24,7 +24,8 @@ import {
   TrendingUp, 
   TrendingDown,
   ExternalLink,
-  Clock
+  Clock,
+  RefreshCw
 } from 'lucide-react';
 import useSWR from 'swr';
 import { formatDistanceToNow } from 'date-fns';
@@ -50,14 +51,39 @@ interface Trade {
 
 export function TradeJournal() {
   const [searchTicker, setSearchTicker] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false);
   
-  const { data, isLoading, error } = useSWR(
+  const { data, isLoading, error, mutate } = useSWR(
     `${API_BASE_URL}/monitoring/trades?limit=50${searchTicker ? `&ticker=${searchTicker}` : ''}`,
     fetcher,
     { refreshInterval: 30000 }
   );
   
   const trades = data?.trades || [];
+  
+  // Sync trade statuses from Alpaca
+  const syncTrades = async () => {
+    setIsSyncing(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/trading/trades/sync`, {
+        method: 'POST',
+      });
+      const result = await response.json();
+      if (result.success && result.updated > 0) {
+        // Refresh the trade list
+        mutate();
+      }
+    } catch (error) {
+      console.error('Failed to sync trades:', error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+  
+  // Auto-sync on mount
+  React.useEffect(() => {
+    syncTrades();
+  }, []);
   
   return (
     <Card>
@@ -67,14 +93,25 @@ export function TradeJournal() {
             <History className="h-5 w-5" />
             Trade Journal
           </CardTitle>
-          <div className="relative w-48">
-            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search ticker..."
-              value={searchTicker}
-              onChange={(e) => setSearchTicker(e.target.value.toUpperCase())}
-              className="pl-8"
-            />
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={syncTrades}
+              disabled={isSyncing}
+            >
+              <RefreshCw className={`h-4 w-4 mr-1 ${isSyncing ? 'animate-spin' : ''}`} />
+              {isSyncing ? 'Syncing...' : 'Sync'}
+            </Button>
+            <div className="relative w-48">
+              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search ticker..."
+                value={searchTicker}
+                onChange={(e) => setSearchTicker(e.target.value.toUpperCase())}
+                className="pl-8"
+              />
+            </div>
           </div>
         </div>
       </CardHeader>

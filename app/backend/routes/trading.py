@@ -632,3 +632,86 @@ async def set_position_rules(
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+# ==================== Trade Status Sync ====================
+
+import logging
+trade_sync_logger = logging.getLogger(__name__)
+
+
+@router.post("/trades/sync")
+async def sync_trade_statuses():
+    """
+    Sync trade statuses from Alpaca.
+    
+    Updates pending trades in the database with current status from Alpaca.
+    """
+    try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        from src.trading.alpaca_service import get_alpaca_service
+        
+        alpaca = get_alpaca_service()
+        if not alpaca:
+            return {"success": False, "error": "Alpaca service not configured"}
+        
+        # Get pending orders from database
+        with engine.connect() as conn:
+            pending_query = """
+                SELECT order_id, ticker, side, quantity, status
+                FROM trade_executions
+                WHERE status IN ('pending_new', 'new', 'accepted', 'pending_cancel', 'partially_filled')
+                  AND submitted_at > NOW() - INTERVAL '7 days'
+            """
+            result = conn.execute(text(pending_query))
+            pending_trades = result.fetchall()
+        
+        updated = 0
+        errors = []
+        
+        for trade in pending_trades:
+            order_id = trade[0]
+            try:
+                # Get current status from Alpaca
+                order = alpaca.get_order(order_id)
+                
+                if order:
+                    # Update in database
+                    with engine.connect() as conn:
+                        update_query = """
+                            UPDATE trade_executions
+                            SET status = :status,
+                                filled_qty = :filled_qty,
+                                filled_avg_price = :filled_avg_price,
+                                filled_at = :filled_at
+                            WHERE order_id = :order_id
+                        """
+                        conn.execute(text(update_query), {
+                            "order_id": order_id,
+                            "status": order.status,
+                            "filled_qty": order.filled_qty if order.filled_qty else None,
+                            "filled_avg_price": order.filled_avg_price if order.filled_avg_price else None,
+                            "filled_at": order.filled_at if order.filled_at else None,
+                        })
+                        conn.commit()
+                    
+                    if order.status in ('filled', 'canceled', 'expired', 'rejected'):
+                        updated += 1
+                        trade_sync_logger.info(f"Updated trade {order_id}: {order.status}")
+                        
+            except Exception as e:
+                error_msg = f"Failed to sync {order_id}: {str(e)[:100]}"
+                errors.append(error_msg)
+                trade_sync_logger.warning(error_msg)
+        
+        return {
+            "success": True,
+            "pending_trades": len(pending_trades),
+            "updated": updated,
+            "errors": errors[:5] if errors else [],
+        }
+        
+    except Exception as e:
+        trade_sync_logger.error(f"Trade sync failed: {e}")
+        return {"success": False, "error": str(e)}
