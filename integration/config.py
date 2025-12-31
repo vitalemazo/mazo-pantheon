@@ -47,11 +47,11 @@ class IntegrationConfig:
         default_factory=lambda: os.environ.get("DEFAULT_RESEARCH_DEPTH", "standard")
     )
 
-    # Model settings
+    # Model settings - using claude-opus for xcmfai proxy
     default_model: str = field(
         default_factory=lambda: os.environ.get(
             "DEFAULT_MODEL",
-            "claude-sonnet-4-5-20250929"
+            "claude-opus-4-5-20251101"
         )
     )
 
