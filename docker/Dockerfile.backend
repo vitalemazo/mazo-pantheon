@@ -31,7 +31,7 @@ COPY pyproject.toml poetry.lock* /app/
 # Configure Poetry and install dependencies
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --no-root \
-    && pip install apscheduler psycopg2-binary redis
+    && pip install apscheduler psycopg2-binary redis psutil requests
 
 # Copy source code
 COPY src/ /app/src/

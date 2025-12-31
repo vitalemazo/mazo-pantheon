@@ -2,10 +2,11 @@
 Watchlist Management Service
 
 Manages trading watchlists with entry targets, stop-losses, and automatic monitoring.
+Persists data to PostgreSQL/SQLite for durability across restarts.
 """
 
 import logging
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 
@@ -14,6 +15,16 @@ from src.trading.alpaca_service import AlpacaService
 from src.trading.strategy_engine import get_strategy_engine, TradingSignal
 
 logger = logging.getLogger(__name__)
+
+
+def _get_db_session():
+    """Get a database session."""
+    try:
+        from app.backend.database.connection import SessionLocal
+        return SessionLocal()
+    except Exception as e:
+        logger.warning(f"Could not create DB session: {e}")
+        return None
 
 
 @dataclass
@@ -62,22 +73,54 @@ class WatchlistItem:
 
 class WatchlistService:
     """
-    Manages trading watchlists.
+    Manages trading watchlists with database persistence.
     
     Features:
     - Add/remove items from watchlist
     - Set entry targets and conditions
     - Monitor for triggers
     - Auto-analyze with strategies
+    - Persists to PostgreSQL/SQLite for durability
     """
     
-    def __init__(self):
+    def __init__(self, db_session=None):
         self.alpaca = AlpacaService()
         self.strategy_engine = get_strategy_engine()
-        
-        # In-memory watchlist (for now - will move to DB)
-        self._watchlist: List[WatchlistItem] = []
-        self._next_id = 1
+        self._db_session = db_session
+    
+    def _get_session(self):
+        """Get or create a database session."""
+        if self._db_session:
+            return self._db_session
+        return _get_db_session()
+    
+    def _close_session(self, session):
+        """Close session if we created it."""
+        if session and session != self._db_session:
+            session.close()
+    
+    def _db_to_item(self, db_row) -> WatchlistItem:
+        """Convert database row to WatchlistItem."""
+        return WatchlistItem(
+            id=db_row.id,
+            ticker=db_row.ticker,
+            name=db_row.name,
+            sector=db_row.sector,
+            strategy=db_row.strategy,
+            entry_target=db_row.entry_target,
+            entry_condition=db_row.entry_condition or "below",
+            stop_loss=db_row.stop_loss,
+            take_profit=db_row.take_profit,
+            position_size_pct=db_row.position_size_pct or 0.05,
+            status=db_row.status or "watching",
+            priority=db_row.priority or 5,
+            notes=db_row.notes,
+            signals=db_row.signals,
+            created_at=db_row.created_at,
+            expires_at=db_row.expires_at,
+            triggered_at=db_row.triggered_at,
+            triggered_price=db_row.triggered_price,
+        )
     
     def add_item(
         self,
@@ -91,9 +134,9 @@ class WatchlistService:
         priority: int = 5,
         notes: Optional[str] = None,
         expires_in_days: int = 30
-    ) -> WatchlistItem:
+    ) -> Optional[WatchlistItem]:
         """
-        Add an item to the watchlist.
+        Add an item to the watchlist (persisted to database).
         
         Args:
             ticker: Stock ticker
@@ -108,68 +151,96 @@ class WatchlistService:
             expires_in_days: Days until expiration
             
         Returns:
-            Created WatchlistItem
+            Created WatchlistItem or None on failure
         """
-        # Get current price if no entry target
-        if entry_target is None:
-            end = date.today()
-            start = end - timedelta(days=5)
-            prices = get_prices(ticker, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
-            if prices:
-                current_price = prices[-1].close
-                # Default to 2% below current for buying
-                entry_target = current_price * 0.98
+        session = self._get_session()
+        if not session:
+            logger.error("No database session available for watchlist")
+            return None
         
-        # Calculate stop/profit if not provided
-        if entry_target and not stop_loss:
-            stop_loss = entry_target * 0.95  # 5% stop
-        if entry_target and not take_profit:
-            take_profit = entry_target * 1.10  # 10% target
-        
-        # Get strategy signals
-        signals = None
-        if strategy:
-            strat = self.strategy_engine.get_strategy(strategy)
-            if strat:
-                signal = strat.analyze(ticker)
-                if signal:
-                    signals = signal.to_dict()
-        
-        item = WatchlistItem(
-            id=self._next_id,
-            ticker=ticker.upper(),
-            name=None,  # Could fetch from API
-            sector=None,  # Could fetch from API
-            strategy=strategy,
-            entry_target=entry_target,
-            entry_condition=entry_condition,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            position_size_pct=position_size_pct,
-            status="watching",
-            priority=priority,
-            notes=notes,
-            signals=signals,
-            created_at=datetime.now(),
-            expires_at=datetime.now() + timedelta(days=expires_in_days),
-            triggered_at=None,
-            triggered_price=None,
-        )
-        
-        self._watchlist.append(item)
-        self._next_id += 1
-        
-        logger.info(f"Added {ticker} to watchlist with target ${entry_target:.2f}")
-        return item
+        try:
+            from app.backend.database.models import Watchlist
+            
+            # Get current price if no entry target
+            if entry_target is None:
+                end = date.today()
+                start = end - timedelta(days=5)
+                prices = get_prices(ticker, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+                if prices:
+                    current_price = prices[-1].close
+                    # Default to 2% below current for buying
+                    entry_target = current_price * 0.98
+            
+            # Calculate stop/profit if not provided
+            if entry_target and not stop_loss:
+                stop_loss = entry_target * 0.95  # 5% stop
+            if entry_target and not take_profit:
+                take_profit = entry_target * 1.10  # 10% target
+            
+            # Get strategy signals
+            signals = None
+            if strategy:
+                strat = self.strategy_engine.get_strategy(strategy)
+                if strat:
+                    signal = strat.analyze(ticker)
+                    if signal:
+                        signals = signal.to_dict()
+            
+            # Create database record
+            db_item = Watchlist(
+                ticker=ticker.upper(),
+                name=None,
+                sector=None,
+                strategy=strategy,
+                entry_target=entry_target,
+                entry_condition=entry_condition,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                position_size_pct=position_size_pct,
+                status="watching",
+                priority=priority,
+                notes=notes,
+                signals=signals,
+                expires_at=datetime.now(timezone.utc) + timedelta(days=expires_in_days),
+            )
+            
+            session.add(db_item)
+            session.commit()
+            session.refresh(db_item)
+            
+            item = self._db_to_item(db_item)
+            logger.info(f"Added {ticker} to watchlist with target ${entry_target:.2f if entry_target else 0:.2f}")
+            return item
+            
+        except Exception as e:
+            logger.error(f"Failed to add watchlist item: {e}")
+            session.rollback()
+            return None
+        finally:
+            self._close_session(session)
     
     def remove_item(self, item_id: int) -> bool:
-        """Remove an item from the watchlist."""
-        for i, item in enumerate(self._watchlist):
-            if item.id == item_id:
-                del self._watchlist[i]
+        """Remove an item from the watchlist (deletes from database)."""
+        session = self._get_session()
+        if not session:
+            return False
+        
+        try:
+            from app.backend.database.models import Watchlist
+            
+            db_item = session.query(Watchlist).filter_by(id=item_id).first()
+            if db_item:
+                session.delete(db_item)
+                session.commit()
                 logger.info(f"Removed item {item_id} from watchlist")
                 return True
-        return False
+            return False
+        except Exception as e:
+            logger.error(f"Failed to remove watchlist item: {e}")
+            session.rollback()
+            return False
+        finally:
+            self._close_session(session)
     
     def update_item(
         self,
@@ -181,23 +252,40 @@ class WatchlistService:
         notes: Optional[str] = None,
         status: Optional[str] = None
     ) -> Optional[WatchlistItem]:
-        """Update a watchlist item."""
-        for item in self._watchlist:
-            if item.id == item_id:
-                if entry_target is not None:
-                    item.entry_target = entry_target
-                if stop_loss is not None:
-                    item.stop_loss = stop_loss
-                if take_profit is not None:
-                    item.take_profit = take_profit
-                if priority is not None:
-                    item.priority = priority
-                if notes is not None:
-                    item.notes = notes
-                if status is not None:
-                    item.status = status
-                return item
-        return None
+        """Update a watchlist item (persisted to database)."""
+        session = self._get_session()
+        if not session:
+            return None
+        
+        try:
+            from app.backend.database.models import Watchlist
+            
+            db_item = session.query(Watchlist).filter_by(id=item_id).first()
+            if not db_item:
+                return None
+            
+            if entry_target is not None:
+                db_item.entry_target = entry_target
+            if stop_loss is not None:
+                db_item.stop_loss = stop_loss
+            if take_profit is not None:
+                db_item.take_profit = take_profit
+            if priority is not None:
+                db_item.priority = priority
+            if notes is not None:
+                db_item.notes = notes
+            if status is not None:
+                db_item.status = status
+            
+            session.commit()
+            session.refresh(db_item)
+            return self._db_to_item(db_item)
+        except Exception as e:
+            logger.error(f"Failed to update watchlist item: {e}")
+            session.rollback()
+            return None
+        finally:
+            self._close_session(session)
     
     def get_watchlist(
         self,
@@ -205,93 +293,134 @@ class WatchlistService:
         sort_by: str = "priority"
     ) -> List[WatchlistItem]:
         """
-        Get the watchlist, optionally filtered and sorted.
+        Get the watchlist from database, optionally filtered and sorted.
         
         Args:
             status: Filter by status ("watching", "triggered", etc.)
             sort_by: Sort field ("priority", "created_at", "ticker")
         """
-        items = self._watchlist
+        session = self._get_session()
+        if not session:
+            return []
         
-        if status:
-            items = [i for i in items if i.status == status]
-        
-        # Sort
-        if sort_by == "priority":
-            items.sort(key=lambda x: x.priority, reverse=True)
-        elif sort_by == "created_at":
-            items.sort(key=lambda x: x.created_at or datetime.min, reverse=True)
-        elif sort_by == "ticker":
-            items.sort(key=lambda x: x.ticker)
-        
-        return items
+        try:
+            from app.backend.database.models import Watchlist
+            
+            query = session.query(Watchlist)
+            
+            if status:
+                query = query.filter(Watchlist.status == status)
+            
+            # Sort
+            if sort_by == "priority":
+                query = query.order_by(Watchlist.priority.desc())
+            elif sort_by == "created_at":
+                query = query.order_by(Watchlist.created_at.desc())
+            elif sort_by == "ticker":
+                query = query.order_by(Watchlist.ticker)
+            
+            items = [self._db_to_item(row) for row in query.all()]
+            return items
+        except Exception as e:
+            logger.error(f"Failed to get watchlist: {e}")
+            return []
+        finally:
+            self._close_session(session)
     
     def get_item(self, item_id: int) -> Optional[WatchlistItem]:
-        """Get a specific watchlist item."""
-        for item in self._watchlist:
-            if item.id == item_id:
-                return item
-        return None
+        """Get a specific watchlist item from database."""
+        session = self._get_session()
+        if not session:
+            return None
+        
+        try:
+            from app.backend.database.models import Watchlist
+            
+            db_item = session.query(Watchlist).filter_by(id=item_id).first()
+            if db_item:
+                return self._db_to_item(db_item)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get watchlist item: {e}")
+            return None
+        finally:
+            self._close_session(session)
     
     def check_triggers(self) -> List[WatchlistItem]:
         """
         Check all watching items for triggered conditions.
-        
-        Returns list of newly triggered items.
+        Updates database and returns list of newly triggered items.
         """
+        session = self._get_session()
+        if not session:
+            return []
+        
         triggered = []
         
-        for item in self._watchlist:
-            if item.status != "watching":
-                continue
+        try:
+            from app.backend.database.models import Watchlist
             
-            # Check expiration
-            if item.expires_at and datetime.now() > item.expires_at:
-                item.status = "expired"
-                continue
+            # Get all watching items
+            watching_items = session.query(Watchlist).filter(
+                Watchlist.status == "watching"
+            ).all()
             
-            try:
-                # Get current price
-                end = date.today()
-                start = end - timedelta(days=5)
-                prices = get_prices(item.ticker, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
-                if not prices:
+            for db_item in watching_items:
+                # Check expiration
+                if db_item.expires_at and datetime.now(timezone.utc) > db_item.expires_at:
+                    db_item.status = "expired"
                     continue
                 
-                current_price = prices[-1].close
-                
-                # Check trigger condition
-                is_triggered = False
-                
-                if item.entry_condition == "below" and item.entry_target:
-                    if current_price <= item.entry_target:
-                        is_triggered = True
-                        
-                elif item.entry_condition == "above" and item.entry_target:
-                    if current_price >= item.entry_target:
-                        is_triggered = True
-                        
-                elif item.entry_condition == "breakout":
-                    # Check for 20-day high breakout
-                    start_20 = end - timedelta(days=30)
-                    prices_20 = get_prices(item.ticker, start_20.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
-                    if prices_20:
-                        prices_20 = prices_20[-20:]  # Get last 20
-                        high_20 = max(p.high for p in prices_20[:-1])
-                        if current_price > high_20:
-                            is_triggered = True
-                
-                if is_triggered:
-                    item.status = "triggered"
-                    item.triggered_at = datetime.now()
-                    item.triggered_price = current_price
-                    triggered.append(item)
-                    logger.info(f"Watchlist trigger: {item.ticker} at ${current_price:.2f}")
+                try:
+                    # Get current price
+                    end = date.today()
+                    start = end - timedelta(days=5)
+                    prices = get_prices(db_item.ticker, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+                    if not prices:
+                        continue
                     
-            except Exception as e:
-                logger.error(f"Error checking {item.ticker}: {e}")
-        
-        return triggered
+                    current_price = prices[-1].close
+                    
+                    # Check trigger condition
+                    is_triggered = False
+                    
+                    if db_item.entry_condition == "below" and db_item.entry_target:
+                        if current_price <= db_item.entry_target:
+                            is_triggered = True
+                            
+                    elif db_item.entry_condition == "above" and db_item.entry_target:
+                        if current_price >= db_item.entry_target:
+                            is_triggered = True
+                            
+                    elif db_item.entry_condition == "breakout":
+                        # Check for 20-day high breakout
+                        start_20 = end - timedelta(days=30)
+                        prices_20 = get_prices(db_item.ticker, start_20.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+                        if prices_20:
+                            prices_20 = prices_20[-20:]  # Get last 20
+                            high_20 = max(p.high for p in prices_20[:-1])
+                            if current_price > high_20:
+                                is_triggered = True
+                    
+                    if is_triggered:
+                        db_item.status = "triggered"
+                        db_item.triggered_at = datetime.now(timezone.utc)
+                        db_item.triggered_price = current_price
+                        triggered.append(self._db_to_item(db_item))
+                        logger.info(f"Watchlist trigger: {db_item.ticker} at ${current_price:.2f}")
+                        
+                except Exception as e:
+                    logger.error(f"Error checking {db_item.ticker}: {e}")
+            
+            session.commit()
+            return triggered
+            
+        except Exception as e:
+            logger.error(f"Failed to check triggers: {e}")
+            session.rollback()
+            return []
+        finally:
+            self._close_session(session)
     
     def analyze_watchlist(self) -> List[Dict[str, Any]]:
         """
@@ -299,12 +428,10 @@ class WatchlistService:
         
         Returns analysis results for each item.
         """
+        items = self.get_watchlist(status="watching")
         results = []
         
-        for item in self._watchlist:
-            if item.status != "watching":
-                continue
-            
+        for item in items:
             try:
                 signals = self.strategy_engine.analyze_ticker(item.ticker)
                 
@@ -352,31 +479,62 @@ class WatchlistService:
         )
     
     def get_summary(self) -> Dict[str, Any]:
-        """Get watchlist summary statistics."""
-        watching = [i for i in self._watchlist if i.status == "watching"]
-        triggered = [i for i in self._watchlist if i.status == "triggered"]
-        expired = [i for i in self._watchlist if i.status == "expired"]
+        """Get watchlist summary statistics from database."""
+        session = self._get_session()
+        if not session:
+            return {"total_items": 0, "watching": 0, "triggered": 0, "expired": 0}
         
-        return {
-            "total_items": len(self._watchlist),
-            "watching": len(watching),
-            "triggered": len(triggered),
-            "expired": len(expired),
-            "high_priority": len([i for i in watching if i.priority >= 8]),
-            "expiring_soon": len([
-                i for i in watching 
-                if i.expires_at and (i.expires_at - datetime.now()).days <= 3
-            ]),
-        }
+        try:
+            from app.backend.database.models import Watchlist
+            from sqlalchemy import func
+            
+            # Count by status
+            total = session.query(func.count(Watchlist.id)).scalar() or 0
+            watching = session.query(func.count(Watchlist.id)).filter(
+                Watchlist.status == "watching"
+            ).scalar() or 0
+            triggered = session.query(func.count(Watchlist.id)).filter(
+                Watchlist.status == "triggered"
+            ).scalar() or 0
+            expired = session.query(func.count(Watchlist.id)).filter(
+                Watchlist.status == "expired"
+            ).scalar() or 0
+            
+            # High priority watching
+            high_priority = session.query(func.count(Watchlist.id)).filter(
+                Watchlist.status == "watching",
+                Watchlist.priority >= 8
+            ).scalar() or 0
+            
+            # Expiring soon (within 3 days)
+            soon = datetime.now(timezone.utc) + timedelta(days=3)
+            expiring_soon = session.query(func.count(Watchlist.id)).filter(
+                Watchlist.status == "watching",
+                Watchlist.expires_at <= soon
+            ).scalar() or 0
+            
+            return {
+                "total_items": total,
+                "watching": watching,
+                "triggered": triggered,
+                "expired": expired,
+                "high_priority": high_priority,
+                "expiring_soon": expiring_soon,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get watchlist summary: {e}")
+            return {"total_items": 0, "watching": 0, "triggered": 0, "expired": 0}
+        finally:
+            self._close_session(session)
 
 
 # Global service instance
 _watchlist_service: Optional[WatchlistService] = None
 
 
-def get_watchlist_service() -> WatchlistService:
-    """Get the global watchlist service instance."""
+def get_watchlist_service(db_session=None) -> WatchlistService:
+    """Get the global watchlist service instance with optional DB session."""
     global _watchlist_service
-    if _watchlist_service is None:
-        _watchlist_service = WatchlistService()
+    if _watchlist_service is None or db_session is not None:
+        _watchlist_service = WatchlistService(db_session)
     return _watchlist_service

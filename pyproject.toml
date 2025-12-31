@@ -38,6 +38,9 @@ langchain-gigachat = "^0.3.12"
 langchain-xai = "^0.2.5"
 # Market data providers (free alternatives)
 yfinance = "^0.2.40"
+# Note: Additional runtime dependencies (requests, redis, apscheduler, psutil, psycopg2-binary)
+# are installed via pip in Docker (see Dockerfile.backend) to avoid poetry lock conflicts.
+# They are transitive dependencies or installed separately.
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"

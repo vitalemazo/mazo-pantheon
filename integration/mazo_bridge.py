@@ -125,7 +125,12 @@ class MazoBridge:
 
         Since Mazo is an interactive CLI, we create a script that
         sends the query and exits.
+        
+        Uses unique temp files (UUID-based) to avoid race conditions
+        when multiple queries run concurrently.
         """
+        import uuid
+        
         # Create a temporary script to run the query
         query_script = f"""
 import {{ research }} from './src/agents/research.ts';
@@ -144,8 +149,9 @@ async function main() {{
 
 main();
 """
-        # Write temporary script
-        script_path = Path(self.mazo_path) / "temp_query.ts"
+        # Write temporary script with unique filename to avoid race conditions
+        unique_id = uuid.uuid4().hex[:12]
+        script_path = Path(self.mazo_path) / f"temp_query_{unique_id}.ts"
         try:
             with open(script_path, "w") as f:
                 f.write(query_script)
@@ -164,7 +170,10 @@ main();
         finally:
             # Clean up temp script
             if script_path.exists():
-                script_path.unlink()
+                try:
+                    script_path.unlink()
+                except OSError:
+                    pass  # Ignore if file was already deleted
 
     def research(self, query: str) -> MazoResponse:
         """

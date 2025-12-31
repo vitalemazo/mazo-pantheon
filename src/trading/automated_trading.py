@@ -24,6 +24,7 @@ from src.trading.config import get_signal_config, get_capital_config, get_scanne
 from src.graph.portfolio_context import build_portfolio_context, PortfolioContext
 from integration.mazo_bridge import MazoBridge
 from integration.unified_workflow import UnifiedWorkflow, execute_trades
+from src.trading.trade_history_service import TradeHistoryService, TradeRecord, get_trade_history_service
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ class ValidationResult:
     mazo_confidence: str  # high, medium, low
     key_points: List[str]
     recommendation: str
+    mazo_response: str = None  # Full Mazo response for trade history
 
 
 @dataclass
@@ -111,6 +113,16 @@ class AutomatedTradingService:
         self.alpaca = AlpacaService()
         self.performance_tracker = get_performance_tracker()
         self.mazo = MazoBridge()
+        
+        # Initialize trade history service with DB session
+        try:
+            from app.backend.database.connection import SessionLocal
+            self._db_session = SessionLocal()
+            self.trade_history = get_trade_history_service(self._db_session)
+        except Exception as e:
+            logger.warning(f"Could not initialize TradeHistoryService: {e}")
+            self._db_session = None
+            self.trade_history = None
         
         # Track state
         self.is_running = False
@@ -233,7 +245,10 @@ class AutomatedTradingService:
                                     signal.ticker,
                                     analysis.pm_decision,
                                     portfolio_context,
-                                    workflow_id=analysis.workflow_id
+                                    workflow_id=analysis.workflow_id,
+                                    signal=signal,
+                                    validation=validation,
+                                    analysis=analysis,
                                 )
                                 
                                 if trade_result.get("success"):
@@ -696,7 +711,8 @@ class AutomatedTradingService:
                     mazo_sentiment=mazo_sentiment,
                     mazo_confidence=mazo_confidence,
                     key_points=key_points,
-                    recommendation=research.answer[:200] + "..." if len(research.answer) > 200 else research.answer
+                    recommendation=research.answer[:200] + "..." if len(research.answer) > 200 else research.answer,
+                    mazo_response=research.answer,
                 )
                 
                 # Only proceed if Mazo agrees or is neutral with high confidence
@@ -920,9 +936,12 @@ class AutomatedTradingService:
         ticker: str,
         pm_decision: Dict[str, Any],
         portfolio: PortfolioContext,
-        workflow_id: str = None
+        workflow_id: str = None,
+        signal: 'TradingSignal' = None,
+        validation: 'ValidationResult' = None,
+        analysis: 'AnalysisResult' = None,
     ) -> Dict[str, Any]:
-        """Execute trade via Alpaca directly and log to monitoring system."""
+        """Execute trade via Alpaca directly and log to monitoring system and trade history."""
         try:
             from src.trading.alpaca_service import OrderSide, OrderType, TimeInForce
             from src.monitoring import get_event_logger
@@ -961,6 +980,7 @@ class AutomatedTradingService:
             if result and result.success:
                 order = result.order
                 order_id = order.id if order else f"manual_{ticker}_{submitted_at.timestamp()}"
+                filled_price = float(order.filled_avg_price) if order and order.filled_avg_price else None
                 
                 # Log successful trade execution to monitoring
                 try:
@@ -974,11 +994,74 @@ class AutomatedTradingService:
                         submitted_at=submitted_at,
                         filled_at=datetime.now() if order and order.filled_avg_price else None,
                         filled_qty=float(order.filled_qty) if order and order.filled_qty else None,
-                        filled_avg_price=float(order.filled_avg_price) if order and order.filled_avg_price else None,
+                        filled_avg_price=filled_price,
                     )
                     logger.info(f"✓ Trade logged to monitoring: {ticker} {action} {quantity}")
                 except Exception as log_err:
                     logger.warning(f"Failed to log trade execution: {log_err}")
+                
+                # Record trade with full context to TradeHistory
+                try:
+                    if self.trade_history:
+                        # Build agent signals dict from analysis
+                        agent_signals = {}
+                        if analysis and hasattr(analysis, 'analyst_signals'):
+                            agent_signals = analysis.analyst_signals or {}
+                        
+                        # Get consensus info
+                        bullish_count = 0
+                        bearish_count = 0
+                        neutral_count = 0
+                        for agent_name, sig_data in agent_signals.items():
+                            if isinstance(sig_data, dict):
+                                sig = sig_data.get("signal", "").lower()
+                                if "bullish" in sig or "buy" in sig:
+                                    bullish_count += 1
+                                elif "bearish" in sig or "sell" in sig:
+                                    bearish_count += 1
+                                else:
+                                    neutral_count += 1
+                        
+                        # Create trade record with full context
+                        trade_record = TradeRecord(
+                            ticker=ticker,
+                            action=action,
+                            quantity=quantity,
+                            entry_price=filled_price,
+                            order_id=order_id,
+                            trigger_source="automated",
+                            workflow_mode="autonomous_trading",
+                            strategy_name=signal.strategy if signal else None,
+                            strategy_signal=signal.direction.value if signal and hasattr(signal.direction, 'value') else str(signal.direction) if signal else None,
+                            strategy_confidence=signal.confidence if signal else None,
+                            strategy_reasoning=signal.reasoning if signal else None,
+                            mazo_sentiment=validation.mazo_sentiment if validation else None,
+                            mazo_confidence=validation.mazo_confidence if validation else None,
+                            mazo_response=validation.mazo_response if validation else None,
+                            agent_signals=agent_signals,
+                            consensus_direction="bullish" if bullish_count > bearish_count else "bearish" if bearish_count > bullish_count else "neutral",
+                            consensus_confidence=pm_decision.get("confidence"),
+                            bullish_count=bullish_count,
+                            bearish_count=bearish_count,
+                            neutral_count=neutral_count,
+                            portfolio_equity=portfolio.equity if portfolio else None,
+                            portfolio_cash=portfolio.cash if portfolio else None,
+                            existing_positions=[{"ticker": p.ticker, "qty": p.quantity} for p in (portfolio.positions or [])] if portfolio else None,
+                            pm_action=action,
+                            pm_quantity=quantity,
+                            pm_confidence=pm_decision.get("confidence"),
+                            pm_reasoning=pm_decision.get("reasoning"),
+                            pm_stop_loss_pct=pm_decision.get("stop_loss_pct"),
+                            pm_take_profit_pct=pm_decision.get("take_profit_pct"),
+                            stop_loss_price=pm_decision.get("stop_loss_price"),
+                            take_profit_price=pm_decision.get("take_profit_price"),
+                        )
+                        
+                        trade_id = self.trade_history.record_trade(trade_record)
+                        if trade_id > 0:
+                            logger.info(f"✓ Trade recorded to TradeHistory: ID {trade_id}")
+                except Exception as hist_err:
+                    logger.warning(f"Failed to record trade to TradeHistory: {hist_err}")
                 
                 return {
                     "success": True,
