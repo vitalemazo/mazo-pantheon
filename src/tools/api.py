@@ -238,14 +238,14 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
     """Fetch price data from cache or API.
     
     Routes through data sources based on PRIMARY_DATA_SOURCE:
-    - fmp: FMP Ultimate first, then fallback
-    - alpaca: Alpaca Market Data first, then fallback  
-    - financial_datasets: Financial Datasets API (default)
+    - fmp: FMP → Alpaca → Financial Datasets
+    - alpaca: Alpaca → FMP → Financial Datasets
+    - financial_datasets: Financial Datasets API only
     """
     primary_source = os.environ.get("PRIMARY_DATA_SOURCE", "fmp")
     
-    # Try FMP first when selected as primary
-    if primary_source == "fmp":
+    # Helper to fetch from FMP
+    def try_fmp() -> list[Price] | None:
         try:
             from src.tools.fmp_data import get_fmp_data_client
             client = get_fmp_data_client()
@@ -267,10 +267,11 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
                         logger.info(f"Got {len(prices)} prices for {ticker} from FMP")
                         return prices
         except Exception as e:
-            logger.warning(f"FMP prices failed for {ticker}, falling back: {e}")
+            logger.warning(f"FMP prices failed for {ticker}: {e}")
+        return None
     
-    # Try Alpaca when selected as primary
-    if primary_source == "alpaca":
+    # Helper to fetch from Alpaca
+    def try_alpaca() -> list[Price] | None:
         try:
             from src.tools.alpaca_data import get_alpaca_data_client
             client = get_alpaca_data_client()
@@ -292,7 +293,30 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
                         logger.info(f"Got {len(prices)} prices for {ticker} from Alpaca")
                         return prices
         except Exception as e:
-            logger.warning(f"Alpaca prices failed for {ticker}, falling back: {e}")
+            logger.warning(f"Alpaca prices failed for {ticker}: {e}")
+        return None
+    
+    # Route based on primary data source
+    if primary_source == "fmp":
+        # FMP → Alpaca → Financial Datasets
+        result = try_fmp()
+        if result:
+            return result
+        logger.info(f"FMP failed for {ticker}, trying Alpaca fallback...")
+        result = try_alpaca()
+        if result:
+            return result
+        logger.info(f"Alpaca fallback failed for {ticker}, trying Financial Datasets...")
+    elif primary_source == "alpaca":
+        # Alpaca → FMP → Financial Datasets
+        result = try_alpaca()
+        if result:
+            return result
+        logger.info(f"Alpaca failed for {ticker}, trying FMP fallback...")
+        result = try_fmp()
+        if result:
+            return result
+        logger.info(f"FMP fallback failed for {ticker}, trying Financial Datasets...")
     
     # Fall back to Financial Datasets API
     # Create a cache key that includes all parameters to ensure exact matches
@@ -564,16 +588,16 @@ def get_company_news(
     api_key: str = None,
 ) -> list[CompanyNews]:
     """Fetch company news from cache or API.
-    
+
     Routes through data sources based on PRIMARY_DATA_SOURCE:
-    - fmp: FMP Ultimate first (comprehensive news)
-    - alpaca: Alpaca Market Data first
-    - Others: Financial Datasets API
+    - fmp: FMP → Alpaca → Financial Datasets
+    - alpaca: Alpaca → FMP → Financial Datasets
+    - Others: Financial Datasets API only
     """
     primary_source = os.environ.get("PRIMARY_DATA_SOURCE", "fmp")
-    
-    # Try FMP first when selected as primary
-    if primary_source == "fmp":
+
+    # Helper to fetch from FMP
+    def try_fmp() -> list[CompanyNews] | None:
         try:
             from src.tools.fmp_data import get_fmp_data_client
             client = get_fmp_data_client()
@@ -594,10 +618,11 @@ def get_company_news(
                         logger.info(f"Got {len(news_list)} news articles for {ticker} from FMP")
                         return news_list
         except Exception as e:
-            logger.warning(f"FMP news failed for {ticker}, falling back: {e}")
-    
-    # Try Alpaca when selected as primary
-    if primary_source == "alpaca":
+            logger.warning(f"FMP news failed for {ticker}: {e}")
+        return None
+
+    # Helper to fetch from Alpaca
+    def try_alpaca() -> list[CompanyNews] | None:
         try:
             from src.tools.alpaca_data import get_alpaca_data_client
             client = get_alpaca_data_client()
@@ -623,7 +648,30 @@ def get_company_news(
                         logger.info(f"Got {len(news_list)} news articles for {ticker} from Alpaca")
                         return news_list
         except Exception as e:
-            logger.warning(f"Alpaca news failed for {ticker}, falling back: {e}")
+            logger.warning(f"Alpaca news failed for {ticker}: {e}")
+        return None
+
+    # Route based on primary data source
+    if primary_source == "fmp":
+        # FMP → Alpaca → Financial Datasets
+        result = try_fmp()
+        if result:
+            return result
+        logger.info(f"FMP news failed for {ticker}, trying Alpaca fallback...")
+        result = try_alpaca()
+        if result:
+            return result
+        logger.info(f"Alpaca news fallback failed for {ticker}, trying Financial Datasets...")
+    elif primary_source == "alpaca":
+        # Alpaca → FMP → Financial Datasets
+        result = try_alpaca()
+        if result:
+            return result
+        logger.info(f"Alpaca news failed for {ticker}, trying FMP fallback...")
+        result = try_fmp()
+        if result:
+            return result
+        logger.info(f"FMP news fallback failed for {ticker}, trying Financial Datasets...")
     
     # Fall back to Financial Datasets API
     # Create a cache key that includes all parameters to ensure exact matches

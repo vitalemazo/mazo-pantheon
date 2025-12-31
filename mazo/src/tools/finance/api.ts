@@ -290,49 +290,110 @@ export async function callApi(
 
 /**
  * Map Financial Datasets API endpoints to FMP equivalents.
- * Returns null if no mapping exists.
+ * Returns null if no mapping exists (will fall back to Financial Datasets).
+ * 
+ * FMP API Docs: https://financialmodelingprep.com/developer/docs
  */
 function mapEndpointToFmp(endpoint: string): string | null {
+  // ==========================================================================
   // Price endpoints
+  // ==========================================================================
+  if (endpoint.startsWith('/prices/snapshot/')) {
+    return '/quote';
+  }
   if (endpoint.startsWith('/prices/')) {
     return '/historical-price-eod/full';
   }
-  if (endpoint.includes('/snapshot')) {
-    return '/quote';
-  }
   
-  // Financial metrics
-  if (endpoint.startsWith('/financial-metrics/')) {
+  // ==========================================================================
+  // Financial metrics & ratios
+  // ==========================================================================
+  if (endpoint.startsWith('/financial-metrics/snapshot/')) {
     return '/key-metrics-ttm';
   }
+  if (endpoint.startsWith('/financial-metrics/')) {
+    return '/key-metrics';
+  }
   
+  // ==========================================================================
   // Company profile
+  // ==========================================================================
   if (endpoint.startsWith('/company/')) {
     return '/profile';
   }
   
+  // ==========================================================================
   // News
+  // ==========================================================================
   if (endpoint.startsWith('/news/')) {
-    return '/news/stock';
+    return '/stock-news';
   }
   
+  // ==========================================================================
   // Insider trades
+  // ==========================================================================
   if (endpoint.startsWith('/insider-trades/')) {
-    return '/insider-trading/search';
+    return '/insider-trading';
   }
   
-  // Financial statements
-  if (endpoint.includes('/income-statement')) {
+  // ==========================================================================
+  // Financial statements (multiple path formats)
+  // ==========================================================================
+  if (endpoint.includes('/income-statements/') || endpoint.includes('/income-statement')) {
     return '/income-statement';
   }
-  if (endpoint.includes('/balance-sheet')) {
+  if (endpoint.includes('/balance-sheets/') || endpoint.includes('/balance-sheet')) {
     return '/balance-sheet-statement';
   }
-  if (endpoint.includes('/cash-flow')) {
+  if (endpoint.includes('/cash-flow-statements/') || endpoint.includes('/cash-flow')) {
     return '/cash-flow-statement';
   }
+  // General financials endpoint
+  if (endpoint === '/financials/' || endpoint.startsWith('/financials/?')) {
+    return '/financial-statement-full-as-reported';
+  }
   
+  // ==========================================================================
+  // SEC Filings
+  // ==========================================================================
+  if (endpoint.startsWith('/filings/items/')) {
+    // Line items map to financial statements - caller should use specific statement endpoints
+    return '/income-statement';  // Default to income statement for line items
+  }
+  if (endpoint.startsWith('/filings/')) {
+    return '/sec_filings';
+  }
+  
+  // ==========================================================================
+  // Analyst estimates & earnings
+  // ==========================================================================
+  if (endpoint.startsWith('/analyst-estimates/')) {
+    return '/analyst-estimates';
+  }
+  
+  // ==========================================================================
+  // Segment revenues
+  // ==========================================================================
+  if (endpoint.startsWith('/financials/segmented-revenues/')) {
+    return '/revenue-product-segmentation';
+  }
+  
+  // ==========================================================================
+  // Crypto prices
+  // ==========================================================================
+  if (endpoint.startsWith('/crypto/prices/snapshot/')) {
+    return '/quote';  // FMP uses same quote endpoint for crypto with symbol like BTCUSD
+  }
+  if (endpoint.startsWith('/crypto/prices/tickers/')) {
+    return '/symbol/available-cryptocurrencies';
+  }
+  if (endpoint.startsWith('/crypto/prices/')) {
+    return '/historical-price-eod/full';  // Same endpoint, different symbol format
+  }
+  
+  // ==========================================================================
   // No direct mapping - return null to fall back
+  // ==========================================================================
   return null;
 }
 

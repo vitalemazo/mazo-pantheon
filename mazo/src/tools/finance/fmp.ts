@@ -257,7 +257,7 @@ export async function getFmpNews(ticker: string, limit: number = 10): Promise<{
       text: item.text,
       image: item.image,
       symbol: item.symbol,
-      _source: 'FMP (fallback)',
+      _source: 'FMP',
     }));
 
     return {
@@ -309,7 +309,7 @@ export async function getFmpIncomeStatements(
 
     const statements = data.map((item: Record<string, unknown>) => ({
       ...item,
-      _source: 'FMP (fallback)',
+      _source: 'FMP',
     }));
 
     return {
@@ -318,6 +318,399 @@ export async function getFmpIncomeStatements(
     };
   } catch (error) {
     console.error('FMP income statement error:', error);
+    return null;
+  }
+}
+
+/**
+ * Fetch balance sheet statements from FMP.
+ */
+export async function getFmpBalanceSheets(
+  ticker: string,
+  period: 'annual' | 'quarter' = 'annual',
+  limit: number = 5
+): Promise<{
+  statements: Record<string, unknown>[];
+  source: string;
+} | null> {
+  const apiKey = getFmpApiKey();
+  if (!apiKey) {
+    console.log('FMP API key not configured');
+    return null;
+  }
+
+  try {
+    const url = `${FMP_BASE_URL}/balance-sheet-statement?symbol=${ticker}&period=${period}&limit=${limit}&apikey=${apiKey}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; MazoAgent/1.0)',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`FMP balance sheet failed: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (!data || !Array.isArray(data)) {
+      return null;
+    }
+
+    const statements = data.map((item: Record<string, unknown>) => ({
+      ...item,
+      _source: 'FMP',
+    }));
+
+    return {
+      statements,
+      source: 'FMP',
+    };
+  } catch (error) {
+    console.error('FMP balance sheet error:', error);
+    return null;
+  }
+}
+
+/**
+ * Fetch cash flow statements from FMP.
+ */
+export async function getFmpCashFlowStatements(
+  ticker: string,
+  period: 'annual' | 'quarter' = 'annual',
+  limit: number = 5
+): Promise<{
+  statements: Record<string, unknown>[];
+  source: string;
+} | null> {
+  const apiKey = getFmpApiKey();
+  if (!apiKey) {
+    console.log('FMP API key not configured');
+    return null;
+  }
+
+  try {
+    const url = `${FMP_BASE_URL}/cash-flow-statement?symbol=${ticker}&period=${period}&limit=${limit}&apikey=${apiKey}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; MazoAgent/1.0)',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`FMP cash flow failed: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (!data || !Array.isArray(data)) {
+      return null;
+    }
+
+    const statements = data.map((item: Record<string, unknown>) => ({
+      ...item,
+      _source: 'FMP',
+    }));
+
+    return {
+      statements,
+      source: 'FMP',
+    };
+  } catch (error) {
+    console.error('FMP cash flow error:', error);
+    return null;
+  }
+}
+
+/**
+ * Fetch SEC filings from FMP.
+ */
+export async function getFmpSecFilings(
+  ticker: string,
+  type?: string,
+  limit: number = 20
+): Promise<{
+  filings: Record<string, unknown>[];
+  source: string;
+} | null> {
+  const apiKey = getFmpApiKey();
+  if (!apiKey) {
+    console.log('FMP API key not configured');
+    return null;
+  }
+
+  try {
+    let url = `${FMP_BASE_URL}/sec_filings?symbol=${ticker}&limit=${limit}&apikey=${apiKey}`;
+    if (type) {
+      url += `&type=${type}`;
+    }
+    
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; MazoAgent/1.0)',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`FMP SEC filings failed: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (!data || !Array.isArray(data)) {
+      return null;
+    }
+
+    const filings = data.map((item: Record<string, unknown>) => ({
+      type: item.type,
+      filing_date: item.fillingDate,
+      accepted_date: item.acceptedDate,
+      cik: item.cik,
+      link: item.link,
+      final_link: item.finalLink,
+      _source: 'FMP',
+    }));
+
+    return {
+      filings,
+      source: 'FMP',
+    };
+  } catch (error) {
+    console.error('FMP SEC filings error:', error);
+    return null;
+  }
+}
+
+/**
+ * Fetch analyst estimates from FMP.
+ */
+export async function getFmpAnalystEstimates(
+  ticker: string,
+  period: 'annual' | 'quarter' = 'annual',
+  limit: number = 10
+): Promise<{
+  estimates: Record<string, unknown>[];
+  source: string;
+} | null> {
+  const apiKey = getFmpApiKey();
+  if (!apiKey) {
+    console.log('FMP API key not configured');
+    return null;
+  }
+
+  try {
+    const url = `${FMP_BASE_URL}/analyst-estimates?symbol=${ticker}&period=${period}&limit=${limit}&apikey=${apiKey}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; MazoAgent/1.0)',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`FMP analyst estimates failed: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (!data || !Array.isArray(data)) {
+      return null;
+    }
+
+    const estimates = data.map((item: Record<string, unknown>) => ({
+      symbol: item.symbol,
+      date: item.date,
+      estimated_revenue_low: item.estimatedRevenueLow,
+      estimated_revenue_high: item.estimatedRevenueHigh,
+      estimated_revenue_avg: item.estimatedRevenueAvg,
+      estimated_ebitda_low: item.estimatedEbitdaLow,
+      estimated_ebitda_high: item.estimatedEbitdaHigh,
+      estimated_ebitda_avg: item.estimatedEbitdaAvg,
+      estimated_ebit_low: item.estimatedEbitLow,
+      estimated_ebit_high: item.estimatedEbitHigh,
+      estimated_ebit_avg: item.estimatedEbitAvg,
+      estimated_net_income_low: item.estimatedNetIncomeLow,
+      estimated_net_income_high: item.estimatedNetIncomeHigh,
+      estimated_net_income_avg: item.estimatedNetIncomeAvg,
+      estimated_eps_low: item.estimatedEpsLow,
+      estimated_eps_high: item.estimatedEpsHigh,
+      estimated_eps_avg: item.estimatedEpsAvg,
+      number_analyst_estimated_revenue: item.numberAnalystEstimatedRevenue,
+      number_analysts_estimated_eps: item.numberAnalystsEstimatedEps,
+      _source: 'FMP',
+    }));
+
+    return {
+      estimates,
+      source: 'FMP',
+    };
+  } catch (error) {
+    console.error('FMP analyst estimates error:', error);
+    return null;
+  }
+}
+
+/**
+ * Fetch revenue by product/segment from FMP.
+ */
+export async function getFmpRevenueSegmentation(
+  ticker: string,
+  period: 'annual' | 'quarter' = 'annual'
+): Promise<{
+  segments: Record<string, unknown>[];
+  source: string;
+} | null> {
+  const apiKey = getFmpApiKey();
+  if (!apiKey) {
+    console.log('FMP API key not configured');
+    return null;
+  }
+
+  try {
+    const url = `${FMP_BASE_URL}/revenue-product-segmentation?symbol=${ticker}&period=${period}&apikey=${apiKey}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; MazoAgent/1.0)',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`FMP revenue segmentation failed: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (!data || !Array.isArray(data)) {
+      return null;
+    }
+
+    const segments = data.map((item: Record<string, unknown>) => ({
+      ...item,
+      _source: 'FMP',
+    }));
+
+    return {
+      segments,
+      source: 'FMP',
+    };
+  } catch (error) {
+    console.error('FMP revenue segmentation error:', error);
+    return null;
+  }
+}
+
+/**
+ * Fetch insider trading data from FMP.
+ */
+export async function getFmpInsiderTrading(
+  ticker: string,
+  limit: number = 20
+): Promise<{
+  trades: Record<string, unknown>[];
+  source: string;
+} | null> {
+  const apiKey = getFmpApiKey();
+  if (!apiKey) {
+    console.log('FMP API key not configured');
+    return null;
+  }
+
+  try {
+    const url = `${FMP_BASE_URL}/insider-trading?symbol=${ticker}&limit=${limit}&apikey=${apiKey}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; MazoAgent/1.0)',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`FMP insider trading failed: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (!data || !Array.isArray(data)) {
+      return null;
+    }
+
+    const trades = data.map((item: Record<string, unknown>) => ({
+      symbol: item.symbol,
+      filing_date: item.filingDate,
+      transaction_date: item.transactionDate,
+      reporting_name: item.reportingName,
+      transaction_type: item.transactionType,
+      securities_owned: item.securitiesOwned,
+      securities_transacted: item.securitiesTransacted,
+      security_name: item.securityName,
+      price: item.price,
+      form_type: item.formType,
+      link: item.link,
+      _source: 'FMP',
+    }));
+
+    return {
+      trades,
+      source: 'FMP',
+    };
+  } catch (error) {
+    console.error('FMP insider trading error:', error);
+    return null;
+  }
+}
+
+/**
+ * Fetch key metrics (TTM) from FMP.
+ */
+export async function getFmpKeyMetricsTTM(ticker: string): Promise<{
+  metrics: Record<string, unknown>;
+  source: string;
+} | null> {
+  const apiKey = getFmpApiKey();
+  if (!apiKey) {
+    console.log('FMP API key not configured');
+    return null;
+  }
+
+  try {
+    const url = `${FMP_BASE_URL}/key-metrics-ttm?symbol=${ticker}&apikey=${apiKey}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; MazoAgent/1.0)',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`FMP key metrics TTM failed: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (!data || !Array.isArray(data) || data.length === 0) {
+      return null;
+    }
+
+    return {
+      metrics: {
+        ...data[0],
+        _source: 'FMP',
+      },
+      source: 'FMP',
+    };
+  } catch (error) {
+    console.error('FMP key metrics TTM error:', error);
     return null;
   }
 }
