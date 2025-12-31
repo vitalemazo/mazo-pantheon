@@ -79,9 +79,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       ALPACA_PAPER: "true"
       MAZO_PATH: /app/mazo
-      # Data source configuration (FMP is default primary)
-      PRIMARY_DATA_SOURCE: ${PRIMARY_DATA_SOURCE:-fmp}
-      FMP_API_KEY: ${FMP_API_KEY:-}
+      # Note: FMP_API_KEY and PRIMARY_DATA_SOURCE are loaded from env_file (.env)
+      # Do NOT override them here as it would clobber the .env values
     volumes:
       - ../.env:/app/.env:rw
       - backend_data:/app/data
@@ -141,10 +140,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       ALPACA_PAPER: "true"
       MAZO_PATH: /app/mazo
-      # Data source configuration (FMP is default primary)
-      PRIMARY_DATA_SOURCE: ${PRIMARY_DATA_SOURCE:-fmp}
-      FMP_API_KEY: ${FMP_API_KEY:-}
-      # Scheduler config
+      # Note: FMP_API_KEY and PRIMARY_DATA_SOURCE are loaded from env_file (.env)
+      # Scheduler config (these can use defaults safely)
       AUTO_TRADING_ENABLED: ${AUTO_TRADING_ENABLED:-true}
       TRADING_INTERVAL_MINUTES: ${TRADING_INTERVAL_MINUTES:-30}
       MAX_BUDGET_PERCENT: ${MAX_BUDGET_PERCENT:-25}
