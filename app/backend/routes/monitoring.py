@@ -781,3 +781,195 @@ async def get_trade_detail(order_id: str):
     except Exception as e:
         logger.error(f"Failed to get trade detail: {e}")
         return {"error": str(e), "order_id": order_id}
+
+
+# =============================================================================
+# LIVE ACTIVITY FEED
+# =============================================================================
+
+@router.get("/activity/live")
+async def get_live_activity(limit: int = Query(50, ge=1, le=200)):
+    """
+    Get recent activity events for the Live Activity feed.
+    
+    Returns a unified stream of:
+    - Workflow events (cycle starts/stops)
+    - Agent signals
+    - PM decisions
+    - Trade executions
+    """
+    try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        
+        activities = []
+        
+        # Get recent workflow events
+        workflow_query = """
+            SELECT 
+                'workflow' as type,
+                timestamp,
+                workflow_type,
+                step_name,
+                status,
+                ticker,
+                duration_ms
+            FROM workflow_events
+            WHERE timestamp > NOW() - INTERVAL '1 hour'
+            ORDER BY timestamp DESC
+            LIMIT :limit
+        """
+        
+        # Get recent agent signals
+        signals_query = """
+            SELECT 
+                'agent_signal' as type,
+                timestamp,
+                agent_id,
+                ticker,
+                signal,
+                confidence,
+                reasoning
+            FROM agent_signals
+            WHERE timestamp > NOW() - INTERVAL '1 hour'
+            ORDER BY timestamp DESC
+            LIMIT :limit
+        """
+        
+        # Get recent PM decisions
+        pm_query = """
+            SELECT 
+                'pm_decision' as type,
+                timestamp,
+                ticker,
+                action,
+                confidence,
+                reasoning_raw
+            FROM pm_decisions
+            WHERE timestamp > NOW() - INTERVAL '1 hour'
+            ORDER BY timestamp DESC
+            LIMIT :limit
+        """
+        
+        # Get recent trade executions
+        trades_query = """
+            SELECT 
+                'trade' as type,
+                timestamp,
+                ticker,
+                side,
+                quantity,
+                status,
+                filled_avg_price
+            FROM trade_executions
+            WHERE timestamp > NOW() - INTERVAL '1 hour'
+            ORDER BY timestamp DESC
+            LIMIT :limit
+        """
+        
+        with engine.connect() as conn:
+            # Fetch workflow events
+            try:
+                result = conn.execute(text(workflow_query), {"limit": limit})
+                for row in result.fetchall():
+                    activities.append({
+                        "id": f"wf_{row[1].isoformat() if row[1] else 'unknown'}",
+                        "type": "workflow",
+                        "timestamp": row[1].isoformat() if row[1] else None,
+                        "message": f"{row[2]}: {row[3]} - {row[4]}",
+                        "ticker": row[5],
+                        "status": "complete" if row[4] == "completed" else "running" if row[4] == "started" else "error",
+                        "details": {"workflow_type": row[2], "step": row[3], "duration_ms": row[6]},
+                    })
+            except Exception as e:
+                logger.debug(f"No workflow events table: {e}")
+            
+            # Fetch agent signals
+            try:
+                result = conn.execute(text(signals_query), {"limit": limit})
+                for row in result.fetchall():
+                    activities.append({
+                        "id": f"sig_{row[1].isoformat() if row[1] else 'unknown'}_{row[2]}",
+                        "type": "analyze",
+                        "timestamp": row[1].isoformat() if row[1] else None,
+                        "message": f"{row[2]}: {row[4]} ({row[5]:.0f}% confidence)" if row[5] else f"{row[2]}: {row[4]}",
+                        "ticker": row[3],
+                        "status": "complete",
+                        "details": {"agent": row[2], "signal": row[4], "confidence": row[5], "reasoning": row[6][:200] if row[6] else None},
+                    })
+            except Exception as e:
+                logger.debug(f"No agent signals table: {e}")
+            
+            # Fetch PM decisions
+            try:
+                result = conn.execute(text(pm_query), {"limit": limit})
+                for row in result.fetchall():
+                    activities.append({
+                        "id": f"pm_{row[1].isoformat() if row[1] else 'unknown'}_{row[2]}",
+                        "type": "decision",
+                        "timestamp": row[1].isoformat() if row[1] else None,
+                        "message": f"PM: {row[3]} {row[2]}",
+                        "ticker": row[2],
+                        "status": "complete",
+                        "details": {"action": row[3], "confidence": row[4], "reasoning": row[5][:200] if row[5] else None},
+                    })
+            except Exception as e:
+                logger.debug(f"No PM decisions table: {e}")
+            
+            # Fetch trade executions
+            try:
+                result = conn.execute(text(trades_query), {"limit": limit})
+                for row in result.fetchall():
+                    price_str = f" @ ${row[6]:.2f}" if row[6] else ""
+                    activities.append({
+                        "id": f"trade_{row[1].isoformat() if row[1] else 'unknown'}_{row[2]}",
+                        "type": "execute",
+                        "timestamp": row[1].isoformat() if row[1] else None,
+                        "message": f"{row[3].upper()} {row[4]} {row[2]}{price_str}",
+                        "ticker": row[2],
+                        "status": "complete" if row[5] == "filled" else "running" if row[5] == "new" else "error",
+                        "details": {"side": row[3], "quantity": row[4], "status": row[5], "price": row[6]},
+                    })
+            except Exception as e:
+                logger.debug(f"No trade executions table: {e}")
+        
+        # Sort all activities by timestamp
+        activities.sort(key=lambda x: x["timestamp"] or "", reverse=True)
+        
+        return {
+            "activities": activities[:limit],
+            "total": len(activities),
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get live activity: {e}")
+        
+        # Fallback to in-memory events from EventLogger
+        try:
+            from src.monitoring.event_logger import get_event_logger
+            event_logger = get_event_logger()
+            in_memory = event_logger.get_in_memory_events()
+            
+            activities = []
+            for event in in_memory[-limit:]:
+                data = event.get("data", {})
+                activities.append({
+                    "id": str(data.get("id", "unknown")),
+                    "type": event.get("table", "unknown"),
+                    "timestamp": data.get("timestamp", datetime.now(timezone.utc)).isoformat() if isinstance(data.get("timestamp"), datetime) else str(data.get("timestamp", "")),
+                    "message": str(data.get("step_name", data.get("action", data.get("ticker", "Event"))))[:100],
+                    "ticker": data.get("ticker"),
+                    "status": data.get("status", "complete"),
+                    "details": data,
+                })
+            
+            activities.reverse()  # Most recent first
+            
+            return {
+                "activities": activities,
+                "total": len(activities),
+                "source": "in_memory",
+            }
+        except Exception as e2:
+            logger.error(f"Fallback also failed: {e2}")
+            return {"activities": [], "total": 0, "error": str(e)}

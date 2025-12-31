@@ -201,6 +201,46 @@ export function AutonomousTradingHub() {
     }
   }, [scheduler?.is_running, setAutonomousEnabled]);
 
+  // Fetch live activity from backend
+  const fetchLiveActivity = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/monitoring/activity/live?limit=20`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.activities && data.activities.length > 0) {
+          // Add new activities that aren't already in the store
+          const existingIds = new Set(activities.map((a: AIActivity) => a.id));
+          for (const activity of data.activities) {
+            if (!existingIds.has(activity.id)) {
+              addAIActivity({
+                type: activity.type as AIActivity['type'],
+                message: activity.message,
+                ticker: activity.ticker,
+                status: activity.status as AIActivity['status'],
+                details: activity.details,
+              });
+            }
+          }
+        }
+      }
+    } catch (error) {
+      // Silently fail - activity feed is non-critical
+      console.debug('Failed to fetch live activity:', error);
+    }
+  }, [activities, addAIActivity]);
+
+  // Poll for live activity when autonomous mode is enabled or cycle is running
+  useEffect(() => {
+    // Fetch immediately on mount
+    fetchLiveActivity();
+    
+    // Poll every 5 seconds when autonomous mode is enabled
+    if (isAutonomousEnabled || isStarting) {
+      const interval = setInterval(fetchLiveActivity, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [isAutonomousEnabled, isStarting, fetchLiveActivity]);
+
   // Helper to add activity using store action
   const addActivity = useCallback((activity: Omit<AIActivity, 'id' | 'timestamp'>) => {
     addAIActivity(activity);
