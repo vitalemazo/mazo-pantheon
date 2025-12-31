@@ -832,7 +832,7 @@ async def _emit_heartbeat(scheduler_id: str, hostname: str, jobs_pending: int):
         
     except Exception as e:
         # Don't let heartbeat errors crash the scheduler
-        logger.debug(f"Heartbeat logging failed: {e}")
+        logger.warning(f"Heartbeat logging failed: {e}")
 
 
 async def _run_pre_market_health_check():

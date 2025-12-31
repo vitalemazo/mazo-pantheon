@@ -20,7 +20,7 @@ from typing import Dict, Optional, Any
 from dataclasses import dataclass, field
 
 from .event_logger import get_event_logger
-from .alerting import get_alert_manager
+from .alerting import get_alert_manager, AlertPriority, AlertCategory
 
 logger = logging.getLogger(__name__)
 
@@ -186,8 +186,8 @@ class RateLimitMonitor:
             
             # Always alert on rate limit hit
             self.alert_manager.create_alert(
-                priority=self.alert_manager.alert_manager.AlertPriority.P1,
-                category=self.alert_manager.alert_manager.AlertCategory.RATE_LIMIT,
+                priority=AlertPriority.P1,
+                category=AlertCategory.RATE_LIMIT,
                 title=f"{api_name} rate limit hit (429)",
                 details={
                     "api": api_name,

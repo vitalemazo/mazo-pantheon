@@ -644,7 +644,7 @@ class AutomatedTradingService:
                         latency_ms=mazo_latency_ms,
                     )
                 except Exception as log_err:
-                    logger.debug(f"Failed to log Mazo research: {log_err}")
+                    logger.warning(f"Failed to log Mazo research: {log_err}")
 
                 if not research or not research.answer:
                     # Mazo returned nothing - allow through if high confidence
@@ -1017,7 +1017,10 @@ class AutomatedTradingService:
     
     def get_status(self) -> Dict[str, Any]:
         """Get current service status."""
+        import os
+        auto_enabled = os.getenv("AUTO_TRADING_ENABLED", "false").lower() == "true"
         return {
+            "auto_trading_enabled": auto_enabled,
             "is_running": self.is_running,
             "last_run": self.last_run.isoformat() if self.last_run else None,
             "total_runs": len(self.run_history),

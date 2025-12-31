@@ -132,6 +132,7 @@ class EventLogger:
                     
             except Exception as e:
                 logger.error(f"Failed to store event in {table_name}: {e}")
+                logger.error(f"Event data keys: {list(event_data.keys())}")
                 session.rollback()
             finally:
                 session.close()

@@ -213,8 +213,10 @@ class DiversificationScanner:
         Returns StockCandidate if it passes, None otherwise.
         """
         try:
-            # Get current price
-            prices = get_prices(ticker, limit=5)
+            # Get current price - use last 5 trading days
+            end_date = datetime.now().strftime("%Y-%m-%d")
+            start_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            prices = get_prices(ticker, start_date=start_date, end_date=end_date)
             if not prices:
                 return None
                 

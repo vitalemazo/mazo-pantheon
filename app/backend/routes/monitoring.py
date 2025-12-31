@@ -240,17 +240,47 @@ async def get_system_status():
         cache = get_cache()
         cache_stats = cache.get_stats()
         
-        # Scheduler status (basic)
+        # Scheduler status - check heartbeat recency
         scheduler_status = {
             "status": "unknown",
             "message": "Check logs for scheduler status",
         }
+        try:
+            from sqlalchemy import text
+            from app.backend.database.connection import engine
+            from datetime import datetime, timezone, timedelta
+            
+            with engine.connect() as conn:
+                result = conn.execute(text(
+                    "SELECT MAX(timestamp) FROM scheduler_heartbeats"
+                ))
+                row = result.fetchone()
+                if row and row[0]:
+                    last_heartbeat = row[0]
+                    age = datetime.now(timezone.utc) - last_heartbeat
+                    if age < timedelta(minutes=10):
+                        scheduler_status = {"status": "healthy", "last_heartbeat": last_heartbeat.isoformat()}
+                    else:
+                        scheduler_status = {"status": "stale", "last_heartbeat": last_heartbeat.isoformat()}
+                else:
+                    scheduler_status = {"status": "no_heartbeats", "message": "No heartbeats recorded"}
+        except Exception as sched_err:
+            logger.debug(f"Failed to check scheduler: {sched_err}")
         
-        # Database status (basic)
+        # Database status - simple ping
         db_status = {
             "status": "unknown",
             "message": "Run health check for full status",
         }
+        try:
+            from sqlalchemy import text
+            from app.backend.database.connection import engine
+            
+            with engine.connect() as conn:
+                result = conn.execute(text("SELECT 1"))
+                db_status = {"status": "healthy", "latency_ms": 1}
+        except Exception as db_err:
+            db_status = {"status": "error", "message": str(db_err)}
         
         return SystemStatusResponse(
             scheduler=scheduler_status,

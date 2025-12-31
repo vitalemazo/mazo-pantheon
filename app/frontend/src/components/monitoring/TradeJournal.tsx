@@ -33,15 +33,19 @@ import { API_BASE_URL } from '@/lib/api-config';
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
 interface Trade {
+  id: string;
   order_id: string;
-  timestamp: string;
   ticker: string;
   side: string;
+  order_type: string;
   quantity: number;
-  filled_avg_price: number;
+  filled_qty: number | null;
+  filled_avg_price: number | null;
   status: string;
-  slippage_bps: number;
-  fill_latency_ms: number;
+  submitted_at: string;
+  filled_at: string | null;
+  reject_reason: string | null;
+  slippage_bps: number | null;
 }
 
 export function TradeJournal() {
@@ -107,11 +111,11 @@ export function TradeJournal() {
               </TableHeader>
               <TableBody>
                 {trades.map((trade: Trade) => (
-                  <TableRow key={trade.order_id}>
+                  <TableRow key={trade.id || trade.order_id}>
                     <TableCell className="text-sm text-muted-foreground">
                       <div className="flex items-center gap-1">
                         <Clock className="h-3 w-3" />
-                        {formatDistanceToNow(new Date(trade.timestamp), { addSuffix: true })}
+                        {formatDistanceToNow(new Date(trade.submitted_at), { addSuffix: true })}
                       </div>
                     </TableCell>
                     <TableCell className="font-medium">
