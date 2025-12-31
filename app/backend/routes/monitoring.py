@@ -424,21 +424,147 @@ async def get_recent_workflows(
     status: Optional[str] = Query(None, description="Filter by status"),
 ):
     """Get recent workflow executions."""
-    # TODO: Implement when database is populated
-    return {
-        "message": "Workflow history will be available once monitoring data is collected",
-        "workflows": []
-    }
+    try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        
+        query = """
+            SELECT 
+                workflow_id::text as id,
+                workflow_type,
+                step_name,
+                status,
+                started_at,
+                completed_at,
+                duration_ms,
+                tickers,
+                mode
+            FROM workflow_events
+            ORDER BY started_at DESC
+            LIMIT :limit
+        """
+        
+        with engine.connect() as conn:
+            result = conn.execute(text(query), {"limit": limit})
+            rows = result.fetchall()
+        
+        if not rows:
+            return {"workflows": [], "message": "No workflows recorded yet"}
+        
+        workflows = []
+        for row in rows:
+            workflows.append({
+                "id": row[0],
+                "workflow_type": row[1],
+                "step_name": row[2],
+                "status": row[3],
+                "started_at": row[4].isoformat() if row[4] else None,
+                "completed_at": row[5].isoformat() if row[5] else None,
+                "duration_ms": row[6],
+                "tickers": row[7],
+                "mode": row[8],
+            })
+        
+        return {"workflows": workflows, "total": len(workflows)}
+        
+    except Exception as e:
+        logger.error(f"Failed to get workflows: {e}")
+        return {"workflows": [], "error": str(e)}
 
 
 @router.get("/workflows/{workflow_id}")
 async def get_workflow_detail(workflow_id: str):
     """Get detailed workflow execution with all steps."""
-    # TODO: Implement when database is populated
-    return {
-        "message": "Workflow detail will be available once monitoring data is collected",
-        "workflow_id": workflow_id,
-    }
+    try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        
+        # Get workflow events
+        workflow_query = """
+            SELECT 
+                workflow_id::text, workflow_type, step_name, status,
+                started_at, completed_at, duration_ms, tickers, mode, error_message
+            FROM workflow_events
+            WHERE workflow_id::text = :workflow_id
+            ORDER BY started_at
+        """
+        
+        # Get agent signals for this workflow
+        signals_query = """
+            SELECT 
+                agent_id, ticker, signal, confidence, reasoning
+            FROM agent_signals
+            WHERE workflow_id::text = :workflow_id
+            ORDER BY agent_id
+        """
+        
+        # Get PM decisions for this workflow
+        pm_query = """
+            SELECT 
+                ticker, decision, confidence, reasoning, agents_received
+            FROM pm_decisions
+            WHERE workflow_id::text = :workflow_id
+        """
+        
+        with engine.connect() as conn:
+            workflow_result = conn.execute(text(workflow_query), {"workflow_id": workflow_id})
+            workflow_rows = workflow_result.fetchall()
+            
+            signals_result = conn.execute(text(signals_query), {"workflow_id": workflow_id})
+            signal_rows = signals_result.fetchall()
+            
+            pm_result = conn.execute(text(pm_query), {"workflow_id": workflow_id})
+            pm_rows = pm_result.fetchall()
+        
+        if not workflow_rows:
+            return {"error": "Workflow not found", "workflow_id": workflow_id}
+        
+        # Build response
+        events = []
+        for row in workflow_rows:
+            events.append({
+                "step_name": row[2],
+                "status": row[3],
+                "started_at": row[4].isoformat() if row[4] else None,
+                "completed_at": row[5].isoformat() if row[5] else None,
+                "duration_ms": row[6],
+                "error_message": row[9],
+            })
+        
+        signals = []
+        for row in signal_rows:
+            signals.append({
+                "agent_id": row[0],
+                "ticker": row[1],
+                "signal": row[2],
+                "confidence": float(row[3]) if row[3] else None,
+                "reasoning": row[4][:200] if row[4] else None,  # Truncate for display
+            })
+        
+        decisions = []
+        for row in pm_rows:
+            decisions.append({
+                "ticker": row[0],
+                "decision": row[1],
+                "confidence": float(row[2]) if row[2] else None,
+                "reasoning": row[3][:200] if row[3] else None,
+                "agents_received": row[4],
+            })
+        
+        first_row = workflow_rows[0]
+        return {
+            "workflow_id": workflow_id,
+            "workflow_type": first_row[1],
+            "tickers": first_row[7],
+            "mode": first_row[8],
+            "events": events,
+            "agent_signals": signals,
+            "pm_decisions": decisions,
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get workflow detail: {e}")
+        return {"error": str(e), "workflow_id": workflow_id}
 
 
 # =============================================================================
@@ -452,11 +578,69 @@ async def get_trade_journal(
     status: Optional[str] = Query(None),
 ):
     """Get trade journal with execution details."""
-    # TODO: Implement when database is populated
-    return {
-        "message": "Trade journal will be available once monitoring data is collected",
-        "trades": []
-    }
+    try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        
+        query = """
+            SELECT 
+                id,
+                order_id,
+                ticker,
+                side,
+                order_type,
+                quantity,
+                filled_qty,
+                filled_avg_price,
+                status,
+                submitted_at,
+                filled_at,
+                reject_reason,
+                slippage_bps
+            FROM trade_executions
+            WHERE 1=1
+        """
+        params = {"limit": limit}
+        
+        if ticker:
+            query += " AND ticker = :ticker"
+            params["ticker"] = ticker
+        if status:
+            query += " AND status = :status"
+            params["status"] = status
+        
+        query += " ORDER BY submitted_at DESC LIMIT :limit"
+        
+        with engine.connect() as conn:
+            result = conn.execute(text(query), params)
+            rows = result.fetchall()
+        
+        if not rows:
+            return {"trades": [], "message": "No trades recorded yet"}
+        
+        trades = []
+        for row in rows:
+            trades.append({
+                "id": row[0],
+                "order_id": row[1],
+                "ticker": row[2],
+                "side": row[3],
+                "order_type": row[4],
+                "quantity": float(row[5]) if row[5] else 0,
+                "filled_qty": float(row[6]) if row[6] else None,
+                "filled_avg_price": float(row[7]) if row[7] else None,
+                "status": row[8],
+                "submitted_at": row[9].isoformat() if row[9] else None,
+                "filled_at": row[10].isoformat() if row[10] else None,
+                "reject_reason": row[11],
+                "slippage_bps": float(row[12]) if row[12] else None,
+            })
+        
+        return {"trades": trades, "total": len(trades)}
+        
+    except Exception as e:
+        logger.error(f"Failed to get trades: {e}")
+        return {"trades": [], "error": str(e)}
 
 
 @router.get("/trades/{order_id}")
