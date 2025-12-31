@@ -235,7 +235,40 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
 
 
 def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None) -> list[Price]:
-    """Fetch price data from cache or API."""
+    """Fetch price data from cache or API.
+    
+    If PRIMARY_DATA_SOURCE=alpaca, tries Alpaca first before falling back
+    to Financial Datasets API.
+    """
+    # Check if we should use Alpaca as primary source
+    primary_source = os.environ.get("PRIMARY_DATA_SOURCE", "financial_datasets")
+    
+    if primary_source == "alpaca":
+        try:
+            from src.tools.alpaca_data import get_alpaca_data_client
+            client = get_alpaca_data_client()
+            if client.is_configured():
+                df = client.get_bars(ticker, start_date, end_date)
+                if df is not None and not df.empty:
+                    # Convert DataFrame to Price objects
+                    prices = []
+                    for _, row in df.iterrows():
+                        prices.append(Price(
+                            ticker=ticker,
+                            time=row["time"].isoformat() if hasattr(row["time"], "isoformat") else str(row["time"]),
+                            open=float(row["open"]),
+                            high=float(row["high"]),
+                            low=float(row["low"]),
+                            close=float(row["close"]),
+                            volume=int(row["volume"]),
+                        ))
+                    if prices:
+                        logger.info(f"Got {len(prices)} prices for {ticker} from Alpaca")
+                        return prices
+        except Exception as e:
+            logger.warning(f"Alpaca prices failed for {ticker}, falling back: {e}")
+    
+    # Fall back to Financial Datasets API
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{start_date}_{end_date}"
     
@@ -423,7 +456,44 @@ def get_company_news(
     limit: int = 1000,
     api_key: str = None,
 ) -> list[CompanyNews]:
-    """Fetch company news from cache or API."""
+    """Fetch company news from cache or API.
+    
+    If PRIMARY_DATA_SOURCE=alpaca, tries Alpaca first before falling back
+    to Financial Datasets API.
+    """
+    # Check if we should use Alpaca as primary source
+    primary_source = os.environ.get("PRIMARY_DATA_SOURCE", "financial_datasets")
+    
+    if primary_source == "alpaca":
+        try:
+            from src.tools.alpaca_data import get_alpaca_data_client
+            client = get_alpaca_data_client()
+            if client.is_configured():
+                alpaca_news = client.get_news(
+                    symbols=[ticker],
+                    start_date=start_date,
+                    end_date=end_date,
+                    limit=min(limit, 50),  # Alpaca max is 50
+                )
+                if alpaca_news:
+                    # Convert to CompanyNews objects
+                    news_list = []
+                    for article in alpaca_news:
+                        news_list.append(CompanyNews(
+                            ticker=ticker,
+                            title=article.headline,
+                            description=article.summary,
+                            source=article.source,
+                            url=article.url,
+                            date=article.created_at.isoformat() if article.created_at else None,
+                        ))
+                    if news_list:
+                        logger.info(f"Got {len(news_list)} news articles for {ticker} from Alpaca")
+                        return news_list
+        except Exception as e:
+            logger.warning(f"Alpaca news failed for {ticker}, falling back: {e}")
+    
+    # Fall back to Financial Datasets API
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
     

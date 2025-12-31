@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 class DataSource(Enum):
     """Available data sources"""
+    ALPACA_DATA = "alpaca"  # Alpaca Market Data API (prices & news only)
     FINANCIAL_DATASETS = "financial_datasets"
     YFINANCE = "yfinance"
     POLYGON = "polygon"
@@ -56,6 +57,15 @@ class DataSourceConfig:
 
 # Data source configurations
 DATA_SOURCES = {
+    DataSource.ALPACA_DATA: DataSourceConfig(
+        name="Alpaca Market Data",
+        source=DataSource.ALPACA_DATA,
+        api_key_env="ALPACA_API_KEY",
+        rate_limit_per_minute=200,
+        rate_limit_per_day=None,
+        requires_key=True,
+        priority=0,  # Highest priority when selected as primary
+    ),
     DataSource.FINANCIAL_DATASETS: DataSourceConfig(
         name="Financial Datasets",
         source=DataSource.FINANCIAL_DATASETS,
@@ -174,7 +184,11 @@ class MultiSourceDataProvider:
     
     def _get_sources_for_data_type(self, data_type: str) -> List[DataSource]:
         """Get ordered list of sources that support a given data type."""
+        # Check primary data source preference
+        primary_source = os.environ.get("PRIMARY_DATA_SOURCE", "financial_datasets")
+        
         # Define which sources support which data types
+        # Note: ALPACA_DATA only supports prices and news, NOT fundamentals
         source_capabilities = {
             "prices": [
                 DataSource.YFINANCE,
@@ -182,13 +196,16 @@ class MultiSourceDataProvider:
                 DataSource.POLYGON,
                 DataSource.FMP,
                 DataSource.ALPHA_VANTAGE,
+                DataSource.ALPACA_DATA,  # Added
             ],
             "financials": [
+                # Alpaca does NOT provide fundamentals
                 DataSource.YFINANCE,
                 DataSource.FINANCIAL_DATASETS,
                 DataSource.FMP,
             ],
             "metrics": [
+                # Alpaca does NOT provide metrics
                 DataSource.YFINANCE,
                 DataSource.FINANCIAL_DATASETS,
                 DataSource.FMP,
@@ -197,8 +214,10 @@ class MultiSourceDataProvider:
                 DataSource.FINNHUB,
                 DataSource.FINANCIAL_DATASETS,
                 DataSource.FMP,
+                DataSource.ALPACA_DATA,  # Added
             ],
             "insider_trades": [
+                # Alpaca does NOT provide insider trades
                 DataSource.FINANCIAL_DATASETS,
                 DataSource.FMP,
             ],
@@ -211,7 +230,15 @@ class MultiSourceDataProvider:
         }
         
         available_for_type = source_capabilities.get(data_type, [])
-        return [s for s in available_for_type if self._is_source_available(s)]
+        available = [s for s in available_for_type if self._is_source_available(s)]
+        
+        # If PRIMARY_DATA_SOURCE is set to alpaca, move it to front for supported types
+        if primary_source == "alpaca" and data_type in ["prices", "news"]:
+            if DataSource.ALPACA_DATA in available:
+                available.remove(DataSource.ALPACA_DATA)
+                available.insert(0, DataSource.ALPACA_DATA)
+        
+        return available
 
     # ========================================================================
     # PRICE DATA
@@ -235,7 +262,9 @@ class MultiSourceDataProvider:
             try:
                 logger.debug(f"Trying {source.value} for {ticker} prices")
                 
-                if source == DataSource.YFINANCE:
+                if source == DataSource.ALPACA_DATA:
+                    df = self._get_prices_alpaca(ticker, start_date, end_date)
+                elif source == DataSource.YFINANCE:
                     df = self._get_prices_yfinance(ticker, start_date, end_date)
                 elif source == DataSource.FINANCIAL_DATASETS:
                     df = self._get_prices_financial_datasets(ticker, start_date, end_date)
@@ -258,6 +287,22 @@ class MultiSourceDataProvider:
         
         logger.error(f"All sources failed for {ticker} prices")
         return pd.DataFrame(), DataSource.YFINANCE
+    
+    def _get_prices_alpaca(
+        self, ticker: str, start_date: str, end_date: str
+    ) -> pd.DataFrame:
+        """Get prices from Alpaca Market Data API."""
+        try:
+            from src.tools.alpaca_data import get_alpaca_data_client
+        except ImportError:
+            logger.warning("alpaca_data module not available")
+            return pd.DataFrame()
+        
+        client = get_alpaca_data_client()
+        if not client.is_configured():
+            return pd.DataFrame()
+        
+        return client.get_bars(ticker, start_date, end_date)
     
     def _get_prices_yfinance(
         self, ticker: str, start_date: str, end_date: str
@@ -556,7 +601,9 @@ class MultiSourceDataProvider:
         
         for source in sources:
             try:
-                if source == DataSource.FINNHUB:
+                if source == DataSource.ALPACA_DATA:
+                    news = self._get_news_alpaca(ticker, limit)
+                elif source == DataSource.FINNHUB:
                     news = self._get_news_finnhub(ticker, limit)
                 elif source == DataSource.FINANCIAL_DATASETS:
                     news = self._get_news_financial_datasets(ticker, limit)
@@ -574,6 +621,20 @@ class MultiSourceDataProvider:
                 self._mark_source_failed(source)
         
         return [], DataSource.FINNHUB
+    
+    def _get_news_alpaca(self, ticker: str, limit: int) -> List[Dict]:
+        """Get news from Alpaca Market Data API."""
+        try:
+            from src.tools.alpaca_data import get_alpaca_data_client
+        except ImportError:
+            logger.warning("alpaca_data module not available")
+            return []
+        
+        client = get_alpaca_data_client()
+        if not client.is_configured():
+            return []
+        
+        return client.get_news_for_ticker(ticker, limit=limit)
     
     def _get_news_finnhub(self, ticker: str, limit: int) -> List[Dict]:
         """Get news from Finnhub (60 calls/min free)."""

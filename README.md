@@ -287,6 +287,18 @@ Configure everything via the web UI - no file editing needed.
 - **Trading Integration** - Alpaca API keys and mode (paper/live)
 - **Mazo Research** - Path, timeout, default depth
 - **Data Source Fallbacks** - Yahoo Finance, FMP as backups
+- **Primary Data Source** - Select which API to use first for market data
+
+### Data Sources
+
+| Source | Prices | News | Fundamentals | API Key Required |
+|--------|:------:|:----:|:------------:|:----------------:|
+| **Alpaca Market Data** | ✅ | ✅ | ❌ | Yes (trading keys) |
+| **Financial Datasets** | ✅ | ✅ | ✅ | Yes |
+| **Yahoo Finance** | ✅ | ✅ | ✅ | No |
+| **FMP** | ✅ | ✅ | ✅ | Yes |
+
+> **Note:** When using Alpaca as primary, fundamentals (P/E ratios, financial statements, etc.) automatically fall back to Yahoo Finance or FMP. Alpaca uses your existing trading API keys.
 
 ---
 

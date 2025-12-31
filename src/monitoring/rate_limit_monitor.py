@@ -75,7 +75,8 @@ class RateLimitMonitor:
         "openai": 500,
         "openai_proxy": 500,  # Custom proxy (e.g., xcmfai)
         "anthropic": 60,
-        "alpaca": 200,
+        "alpaca": 200,  # Trading API
+        "alpaca_data": 200,  # Market Data API (separate endpoint)
     }
     
     def __init__(self):

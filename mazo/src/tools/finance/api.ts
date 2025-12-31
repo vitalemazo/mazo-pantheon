@@ -38,6 +38,7 @@ export function getFallbackSettings(): {
   yahooFinanceForMetrics: boolean;
   yahooFinanceForNews: boolean;
   primaryDataSource: string;
+  isAlpacaPrimary: boolean;
 } {
   const envTrue = (key: string, defaultVal: boolean = true): boolean => {
     const val = process.env[key];
@@ -45,12 +46,42 @@ export function getFallbackSettings(): {
     return val.toLowerCase() === 'true';
   };
 
+  const primaryDataSource = process.env.PRIMARY_DATA_SOURCE || 'financial_datasets';
+
   return {
     useYahooFinanceFallback: envTrue('USE_YAHOO_FINANCE_FALLBACK', true),
     yahooFinanceForPrices: envTrue('YAHOO_FINANCE_FOR_PRICES', true),
     yahooFinanceForMetrics: envTrue('YAHOO_FINANCE_FOR_METRICS', true),
     yahooFinanceForNews: envTrue('YAHOO_FINANCE_FOR_NEWS', true),
-    primaryDataSource: process.env.PRIMARY_DATA_SOURCE || 'financial_datasets',
+    primaryDataSource,
+    isAlpacaPrimary: primaryDataSource === 'alpaca',
+  };
+}
+
+/**
+ * Check if Alpaca is the primary data source.
+ * When Alpaca is primary, prices and news will be fetched from Alpaca first.
+ * Note: Alpaca does NOT provide fundamentals, so those always fall back to other sources.
+ */
+export function isAlpacaPrimary(): boolean {
+  return getFallbackSettings().isAlpacaPrimary;
+}
+
+/**
+ * Get data source info for logging/debugging.
+ */
+export function getDataSourceInfo(): {
+  primary: string;
+  alpacaEnabled: boolean;
+  yahooFallbackEnabled: boolean;
+  fmpFallbackEnabled: boolean;
+} {
+  const settings = getFallbackSettings();
+  return {
+    primary: settings.primaryDataSource,
+    alpacaEnabled: settings.isAlpacaPrimary,
+    yahooFallbackEnabled: settings.useYahooFinanceFallback,
+    fmpFallbackEnabled: shouldUseFmpFallback('all'),
   };
 }
 

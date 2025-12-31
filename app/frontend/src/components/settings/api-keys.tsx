@@ -272,6 +272,11 @@ interface DataSourceOption {
 
 const PRIMARY_DATA_SOURCES: DataSourceOption[] = [
   {
+    value: 'alpaca',
+    label: 'Alpaca Market Data',
+    description: 'Real-time prices & news (uses trading API keys, no fundamentals)'
+  },
+  {
     value: 'financial_datasets',
     label: 'Financial Datasets API',
     description: 'Premium financial data (recommended)'
@@ -829,6 +834,20 @@ export function ApiKeysSettings() {
                 </option>
               ))}
             </select>
+            
+            {/* Alpaca-specific note */}
+            {apiKeys['PRIMARY_DATA_SOURCE'] === 'alpaca' && (
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mt-3">
+                <div className="flex items-start gap-2">
+                  <Info className="h-4 w-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                  <div className="text-xs text-muted-foreground">
+                    <p className="font-medium text-amber-500 mb-1">Alpaca Market Data Limitations</p>
+                    <p>Alpaca provides <strong>prices and news only</strong>. Fundamental data (P/E ratios, financial statements, insider trades) will automatically fall back to Yahoo Finance or FMP.</p>
+                    <p className="mt-1">Uses your existing Alpaca trading API keys - no additional setup required.</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Yahoo Finance Fallback */}
