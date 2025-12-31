@@ -38,6 +38,8 @@ COPY src/ /app/src/
 COPY app/backend/ /app/app/backend/
 COPY integration/ /app/integration/
 COPY mazo/ /app/mazo/
+COPY scripts/ /app/scripts/
+COPY tests/ /app/tests/
 
 # Install Mazo dependencies
 RUN cd /app/mazo && bun install
