@@ -225,6 +225,12 @@ class PositionMonitor:
         logger.warning(f"   Trigger: ${trigger_price:.2f} | P&L: {pnl_pct:.2f}%")
         
         try:
+            from datetime import datetime
+            from src.monitoring import get_event_logger
+            
+            event_logger = get_event_logger()
+            submitted_at = datetime.now()
+            
             # Use close_position for simplicity - it handles both long and short
             result = self.alpaca.close_position(ticker, qty=abs(qty))
             
@@ -233,10 +239,42 @@ class PositionMonitor:
                 details = f"Exit order placed: {result.message}"
                 self.exits_executed += 1
                 logger.info(f"✅ Exit executed for {ticker}: {result.message}")
+                
+                # Log to monitoring system
+                try:
+                    event_logger.log_trade_execution(
+                        order_id=f"auto_exit_{ticker}_{submitted_at.timestamp()}",
+                        ticker=ticker,
+                        side=action,
+                        quantity=float(abs(qty)),
+                        order_type="market",
+                        status="filled",
+                        submitted_at=submitted_at,
+                        filled_at=datetime.now(),
+                        filled_qty=float(abs(qty)),
+                    )
+                    logger.info(f"✓ Auto-exit logged to monitoring: {ticker}")
+                except Exception as log_err:
+                    logger.warning(f"Failed to log auto-exit: {log_err}")
             else:
                 action_taken = "failed"
                 details = f"Exit failed: {result.error}"
                 logger.error(f"Exit failed for {ticker}: {result.error}")
+                
+                # Log failed trade
+                try:
+                    event_logger.log_trade_execution(
+                        order_id=f"auto_exit_failed_{ticker}_{submitted_at.timestamp()}",
+                        ticker=ticker,
+                        side=action,
+                        quantity=float(abs(qty)),
+                        order_type="market",
+                        status="rejected",
+                        submitted_at=submitted_at,
+                        reject_reason=result.error if result else "Unknown error",
+                    )
+                except Exception as log_err:
+                    logger.warning(f"Failed to log failed exit: {log_err}")
             
         except Exception as e:
             action_taken = "failed"

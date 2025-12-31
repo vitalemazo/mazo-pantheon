@@ -417,11 +417,15 @@ class AutomatedTradingService:
             # Execute the rotation (close the position)
             if execute_trades and not dry_run:
                 try:
+                    from src.monitoring import get_event_logger
+                    event_logger = get_event_logger()
+                    
+                    submitted_at = datetime.now()
                     close_result = self.alpaca.close_position(
                         best_candidate["ticker"],
                         qty=best_candidate["qty"]
                     )
-                    
+
                     if close_result.success:
                         logger.info(f"✅ Rotated out of {best_candidate['ticker']}: {close_result.message}")
                         result.trades_executed += 1
@@ -432,6 +436,23 @@ class AutomatedTradingService:
                             "capital_freed": best_candidate["market_value"],
                             "pnl_pct": best_candidate["pnl_pct"]
                         })
+                        
+                        # Log rotation trade to monitoring
+                        try:
+                            event_logger.log_trade_execution(
+                                order_id=f"rotation_{best_candidate['ticker']}_{submitted_at.timestamp()}",
+                                ticker=best_candidate["ticker"],
+                                side=best_candidate["action"],  # sell or cover
+                                quantity=float(best_candidate["qty"]),
+                                order_type="market",
+                                status="filled",
+                                submitted_at=submitted_at,
+                                filled_at=datetime.now(),
+                                filled_qty=float(best_candidate["qty"]),
+                            )
+                            logger.info(f"✓ Rotation trade logged to monitoring")
+                        except Exception as log_err:
+                            logger.warning(f"Failed to log rotation trade: {log_err}")
                     else:
                         logger.warning(f"Failed to rotate {best_candidate['ticker']}: {close_result.error}")
                         result.errors.append(f"Rotation failed for {best_candidate['ticker']}: {close_result.error}")
@@ -841,11 +862,15 @@ class AutomatedTradingService:
         self,
         ticker: str,
         pm_decision: Dict[str, Any],
-        portfolio: PortfolioContext
+        portfolio: PortfolioContext,
+        workflow_id: str = None
     ) -> Dict[str, Any]:
-        """Execute trade via Alpaca directly."""
+        """Execute trade via Alpaca directly and log to monitoring system."""
         try:
             from src.trading.alpaca_service import OrderSide, OrderType, TimeInForce
+            from src.monitoring import get_event_logger
+            
+            event_logger = get_event_logger()
             
             action = pm_decision.get("action", "hold")
             quantity = pm_decision.get("quantity", 0)
@@ -865,6 +890,8 @@ class AutomatedTradingService:
             else:
                 return {"success": False, "message": f"Unknown action: {action}"}
             
+            submitted_at = datetime.now()
+            
             # Submit order via Alpaca
             result = self.alpaca.submit_order(
                 symbol=ticker,
@@ -876,16 +903,51 @@ class AutomatedTradingService:
             
             if result and result.success:
                 order = result.order
+                order_id = order.id if order else f"manual_{ticker}_{submitted_at.timestamp()}"
+                
+                # Log successful trade execution to monitoring
+                try:
+                    event_logger.log_trade_execution(
+                        order_id=order_id,
+                        ticker=ticker,
+                        side=side.value if hasattr(side, 'value') else str(side),
+                        quantity=float(quantity),
+                        order_type="market",
+                        status=order.status if order else "submitted",
+                        submitted_at=submitted_at,
+                        filled_at=datetime.now() if order and order.filled_avg_price else None,
+                        filled_qty=float(order.filled_qty) if order and order.filled_qty else None,
+                        filled_avg_price=float(order.filled_avg_price) if order and order.filled_avg_price else None,
+                    )
+                    logger.info(f"✓ Trade logged to monitoring: {ticker} {action} {quantity}")
+                except Exception as log_err:
+                    logger.warning(f"Failed to log trade execution: {log_err}")
+                
                 return {
                     "success": True,
                     "action": action,
                     "quantity": quantity,
-                    "order_id": order.id if order else None,
+                    "order_id": order_id,
                     "filled_price": order.filled_avg_price if order else None,
                     "status": order.status if order else "submitted",
                     "message": result.message,
                 }
             else:
+                # Log failed trade execution
+                try:
+                    event_logger.log_trade_execution(
+                        order_id=f"failed_{ticker}_{submitted_at.timestamp()}",
+                        ticker=ticker,
+                        side=side.value if hasattr(side, 'value') else str(side),
+                        quantity=float(quantity),
+                        order_type="market",
+                        status="rejected",
+                        submitted_at=submitted_at,
+                        reject_reason=result.error if result else "Order submission failed",
+                    )
+                except Exception as log_err:
+                    logger.warning(f"Failed to log rejected trade: {log_err}")
+                
                 return {
                     "success": False, 
                     "message": result.message if result else "Order submission failed",
