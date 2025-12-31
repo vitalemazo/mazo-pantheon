@@ -3,6 +3,18 @@ Redis-backed cache for API responses.
 
 Provides persistent caching across container restarts using Redis.
 Falls back to in-memory cache if Redis is unavailable.
+
+TTL Configuration:
+- Use environment variables to customize cache durations
+- Shorter TTLs for real-time data (quotes, intraday prices)
+- Longer TTLs for fundamental data (metrics, statements)
+
+Environment Variables:
+- CACHE_TTL_QUOTES: Real-time quote snapshots (default: 60s)
+- CACHE_TTL_PRICES: Historical price bars (default: 300s for intraday, 3600s for daily)
+- CACHE_TTL_NEWS: News articles (default: 600s)
+- CACHE_TTL_METRICS: Financial metrics (default: 86400s / 24h)
+- CACHE_TTL_INSIDER: Insider trades (default: 86400s / 24h)
 """
 
 import os
@@ -21,15 +33,29 @@ except ImportError:
     logger.warning("Redis not installed, using in-memory cache only")
 
 
+def _get_ttl_from_env(key: str, default: int) -> int:
+    """Get TTL value from environment variable or use default."""
+    try:
+        return int(os.environ.get(key, default))
+    except (ValueError, TypeError):
+        return default
+
+
 class RedisCache:
     """Redis-backed cache for API responses with automatic fallback to in-memory."""
     
-    # Cache TTL in seconds (24 hours for most data, 1 hour for prices)
-    TTL_PRICES = 3600  # 1 hour - prices change frequently
-    TTL_METRICS = 86400  # 24 hours - financial metrics are quarterly
-    TTL_NEWS = 3600  # 1 hour - news is time-sensitive
-    TTL_INSIDER = 86400  # 24 hours - insider trades are infrequent
-    TTL_LINE_ITEMS = 86400  # 24 hours - line items are quarterly
+    # Cache TTL in seconds - configurable via environment
+    # Real-time data (short TTLs for freshness)
+    TTL_QUOTES = _get_ttl_from_env("CACHE_TTL_QUOTES", 60)  # 1 minute - real-time quotes
+    TTL_PRICES_INTRADAY = _get_ttl_from_env("CACHE_TTL_PRICES_INTRADAY", 300)  # 5 minutes - intraday bars
+    TTL_PRICES = _get_ttl_from_env("CACHE_TTL_PRICES", 3600)  # 1 hour - daily historical prices
+    TTL_NEWS = _get_ttl_from_env("CACHE_TTL_NEWS", 600)  # 10 minutes - news updates frequently
+    
+    # Fundamental data (longer TTLs - changes quarterly)
+    TTL_METRICS = _get_ttl_from_env("CACHE_TTL_METRICS", 86400)  # 24 hours
+    TTL_INSIDER = _get_ttl_from_env("CACHE_TTL_INSIDER", 86400)  # 24 hours
+    TTL_LINE_ITEMS = _get_ttl_from_env("CACHE_TTL_LINE_ITEMS", 86400)  # 24 hours
+    TTL_PROFILE = _get_ttl_from_env("CACHE_TTL_PROFILE", 86400)  # 24 hours - company profiles
     
     def __init__(self):
         self._redis_client: Optional[redis.Redis] = None
@@ -94,16 +120,26 @@ class RedisCache:
         merged.extend([item for item in new_data if item.get(key_field) not in existing_keys])
         return merged
     
+    # === Real-time Quotes ===
+    def get_quote(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """Get cached real-time quote snapshot."""
+        return self._get(f"quote:{ticker}")
+    
+    def set_quote(self, ticker: str, data: Dict[str, Any]):
+        """Cache real-time quote with short TTL."""
+        self._set(f"quote:{ticker}", data, self.TTL_QUOTES)
+    
     # === Prices ===
     def get_prices(self, cache_key: str) -> Optional[List[Dict[str, Any]]]:
         """Get cached price data if available."""
         return self._get(f"prices:{cache_key}")
     
-    def set_prices(self, cache_key: str, data: List[Dict[str, Any]]):
-        """Cache price data."""
+    def set_prices(self, cache_key: str, data: List[Dict[str, Any]], intraday: bool = False):
+        """Cache price data. Use shorter TTL for intraday data."""
         existing = self.get_prices(cache_key)
         merged = self._merge_data(existing, data, key_field="time")
-        self._set(f"prices:{cache_key}", merged, self.TTL_PRICES)
+        ttl = self.TTL_PRICES_INTRADAY if intraday else self.TTL_PRICES
+        self._set(f"prices:{cache_key}", merged, ttl)
     
     # === Financial Metrics ===
     def get_financial_metrics(self, cache_key: str) -> Optional[List[Dict[str, Any]]]:
@@ -151,10 +187,20 @@ class RedisCache:
     
     # === Cache Stats ===
     def get_stats(self) -> Dict[str, Any]:
-        """Get cache statistics."""
+        """Get cache statistics including TTL configuration."""
         stats = {
             "backend": "redis" if self._redis_client else "in_memory",
             "in_memory_keys": len(self._in_memory_fallback),
+            "ttl_config": {
+                "quotes": self.TTL_QUOTES,
+                "prices_intraday": self.TTL_PRICES_INTRADAY,
+                "prices_daily": self.TTL_PRICES,
+                "news": self.TTL_NEWS,
+                "metrics": self.TTL_METRICS,
+                "insider": self.TTL_INSIDER,
+                "line_items": self.TTL_LINE_ITEMS,
+                "profile": self.TTL_PROFILE,
+            },
         }
         
         if self._redis_client:
@@ -173,7 +219,7 @@ class RedisCache:
         if self._redis_client:
             try:
                 # Only clear our prefixed keys, not all of Redis
-                for prefix in ["prices:", "metrics:", "line_items:", "insider:", "news:"]:
+                for prefix in ["quote:", "prices:", "metrics:", "line_items:", "insider:", "news:"]:
                     for key in self._redis_client.scan_iter(f"{prefix}*"):
                         self._redis_client.delete(key)
             except Exception as e:

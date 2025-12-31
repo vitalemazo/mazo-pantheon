@@ -577,6 +577,61 @@ POSTGRES_PASSWORD=your-secure-password
 # ===========================================
 AUTO_TRADING_ENABLED=false   # Set to true to enable
 TRADING_INTERVAL_MINUTES=30  # How often to scan
+
+# ===========================================
+# CACHE TTL (Optional - in seconds)
+# ===========================================
+CACHE_TTL_QUOTES=60          # Real-time quotes (1 min)
+CACHE_TTL_PRICES_INTRADAY=300 # Intraday bars (5 min)
+CACHE_TTL_PRICES=3600        # Daily prices (1 hour)
+CACHE_TTL_NEWS=600           # News articles (10 min)
+CACHE_TTL_METRICS=86400      # Fundamentals (24 hours)
+```
+
+### 🔄 Switching Data Providers
+
+The system supports multiple market data providers with automatic fallback:
+
+| Provider | Data Types | API Key Required |
+|----------|------------|------------------|
+| **FMP Ultimate** ⭐ | Prices, Fundamentals, News, Insider Trades | Yes |
+| **Alpaca Market Data** | Prices, News | Yes (same as trading) |
+| **Financial Datasets** | Prices, Fundamentals, Insider Trades | Yes |
+| **Yahoo Finance** | Prices, Basic Fundamentals | No (fallback only) |
+
+#### How to Switch Providers
+
+**Option 1: Via Settings UI**
+
+1. Navigate to **Settings** → **Data Source Fallbacks**
+2. Select your preferred **Primary Data Source**
+3. The change takes effect immediately
+
+**Option 2: Via Environment Variable**
+
+```bash
+# In your .env file:
+PRIMARY_DATA_SOURCE=fmp         # FMP Ultimate (recommended)
+PRIMARY_DATA_SOURCE=alpaca      # Alpaca Market Data
+PRIMARY_DATA_SOURCE=financial_datasets  # Financial Datasets API
+```
+
+#### Fallback Chain
+
+When the primary source fails, the system automatically tries alternatives:
+
+```
+FMP (primary) → Alpaca → Financial Datasets → Yahoo Finance
+```
+
+This ensures your trading system stays operational even if one API has issues.
+
+#### Verify Your Setup
+
+Run the health check script to verify all providers are configured:
+
+```bash
+python scripts/check-data-providers.py
 ```
 
 ---
