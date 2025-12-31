@@ -82,14 +82,19 @@ def portfolio_management_agent(state: AgentState, agent_id: str = "portfolio_man
         else:
             max_shares[ticker] = 0
 
-        # Compress analyst signals to {sig, conf}
+        # Compress analyst signals to {sig, conf, reasoning}
         ticker_signals = {}
         for agent, signals in analyst_signals.items():
             if not agent.startswith("risk_management_agent") and ticker in signals:
                 sig = signals[ticker].get("signal")
                 conf = signals[ticker].get("confidence")
+                reasoning = signals[ticker].get("reasoning", "")
                 if sig is not None and conf is not None:
-                    ticker_signals[agent] = {"sig": sig, "conf": conf}
+                    ticker_signals[agent] = {
+                        "sig": sig, 
+                        "conf": conf,
+                        "reasoning": reasoning[:500] if reasoning else ""
+                    }
         signals_by_ticker[ticker] = ticker_signals
 
     state["data"]["current_prices"] = current_prices
