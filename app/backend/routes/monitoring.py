@@ -430,15 +430,14 @@ async def get_recent_workflows(
         
         query = """
             SELECT 
-                workflow_id::text as id,
+                workflow_id,
                 workflow_type,
                 step_name,
                 status,
                 started_at,
                 completed_at,
                 duration_ms,
-                tickers,
-                mode
+                ticker
             FROM workflow_events
             ORDER BY started_at DESC
             LIMIT :limit
@@ -454,15 +453,14 @@ async def get_recent_workflows(
         workflows = []
         for row in rows:
             workflows.append({
-                "id": row[0],
+                "id": str(row[0]),  # Convert UUID to string
                 "workflow_type": row[1],
                 "step_name": row[2],
                 "status": row[3],
                 "started_at": row[4].isoformat() if row[4] else None,
                 "completed_at": row[5].isoformat() if row[5] else None,
                 "duration_ms": row[6],
-                "tickers": row[7],
-                "mode": row[8],
+                "ticker": row[7],
             })
         
         return {"workflows": workflows, "total": len(workflows)}
@@ -482,10 +480,10 @@ async def get_workflow_detail(workflow_id: str):
         # Get workflow events
         workflow_query = """
             SELECT 
-                workflow_id::text, workflow_type, step_name, status,
-                started_at, completed_at, duration_ms, tickers, mode, error_message
+                workflow_id, workflow_type, step_name, status,
+                started_at, completed_at, duration_ms, ticker, error_message
             FROM workflow_events
-            WHERE workflow_id::text = :workflow_id
+            WHERE workflow_id = :workflow_id::uuid
             ORDER BY started_at
         """
         
@@ -494,7 +492,7 @@ async def get_workflow_detail(workflow_id: str):
             SELECT 
                 agent_id, ticker, signal, confidence, reasoning
             FROM agent_signals
-            WHERE workflow_id::text = :workflow_id
+            WHERE workflow_id = :workflow_id::uuid
             ORDER BY agent_id
         """
         
@@ -503,7 +501,7 @@ async def get_workflow_detail(workflow_id: str):
             SELECT 
                 ticker, decision, confidence, reasoning, agents_received
             FROM pm_decisions
-            WHERE workflow_id::text = :workflow_id
+            WHERE workflow_id = :workflow_id::uuid
         """
         
         with engine.connect() as conn:
