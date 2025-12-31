@@ -187,8 +187,70 @@ export interface ActivityFilters {
 
 // ==================== HELPER FUNCTIONS ====================
 
+/**
+ * Maps backend agent IDs (e.g., "ben_graham_agent") to frontend IDs (e.g., "ben_graham")
+ */
+export function normalizeAgentId(backendId: string): string {
+  // Remove common suffixes
+  let normalized = backendId
+    .replace(/_agent$/, '')
+    .replace(/_analyst$/, '');
+  
+  // Handle special cases where backend uses different naming
+  const specialMappings: Record<string, string> = {
+    'technical_analyst': 'technicals',
+    'technical': 'technicals',
+    'sentiment_analyst': 'sentiment',
+    'valuation_analyst': 'valuation',
+    'fundamentals_analyst': 'fundamentals',
+    'growth_analyst': 'technicals',
+    'growth': 'technicals',
+    'news_sentiment': 'news_sentiment',
+  };
+  
+  if (specialMappings[normalized]) {
+    return specialMappings[normalized];
+  }
+  
+  return normalized;
+}
+
+/**
+ * Get possible backend IDs for a frontend agent ID
+ * Used to look up data in objects keyed by backend IDs
+ */
+export function getBackendAgentIds(frontendId: string): string[] {
+  const variants = [
+    frontendId,
+    `${frontendId}_agent`,
+    `${frontendId}_analyst_agent`,
+  ];
+  
+  // Special mappings for agents with different backend names
+  const specialMappings: Record<string, string[]> = {
+    'technicals': ['technical_analyst_agent', 'technicals_agent', 'technicals'],
+    'sentiment': ['sentiment_analyst_agent', 'sentiment_agent', 'sentiment'],
+    'valuation': ['valuation_analyst_agent', 'valuation_agent', 'valuation'],
+    'fundamentals': ['fundamentals_analyst_agent', 'fundamentals_agent', 'fundamentals'],
+    'news_sentiment': ['news_sentiment_agent', 'news_sentiment'],
+    'risk_manager': ['risk_manager_agent', 'risk_manager'],
+  };
+  
+  if (specialMappings[frontendId]) {
+    return [...specialMappings[frontendId], ...variants];
+  }
+  
+  return variants;
+}
+
 export function getAgentById(id: string): AgentDefinition | undefined {
-  return AGENT_ROSTER.find(a => a.id === id);
+  // Try direct match first
+  let agent = AGENT_ROSTER.find(a => a.id === id);
+  if (agent) return agent;
+  
+  // Try normalized match
+  const normalizedId = normalizeAgentId(id);
+  return AGENT_ROSTER.find(a => a.id === normalizedId);
 }
 
 export function getAgentsByCategory(category: AgentCategory): AgentDefinition[] {

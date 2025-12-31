@@ -10,6 +10,7 @@ import {
   AGENT_ROSTER,
   getSignalBgColor,
   getSignalColor,
+  getBackendAgentIds,
 } from '@/types/ai-transparency';
 import { useDataStore } from '@/services/data-hydration-service';
 import {
@@ -178,8 +179,13 @@ function AgentGroup({
       </div>
       <div className="grid grid-cols-2 gap-1">
         {agents.map((agent) => {
-          const status = agentStatuses[agent.id] || 'idle';
-          const signal = signals[agent.id];
+          // Try multiple backend ID formats to find status and signal
+          const backendIds = getBackendAgentIds(agent.id);
+          const statusKey = backendIds.find(id => agentStatuses[id]);
+          const signalKey = backendIds.find(id => signals[id]);
+          
+          const status = statusKey ? agentStatuses[statusKey] : 'idle';
+          const signal = signalKey ? signals[signalKey] : undefined;
 
           return (
             <Tooltip key={agent.id}>

@@ -9,7 +9,7 @@
 import { cn } from '@/lib/utils';
 import { useDataStore } from '@/services/data-hydration-service';
 import {
-  AGENT_ROSTER,
+  getAgentById,
   getSignalColor,
   getSignalBgColor,
 } from '@/types/ai-transparency';
@@ -29,6 +29,16 @@ interface DecisionTreeProps {
   className?: string;
 }
 
+// Format raw agent ID into readable name (e.g., "ben_graham_agent" -> "Ben Graham")
+function formatAgentName(agentId: string): string {
+  return agentId
+    .replace(/_agent$/, '')
+    .replace(/_analyst$/, '')
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
 export function DecisionTree({ className }: DecisionTreeProps) {
   const workflowProgress = useDataStore((state) => state.liveWorkflowProgress);
   const signals = workflowProgress?.signals || {};
@@ -42,7 +52,7 @@ export function DecisionTree({ className }: DecisionTreeProps) {
   };
 
   const agentSignals = Object.entries(signals).map(([agentId, signal]) => {
-    const agent = AGENT_ROSTER.find((a) => a.id === agentId);
+    const agent = getAgentById(agentId);
     if (signal.signal === 'bullish' || signal.signal === 'strong_buy') {
       signalCounts.bullish++;
     } else if (signal.signal === 'bearish' || signal.signal === 'strong_sell') {
@@ -50,7 +60,7 @@ export function DecisionTree({ className }: DecisionTreeProps) {
     } else {
       signalCounts.neutral++;
     }
-    return { agent, signal };
+    return { agent, signal, agentId };
   });
 
   if (Object.keys(signals).length === 0 && !finalDecision) {
@@ -155,9 +165,9 @@ export function DecisionTree({ className }: DecisionTreeProps) {
         <div className="space-y-1">
           {agentSignals
             .sort((a, b) => (b.signal.confidence || 0) - (a.signal.confidence || 0))
-            .map(({ agent, signal }) => (
+            .map(({ agent, signal, agentId }) => (
               <div
-                key={agent?.id || 'unknown'}
+                key={agentId}
                 className={cn(
                   'flex items-center gap-2 p-2 rounded border text-xs',
                   getSignalBgColor(signal.signal)
@@ -165,7 +175,7 @@ export function DecisionTree({ className }: DecisionTreeProps) {
               >
                 <div className="flex-1 min-w-0">
                   <span className="font-medium truncate">
-                    {agent?.shortName || 'Unknown'}
+                    {agent?.shortName || formatAgentName(agentId)}
                   </span>
                 </div>
                 <div className={cn('flex items-center gap-1', getSignalColor(signal.signal))}>
