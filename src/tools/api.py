@@ -360,13 +360,13 @@ def get_financial_metrics(
     api_key: str = None,
 ) -> list[FinancialMetrics]:
     """Fetch financial metrics from cache or API.
-    
+
     Routes through data sources based on PRIMARY_DATA_SOURCE:
     - fmp: FMP Ultimate first (comprehensive fundamentals)
     - Others: Financial Datasets API
     """
     primary_source = os.environ.get("PRIMARY_DATA_SOURCE", "fmp")
-    
+
     # Try FMP first when selected as primary
     if primary_source == "fmp":
         try:
@@ -375,30 +375,68 @@ def get_financial_metrics(
             if client.is_configured():
                 metrics_ttm = client.get_key_metrics_ttm(ticker)
                 ratios_ttm = client.get_ratios_ttm(ticker)
-                
+
                 if metrics_ttm or ratios_ttm:
                     m = metrics_ttm or {}
                     r = ratios_ttm or {}
-                    
-                    # Build FinancialMetrics from FMP data
+
+                    # Map FMP fields to FinancialMetrics model fields
+                    # FMP uses camelCase with TTM suffix, we use snake_case
                     fmp_metrics = FinancialMetrics(
                         ticker=ticker,
                         report_period=end_date,
                         period=period,
-                        pe_ratio_ttm=m.get("peRatioTTM"),
-                        price_to_book_ratio=m.get("pbRatioTTM") or r.get("priceToBookRatioTTM"),
-                        price_to_sales_ratio_ttm=m.get("priceToSalesRatioTTM") or r.get("priceToSalesRatioTTM"),
-                        net_margin=r.get("netProfitMarginTTM"),
-                        operating_margin=r.get("operatingProfitMarginTTM"),
+                        currency="USD",  # FMP primarily covers US markets
+                        
+                        # Valuation metrics
+                        market_cap=m.get("marketCap"),
+                        enterprise_value=m.get("enterpriseValueTTM") or r.get("enterpriseValueTTM"),
+                        price_to_earnings_ratio=r.get("priceToEarningsRatioTTM"),
+                        price_to_book_ratio=r.get("priceToBookRatioTTM"),
+                        price_to_sales_ratio=r.get("priceToSalesRatioTTM"),
+                        enterprise_value_to_ebitda_ratio=m.get("evToEBITDATTM") or r.get("enterpriseValueMultipleTTM"),
+                        enterprise_value_to_revenue_ratio=m.get("evToSalesTTM"),
+                        free_cash_flow_yield=m.get("freeCashFlowYieldTTM"),
+                        peg_ratio=r.get("priceToEarningsGrowthRatioTTM"),
+                        
+                        # Profitability margins
                         gross_margin=r.get("grossProfitMarginTTM"),
-                        return_on_equity=m.get("roeTTM") or r.get("returnOnEquityTTM"),
-                        return_on_assets=m.get("roaTTM") or r.get("returnOnAssetsTTM"),
-                        debt_to_equity=m.get("debtToEquityTTM") or r.get("debtEquityRatioTTM"),
+                        operating_margin=r.get("operatingProfitMarginTTM"),
+                        net_margin=r.get("netProfitMarginTTM"),
+                        
+                        # Returns
+                        return_on_equity=m.get("returnOnEquityTTM") or r.get("returnOnEquityTTM"),
+                        return_on_assets=m.get("returnOnAssetsTTM") or r.get("returnOnAssetsTTM"),
+                        return_on_invested_capital=m.get("returnOnInvestedCapitalTTM"),
+                        
+                        # Efficiency/Turnover
+                        asset_turnover=r.get("assetTurnoverTTM"),
+                        inventory_turnover=r.get("inventoryTurnoverTTM"),
+                        receivables_turnover=r.get("receivablesTurnoverTTM"),
+                        days_sales_outstanding=m.get("daysOfSalesOutstandingTTM"),
+                        operating_cycle=m.get("operatingCycleTTM"),
+                        working_capital_turnover=r.get("workingCapitalTurnoverRatioTTM"),
+                        
+                        # Liquidity
                         current_ratio=m.get("currentRatioTTM") or r.get("currentRatioTTM"),
-                        market_cap=m.get("marketCapTTM"),
-                        enterprise_value=m.get("enterpriseValueTTM"),
-                        revenue_growth_yoy=m.get("revenueGrowthTTM"),
-                        earnings_growth_yoy=m.get("netIncomeGrowthTTM"),
+                        quick_ratio=r.get("quickRatioTTM"),
+                        cash_ratio=r.get("cashRatioTTM"),
+                        operating_cash_flow_ratio=r.get("operatingCashFlowRatioTTM"),
+                        
+                        # Leverage/Solvency
+                        debt_to_equity=r.get("debtToEquityRatioTTM"),
+                        debt_to_assets=r.get("debtToAssetsRatioTTM"),
+                        interest_coverage=r.get("interestCoverageRatioTTM"),
+                        
+                        # Per-share metrics
+                        payout_ratio=r.get("dividendPayoutRatioTTM"),
+                        earnings_per_share=r.get("netIncomePerShareTTM"),
+                        book_value_per_share=r.get("bookValuePerShareTTM"),
+                        free_cash_flow_per_share=r.get("freeCashFlowPerShareTTM"),
+                        
+                        # Note: FMP TTM endpoints don't provide growth metrics directly
+                        # Growth metrics would require comparing multiple periods
+                        # These are left as None for now
                     )
                     logger.info(f"Got financial metrics for {ticker} from FMP")
                     return [fmp_metrics]

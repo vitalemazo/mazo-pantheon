@@ -375,6 +375,183 @@ class TestFMPIntegration:
         
         assert len(news) > 0
         assert news[0].title
+    
+    def test_real_financial_metrics_mapping(self):
+        """
+        Regression test: Verify get_financial_metrics returns properly mapped
+        FinancialMetrics when PRIMARY_DATA_SOURCE=fmp.
+        
+        This test confirms the FMP field mapping layer works correctly.
+        """
+        from src.tools.api import get_financial_metrics
+        from src.data.models import FinancialMetrics
+        
+        # Ensure FMP is primary
+        with patch.dict(os.environ, {"PRIMARY_DATA_SOURCE": "fmp"}):
+            metrics = get_financial_metrics("AAPL", "2024-12-27")
+        
+        # Should return at least one metric
+        assert len(metrics) >= 1, "Expected at least one FinancialMetrics record"
+        
+        m = metrics[0]
+        
+        # Verify it's a proper FinancialMetrics instance
+        assert isinstance(m, FinancialMetrics)
+        assert m.ticker == "AAPL"
+        
+        # Verify key valuation metrics are mapped (not None for AAPL)
+        assert m.market_cap is not None, "market_cap should be mapped"
+        assert m.price_to_earnings_ratio is not None, "P/E ratio should be mapped"
+        assert m.price_to_book_ratio is not None, "P/B ratio should be mapped"
+        
+        # Verify profitability margins are mapped
+        assert m.gross_margin is not None, "gross_margin should be mapped"
+        assert m.operating_margin is not None, "operating_margin should be mapped"
+        assert m.net_margin is not None, "net_margin should be mapped"
+        
+        # Verify returns are mapped
+        assert m.return_on_equity is not None, "ROE should be mapped"
+        assert m.return_on_assets is not None, "ROA should be mapped"
+        
+        # Verify liquidity metrics
+        assert m.current_ratio is not None, "current_ratio should be mapped"
+        
+        # Verify per-share metrics
+        assert m.book_value_per_share is not None, "book_value_per_share should be mapped"
+        
+        print(f"✓ Financial metrics mapping test passed!")
+        print(f"  Market Cap: ${m.market_cap:,.0f}")
+        print(f"  P/E Ratio: {m.price_to_earnings_ratio:.2f}")
+        print(f"  ROE: {m.return_on_equity:.2%}")
+
+
+class TestFinancialMetricsMapping:
+    """Test the FMP to FinancialMetrics field mapping."""
+    
+    def test_fmp_mapping_with_mock_data(self):
+        """Test mapping layer with mocked FMP response."""
+        from src.data.models import FinancialMetrics
+        from unittest.mock import patch, MagicMock
+        
+        # Mock FMP data matching actual API response structure
+        mock_metrics = {
+            "marketCap": 3000000000000,
+            "enterpriseValueTTM": 3200000000000,
+            "returnOnEquityTTM": 0.145,
+            "returnOnAssetsTTM": 0.28,
+            "returnOnInvestedCapitalTTM": 0.52,
+            "currentRatioTTM": 0.95,
+            "freeCashFlowYieldTTM": 0.035,
+            "evToEBITDATTM": 25.5,
+            "evToSalesTTM": 8.2,
+            "daysOfSalesOutstandingTTM": 52.3,
+            "operatingCycleTTM": 45.2,
+        }
+        
+        mock_ratios = {
+            "priceToEarningsRatioTTM": 32.5,
+            "priceToBookRatioTTM": 45.2,
+            "priceToSalesRatioTTM": 8.1,
+            "grossProfitMarginTTM": 0.456,
+            "operatingProfitMarginTTM": 0.31,
+            "netProfitMarginTTM": 0.255,
+            "debtToEquityRatioTTM": 1.95,
+            "debtToAssetsRatioTTM": 0.32,
+            "quickRatioTTM": 0.85,
+            "cashRatioTTM": 0.25,
+            "interestCoverageRatioTTM": 42,
+            "assetTurnoverTTM": 1.15,
+            "inventoryTurnoverTTM": 40.5,
+            "receivablesTurnoverTTM": 15.2,
+            "dividendPayoutRatioTTM": 0.15,
+            "netIncomePerShareTTM": 6.42,
+            "bookValuePerShareTTM": 4.38,
+            "freeCashFlowPerShareTTM": 6.95,
+            "priceToEarningsGrowthRatioTTM": 2.8,
+        }
+        
+        # Create mock FMP client
+        mock_client = MagicMock()
+        mock_client.is_configured.return_value = True
+        mock_client.get_key_metrics_ttm.return_value = mock_metrics
+        mock_client.get_ratios_ttm.return_value = mock_ratios
+        
+        with patch("src.tools.api.get_fmp_data_client", return_value=mock_client):
+            with patch.dict(os.environ, {"PRIMARY_DATA_SOURCE": "fmp"}):
+                from src.tools.api import get_financial_metrics
+                
+                metrics = get_financial_metrics("TEST", "2024-12-27")
+        
+        assert len(metrics) == 1
+        m = metrics[0]
+        
+        # Verify valuation metrics mapping
+        assert m.market_cap == 3000000000000
+        assert m.price_to_earnings_ratio == 32.5
+        assert m.price_to_book_ratio == 45.2
+        assert m.price_to_sales_ratio == 8.1
+        assert m.peg_ratio == 2.8
+        
+        # Verify profitability margins (should be raw decimals)
+        assert m.gross_margin == 0.456
+        assert m.operating_margin == 0.31
+        assert m.net_margin == 0.255
+        
+        # Verify returns
+        assert m.return_on_equity == 0.145
+        assert m.return_on_assets == 0.28
+        assert m.return_on_invested_capital == 0.52
+        
+        # Verify liquidity
+        assert m.current_ratio == 0.95
+        assert m.quick_ratio == 0.85
+        assert m.cash_ratio == 0.25
+        
+        # Verify leverage
+        assert m.debt_to_equity == 1.95
+        assert m.debt_to_assets == 0.32
+        assert m.interest_coverage == 42
+        
+        # Verify per-share metrics
+        assert m.earnings_per_share == 6.42
+        assert m.book_value_per_share == 4.38
+        assert m.free_cash_flow_per_share == 6.95
+    
+    def test_partial_fmp_data_handling(self):
+        """Test that partial FMP data (missing fields) doesn't cause errors."""
+        from src.data.models import FinancialMetrics
+        from unittest.mock import patch, MagicMock
+        
+        # Only provide some metrics
+        mock_metrics = {
+            "marketCap": 1000000000,
+        }
+        mock_ratios = {
+            "priceToEarningsRatioTTM": 15.0,
+        }
+        
+        mock_client = MagicMock()
+        mock_client.is_configured.return_value = True
+        mock_client.get_key_metrics_ttm.return_value = mock_metrics
+        mock_client.get_ratios_ttm.return_value = mock_ratios
+        
+        with patch("src.tools.api.get_fmp_data_client", return_value=mock_client):
+            with patch.dict(os.environ, {"PRIMARY_DATA_SOURCE": "fmp"}):
+                from src.tools.api import get_financial_metrics
+                
+                metrics = get_financial_metrics("TEST", "2024-12-27")
+        
+        assert len(metrics) == 1
+        m = metrics[0]
+        
+        # Verify provided fields
+        assert m.market_cap == 1000000000
+        assert m.price_to_earnings_ratio == 15.0
+        
+        # Verify missing fields are None (not raising errors)
+        assert m.gross_margin is None
+        assert m.return_on_equity is None
+        assert m.debt_to_equity is None
 
 
 if __name__ == "__main__":
