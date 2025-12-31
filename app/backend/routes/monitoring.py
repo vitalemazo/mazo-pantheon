@@ -354,7 +354,7 @@ async def get_rate_limits():
             rate_limits[api_key]["utilization_pct"] = min(100, (row[1] or 0) / 5)  # Estimate
         
         # Add default entries for APIs not in database yet
-        default_apis = ["openai", "openai_proxy", "anthropic", "financial_datasets", "alpaca"]
+        default_apis = ["openai", "openai_proxy", "anthropic", "financial_datasets", "alpaca", "fmp_data", "alpaca_data"]
         for api in default_apis:
             if api not in rate_limits:
                 rate_limits[api] = {
@@ -365,6 +365,25 @@ async def get_rate_limits():
                     "last_call_at": None,
                 }
         
+        # Supplement with in-memory data from rate limit monitor
+        try:
+            from src.monitoring import get_rate_limit_monitor
+            monitor = get_rate_limit_monitor()
+            in_memory_status = monitor.get_all_status()
+            
+            for api_name, status in in_memory_status.items():
+                if api_name not in rate_limits or rate_limits[api_name].get("calls_made", 0) == 0:
+                    rate_limits[api_name] = {
+                        "calls_made": status.get("calls_made", 0),
+                        "calls_remaining": status.get("calls_remaining"),
+                        "utilization_pct": round(status.get("utilization_pct", 0), 2),
+                        "resets_at": status.get("window_resets_at"),
+                        "last_call_at": status.get("last_call_at"),
+                        "source": "in_memory",
+                    }
+        except Exception as e:
+            logger.debug(f"Could not get in-memory rate limits: {e}")
+
         return rate_limits
 
     except Exception as e:

@@ -65,11 +65,14 @@ function RateLimitGauge({
   // Friendly display names for API services
   const getDisplayName = (apiName: string) => {
     const displayNames: Record<string, string> = {
+      'fmp_data': 'FMP Ultimate',
       'openai_proxy': 'OpenAI Proxy (xcmfai)',
       'openai': 'OpenAI Direct',
       'financial_datasets': 'Financial Datasets',
       'alpaca': 'Alpaca Trading',
+      'alpaca_data': 'Alpaca Market Data',
       'anthropic': 'Anthropic',
+      'groq': 'Groq',
     };
     return displayNames[apiName] || apiName.replace(/_/g, ' ');
   };
