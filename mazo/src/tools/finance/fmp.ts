@@ -1,8 +1,15 @@
 /**
- * FMP (Financial Modeling Prep) fallback for when Financial Datasets API fails.
- * Uses FMP's API endpoints for financial data.
+ * FMP (Financial Modeling Prep) Data Client
  * 
- * API Documentation: https://financialmodelingprep.com/
+ * Primary data source when PRIMARY_DATA_SOURCE=fmp.
+ * Provides comprehensive financial data including:
+ * - Real-time and historical prices
+ * - Company profiles and key metrics
+ * - News and press releases
+ * - Income statements, balance sheets, cash flow
+ * - Insider trading data
+ * 
+ * API Documentation: https://financialmodelingprep.com/developer/docs
  */
 
 const FMP_BASE_URL = 'https://financialmodelingprep.com/stable';
@@ -67,7 +74,7 @@ export async function getFmpPriceSnapshot(ticker: string): Promise<{
         year_low: quote.yearLow,
         avg_volume: quote.avgVolume,
         exchange: quote.exchange,
-        _source: 'FMP (fallback)',
+        _source: 'FMP',
       },
       source: 'FMP',
     };
@@ -128,7 +135,7 @@ export async function getFmpHistoricalPrices(
         close: item.close,
         volume: item.volume,
         adjusted_close: item.adjClose,
-        _source: 'FMP (fallback)',
+        _source: 'FMP',
       }))
       .sort((a: Record<string, unknown>, b: Record<string, unknown>) => 
         (a.time as string).localeCompare(b.time as string)
@@ -198,7 +205,7 @@ export async function getFmpFinancialMetrics(ticker: string): Promise<{
         currency: profile.currency,
         ipo_date: profile.ipoDate,
         full_time_employees: profile.fullTimeEmployees,
-        _source: 'FMP (fallback)',
+        _source: 'FMP',
         _report_period: new Date().toISOString().split('T')[0],
       },
       source: 'FMP',

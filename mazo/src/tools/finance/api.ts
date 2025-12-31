@@ -1,4 +1,14 @@
-const BASE_URL = 'https://api.financialdatasets.ai';
+/**
+ * Multi-source API client for financial data.
+ * 
+ * Primary data source routing (based on PRIMARY_DATA_SOURCE env var):
+ * - fmp: FMP Ultimate first (recommended), fallback to Financial Datasets/Yahoo
+ * - alpaca: Alpaca Market Data first, fallback to FMP/Yahoo
+ * - financial_datasets: Financial Datasets API first (legacy default)
+ */
+
+const FINANCIAL_DATASETS_BASE_URL = 'https://api.financialdatasets.ai';
+const FMP_BASE_URL = 'https://financialmodelingprep.com/stable';
 
 export interface ApiResponse {
   data: Record<string, unknown>;
@@ -124,13 +134,15 @@ export function shouldUseYahooFallback(dataType: 'prices' | 'metrics' | 'news' |
   }
 }
 
-export async function callApi(
+/**
+ * Make API call to Financial Datasets API (legacy/fallback).
+ */
+async function callFinancialDatasetsApi(
   endpoint: string,
   params: Record<string, string | number | string[] | undefined>
 ): Promise<ApiResponse> {
-  // Read API key lazily at call time (after dotenv has loaded)
   const FINANCIAL_DATASETS_API_KEY = process.env.FINANCIAL_DATASETS_API_KEY;
-  const url = new URL(`${BASE_URL}${endpoint}`);
+  const url = new URL(`${FINANCIAL_DATASETS_BASE_URL}${endpoint}`);
 
   // Add params to URL, handling arrays
   for (const [key, value] of Object.entries(params)) {
@@ -150,7 +162,6 @@ export async function callApi(
   });
 
   if (!response.ok) {
-    // Record the error
     recordError({
       status: response.status,
       statusText: response.statusText,
@@ -158,13 +169,12 @@ export async function callApi(
       ticker: params.ticker as string | undefined,
     });
     
-    // Provide more detailed error messages
     let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
     
     if (response.status === 402) {
-      errorMessage = `API credits exhausted (402). The Financial Datasets API requires credits for this request. Ticker: ${params.ticker || 'unknown'}`;
+      errorMessage = `API credits exhausted (402). Financial Datasets API. Ticker: ${params.ticker || 'unknown'}`;
     } else if (response.status === 429) {
-      errorMessage = `Rate limited (429). Too many requests to Financial Datasets API.`;
+      errorMessage = `Rate limited (429). Financial Datasets API.`;
     } else if (response.status === 404) {
       errorMessage = `Data not found (404) for ticker: ${params.ticker || 'unknown'}`;
     }
@@ -174,6 +184,156 @@ export async function callApi(
 
   const data = await response.json();
   return { data, url: url.toString(), source: 'Financial Datasets API' };
+}
+
+/**
+ * Make API call to FMP (Financial Modeling Prep) API.
+ */
+async function callFmpApi(
+  endpoint: string,
+  params: Record<string, string | number | string[] | undefined>
+): Promise<ApiResponse> {
+  const FMP_API_KEY = process.env.FMP_API_KEY;
+  if (!FMP_API_KEY) {
+    throw new Error('FMP_API_KEY not configured');
+  }
+
+  const url = new URL(`${FMP_BASE_URL}${endpoint}`);
+  
+  // Add params to URL
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) {
+      if (Array.isArray(value)) {
+        value.forEach((v) => url.searchParams.append(key, v));
+      } else {
+        url.searchParams.append(key, String(value));
+      }
+    }
+  }
+  
+  // Add API key
+  url.searchParams.append('apikey', FMP_API_KEY);
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; MazoAgent/1.0)',
+      'Accept': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    recordError({
+      status: response.status,
+      statusText: response.statusText,
+      endpoint,
+      ticker: params.ticker as string | undefined || params.symbol as string | undefined,
+    });
+    
+    let errorMessage = `FMP API request failed: ${response.status} ${response.statusText}`;
+    
+    if (response.status === 401) {
+      errorMessage = `FMP API key invalid or expired (401)`;
+    } else if (response.status === 429) {
+      errorMessage = `Rate limited (429). FMP API.`;
+    } else if (response.status === 403) {
+      errorMessage = `FMP API access denied - check subscription (403)`;
+    }
+    
+    throw new Error(errorMessage);
+  }
+
+  const data = await response.json();
+  return { data, url: url.toString(), source: 'FMP' };
+}
+
+/**
+ * Main API call function - routes to the appropriate data source.
+ * 
+ * When PRIMARY_DATA_SOURCE=fmp, calls FMP first.
+ * When PRIMARY_DATA_SOURCE=financial_datasets (or unset), calls Financial Datasets first.
+ * 
+ * Note: This function handles generic endpoints. For specific data types
+ * (prices, news, metrics), use the specialized functions in their modules
+ * which handle the full fallback chain.
+ */
+export async function callApi(
+  endpoint: string,
+  params: Record<string, string | number | string[] | undefined>
+): Promise<ApiResponse> {
+  const settings = getFallbackSettings();
+  
+  // Route based on primary data source
+  if (settings.isFmpPrimary) {
+    // FMP is primary - try FMP first, fallback to Financial Datasets
+    try {
+      // Map Financial Datasets endpoints to FMP equivalents
+      const fmpEndpoint = mapEndpointToFmp(endpoint);
+      if (fmpEndpoint) {
+        console.log(`[Mazo] Using FMP as primary for ${endpoint}`);
+        return await callFmpApi(fmpEndpoint, params);
+      }
+    } catch (fmpError) {
+      console.log(`[Mazo] FMP failed for ${endpoint}, falling back to Financial Datasets:`, fmpError);
+    }
+    
+    // Fallback to Financial Datasets
+    if (process.env.FINANCIAL_DATASETS_API_KEY) {
+      return await callFinancialDatasetsApi(endpoint, params);
+    }
+    
+    throw new Error(`No data source available for ${endpoint}`);
+  }
+  
+  // Financial Datasets is primary (legacy behavior)
+  return await callFinancialDatasetsApi(endpoint, params);
+}
+
+/**
+ * Map Financial Datasets API endpoints to FMP equivalents.
+ * Returns null if no mapping exists.
+ */
+function mapEndpointToFmp(endpoint: string): string | null {
+  // Price endpoints
+  if (endpoint.startsWith('/prices/')) {
+    return '/historical-price-eod/full';
+  }
+  if (endpoint.includes('/snapshot')) {
+    return '/quote';
+  }
+  
+  // Financial metrics
+  if (endpoint.startsWith('/financial-metrics/')) {
+    return '/key-metrics-ttm';
+  }
+  
+  // Company profile
+  if (endpoint.startsWith('/company/')) {
+    return '/profile';
+  }
+  
+  // News
+  if (endpoint.startsWith('/news/')) {
+    return '/news/stock';
+  }
+  
+  // Insider trades
+  if (endpoint.startsWith('/insider-trades/')) {
+    return '/insider-trading/search';
+  }
+  
+  // Financial statements
+  if (endpoint.includes('/income-statement')) {
+    return '/income-statement';
+  }
+  if (endpoint.includes('/balance-sheet')) {
+    return '/balance-sheet-statement';
+  }
+  if (endpoint.includes('/cash-flow')) {
+    return '/cash-flow-statement';
+  }
+  
+  // No direct mapping - return null to fall back
+  return null;
 }
 
 /**
@@ -212,29 +372,52 @@ export function shouldUseFmpFallback(dataType: 'prices' | 'metrics' | 'news' | '
 }
 
 /**
- * Call API with Yahoo Finance and FMP fallbacks.
- * If the primary API fails, tries Yahoo Finance first, then FMP as backups.
- * Respects fallback settings from environment variables.
+ * Call API with intelligent source selection and fallbacks.
+ * 
+ * Source priority based on PRIMARY_DATA_SOURCE:
+ * - fmp: FMP → Yahoo → Financial Datasets
+ * - alpaca: Alpaca → FMP → Yahoo (for prices/news only)
+ * - financial_datasets: Financial Datasets → Yahoo → FMP
+ * 
+ * @param financialDatasetsCall - Call to Financial Datasets API
+ * @param yahooFallbackCall - Call to Yahoo Finance
+ * @param fmpCall - Call to FMP API
+ * @param endpoint - Endpoint name for logging
+ * @param dataType - Type of data being fetched
  */
 export async function callApiWithFallback<T>(
-  primaryCall: () => Promise<ApiResponse>,
+  financialDatasetsCall: () => Promise<ApiResponse>,
   yahooFallbackCall: () => Promise<{ data: T; source: string } | null>,
-  fmpFallbackCall: (() => Promise<{ data: T; source: string } | null>) | null,
+  fmpCall: (() => Promise<{ data: T; source: string } | null>) | null,
   endpoint: string,
   dataType: 'prices' | 'metrics' | 'news' = 'prices'
 ): Promise<ApiResponse> {
-  try {
-    return await primaryCall();
-  } catch (primaryError) {
-    // Try Yahoo Finance first (free, no API key required)
+  const settings = getFallbackSettings();
+  
+  // When FMP is primary, try FMP first
+  if (settings.isFmpPrimary && fmpCall) {
+    console.log(`[Mazo] FMP is primary, trying FMP first for ${endpoint}`);
+    
+    try {
+      const fmpResult = await fmpCall();
+      if (fmpResult) {
+        console.log(`[Mazo] FMP succeeded for ${endpoint}`);
+        return {
+          data: fmpResult.data as Record<string, unknown>,
+          url: `fmp://${endpoint}`,
+          source: fmpResult.source,
+        };
+      }
+    } catch (fmpError) {
+      console.log(`[Mazo] FMP failed for ${endpoint}, trying fallbacks:`, fmpError);
+    }
+    
+    // FMP failed - try Yahoo as first fallback
     if (shouldUseYahooFallback(dataType)) {
-      console.log(`Primary API failed for ${endpoint}, trying Yahoo Finance fallback...`);
-      
       try {
         const yahooResult = await yahooFallbackCall();
-        
         if (yahooResult) {
-          console.log(`Yahoo Finance fallback succeeded for ${endpoint}`);
+          console.log(`[Mazo] Yahoo Finance fallback succeeded for ${endpoint}`);
           return {
             data: yahooResult.data as Record<string, unknown>,
             url: `yahoo-finance://${endpoint}`,
@@ -242,19 +425,55 @@ export async function callApiWithFallback<T>(
           };
         }
       } catch (yahooError) {
-        console.error(`Yahoo Finance fallback failed for ${endpoint}:`, yahooError);
+        console.log(`[Mazo] Yahoo Finance fallback failed for ${endpoint}:`, yahooError);
+      }
+    }
+    
+    // Try Financial Datasets as last resort
+    if (process.env.FINANCIAL_DATASETS_API_KEY) {
+      try {
+        return await financialDatasetsCall();
+      } catch (fdError) {
+        console.log(`[Mazo] Financial Datasets also failed for ${endpoint}:`, fdError);
+      }
+    }
+    
+    throw new Error(`All data sources failed for ${endpoint}`);
+  }
+  
+  // Financial Datasets is primary (legacy behavior)
+  try {
+    return await financialDatasetsCall();
+  } catch (primaryError) {
+    // Try Yahoo Finance first (free, no API key required)
+    if (shouldUseYahooFallback(dataType)) {
+      console.log(`[Mazo] Primary API failed for ${endpoint}, trying Yahoo Finance...`);
+      
+      try {
+        const yahooResult = await yahooFallbackCall();
+        
+        if (yahooResult) {
+          console.log(`[Mazo] Yahoo Finance fallback succeeded for ${endpoint}`);
+          return {
+            data: yahooResult.data as Record<string, unknown>,
+            url: `yahoo-finance://${endpoint}`,
+            source: yahooResult.source,
+          };
+        }
+      } catch (yahooError) {
+        console.error(`[Mazo] Yahoo Finance fallback failed for ${endpoint}:`, yahooError);
       }
     }
     
     // Try FMP second (requires API key)
-    if (fmpFallbackCall && shouldUseFmpFallback(dataType)) {
-      console.log(`Yahoo Finance failed, trying FMP fallback for ${endpoint}...`);
+    if (fmpCall && shouldUseFmpFallback(dataType)) {
+      console.log(`[Mazo] Trying FMP fallback for ${endpoint}...`);
       
       try {
-        const fmpResult = await fmpFallbackCall();
+        const fmpResult = await fmpCall();
         
         if (fmpResult) {
-          console.log(`FMP fallback succeeded for ${endpoint}`);
+          console.log(`[Mazo] FMP fallback succeeded for ${endpoint}`);
           return {
             data: fmpResult.data as Record<string, unknown>,
             url: `fmp://${endpoint}`,
@@ -262,7 +481,7 @@ export async function callApiWithFallback<T>(
           };
         }
       } catch (fmpError) {
-        console.error(`FMP fallback also failed for ${endpoint}:`, fmpError);
+        console.error(`[Mazo] FMP fallback also failed for ${endpoint}:`, fmpError);
       }
     }
     
