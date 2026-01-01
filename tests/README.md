@@ -44,6 +44,9 @@ tests/
 ├── agents/
 │   ├── __init__.py
 │   └── test_portfolio_manager.py       # Portfolio Manager tests
+├── monitoring/
+│   ├── __init__.py
+│   └── test_stale_detection.py         # Stale data detection tests
 ├── trading/
 │   ├── __init__.py
 │   └── test_automated_trading.py       # Automated Trading Service tests
@@ -55,6 +58,44 @@ tests/
 ---
 
 ## Test Modules
+
+### `tests/monitoring/test_stale_detection.py`
+
+Tests for stale data detection across the monitoring system.
+
+#### Test Classes
+
+| Class | Description |
+|-------|-------------|
+| `TestSchedulerHeartbeatDetection` | Scheduler heartbeat freshness detection |
+| `TestAlertManagerStaleAlerts` | P1/P0 alert generation for stale/down states |
+| `TestAgentSignalStaleness` | Agent signal age threshold detection |
+| `TestRateLimitStaleness` | Rate limit data freshness |
+| `TestDataFreshnessResponse` | API response structure validation |
+| `TestSystemStatusResponse` | System status response fields |
+| `TestHealthCheckerIntegration` | HealthChecker integration tests |
+
+#### Key Tests
+
+```bash
+# All stale detection tests
+pytest tests/monitoring/test_stale_detection.py -v
+
+# Scheduler heartbeat tests
+pytest tests/monitoring/test_stale_detection.py::TestSchedulerHeartbeatDetection -v
+
+# Alert generation tests
+pytest tests/monitoring/test_stale_detection.py::TestAlertManagerStaleAlerts -v
+```
+
+#### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SCHEDULER_STALE_THRESHOLD_MINUTES` | 10 | Minutes before scheduler is marked stale |
+| `DATA_STALE_THRESHOLD_MINUTES` | 60 | Minutes before agent data is marked stale |
+
+---
 
 ### 1. `tests/trading/test_automated_trading.py`
 
