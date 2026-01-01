@@ -2,6 +2,7 @@
  * AgentPerformanceTable
  * 
  * Displays agent performance metrics in a sortable table.
+ * Shows stale indicators when agent data is outdated.
  */
 
 import React, { useState, useMemo } from 'react';
@@ -20,8 +21,16 @@ import {
   ArrowUpDown, 
   TrendingUp, 
   TrendingDown,
-  Users
+  Users,
+  Clock,
+  AlertTriangle
 } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import useSWR from 'swr';
 import { API_BASE_URL } from '@/lib/api-config';
 
@@ -34,6 +43,31 @@ interface AgentPerformance {
   avg_confidence: number;
   bullish_signals: number;
   bearish_signals: number;
+  last_signal_at?: string;
+  is_stale?: boolean;
+}
+
+/**
+ * Format relative time (e.g., "5m ago", "2h ago")
+ */
+function formatRelativeTime(isoString?: string | null): string {
+  if (!isoString) return 'never';
+  
+  try {
+    const date = new Date(isoString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    const hours = Math.floor(diffMins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  } catch {
+    return 'unknown';
+  }
 }
 
 type SortKey = 'agent_id' | 'total_signals' | 'accuracy' | 'avg_confidence';
@@ -125,6 +159,9 @@ export function AgentPerformanceTable() {
     );
   }
   
+  // Count stale agents
+  const staleCount = sortedAgents.filter(a => a.is_stale).length;
+  
   return (
     <Card>
       <CardHeader>
@@ -133,10 +170,28 @@ export function AgentPerformanceTable() {
             <Users className="h-5 w-5" />
             Agent Performance
           </span>
-          <Badge variant="secondary">{agents.length} agents</Badge>
+          <div className="flex items-center gap-2">
+            {staleCount > 0 && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Badge variant="outline" className="text-amber-600 border-amber-400 bg-amber-50 gap-1">
+                      <Clock className="h-3 w-3" />
+                      {staleCount} stale
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{staleCount} agent(s) have no recent signals</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            <Badge variant="secondary">{agents.length} agents</Badge>
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent>
+        <TooltipProvider>
         {sortedAgents.length === 0 ? (
           <p className="text-center text-muted-foreground py-8">
             No agent performance data available yet.
@@ -160,6 +215,7 @@ export function AgentPerformanceTable() {
                   <SortHeader column="avg_confidence" label="Confidence" />
                 </TableHead>
                 <TableHead className="text-center">Bias</TableHead>
+                <TableHead className="text-center">Last Signal</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -168,9 +224,27 @@ export function AgentPerformanceTable() {
                              agent.bearish_signals > agent.bullish_signals ? 'bearish' : 'neutral';
                 
                 return (
-                  <TableRow key={agent.agent_id}>
+                  <TableRow 
+                    key={agent.agent_id}
+                    className={agent.is_stale ? 'bg-amber-50/50' : ''}
+                  >
                     <TableCell className="font-medium capitalize">
-                      {agent.agent_id.replace(/_/g, ' ')}
+                      <div className="flex items-center gap-2">
+                        {agent.agent_id.replace(/_/g, ' ')}
+                        {agent.is_stale && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Clock className="h-3 w-3 text-amber-500 cursor-help" />
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>No signals in over 1 hour</p>
+                              {agent.last_signal_at && (
+                                <p className="text-xs">Last: {formatRelativeTime(agent.last_signal_at)}</p>
+                              )}
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-right">
                       {agent.total_signals}
@@ -201,12 +275,16 @@ export function AgentPerformanceTable() {
                         {bias}
                       </Badge>
                     </TableCell>
+                    <TableCell className="text-center text-xs text-muted-foreground">
+                      {agent.last_signal_at ? formatRelativeTime(agent.last_signal_at) : 'never'}
+                    </TableCell>
                   </TableRow>
                 );
               })}
             </TableBody>
           </Table>
         )}
+        </TooltipProvider>
       </CardContent>
     </Card>
   );

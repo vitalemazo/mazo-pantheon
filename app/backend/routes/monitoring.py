@@ -47,6 +47,18 @@ class SystemStatusResponse(BaseModel):
     redis: Dict[str, Any]
     database: Dict[str, Any]
     rate_limits: Dict[str, Dict[str, Any]]
+    last_updated: Optional[str] = None  # ISO timestamp of this response
+
+
+class DataFreshnessInfo(BaseModel):
+    """Data freshness timestamps for metrics"""
+    last_workflow_at: Optional[str] = None
+    last_signal_at: Optional[str] = None
+    last_trade_at: Optional[str] = None
+    last_pm_decision_at: Optional[str] = None
+    minutes_since_workflow: Optional[int] = None
+    minutes_since_signal: Optional[int] = None
+    is_stale: bool = False  # True if data is older than threshold
 
 
 class PerformanceMetricsResponse(BaseModel):
@@ -68,6 +80,8 @@ class AgentPerformanceResponse(BaseModel):
     avg_confidence: float = 0.0
     bullish_signals: int = 0
     bearish_signals: int = 0
+    last_signal_at: Optional[str] = None
+    is_stale: bool = False  # True if last signal > 1 hour ago
 
 
 # =============================================================================
@@ -229,7 +243,7 @@ async def run_pre_market_check():
 async def get_system_status():
     """Get comprehensive system status including rate limits."""
     try:
-        from src.monitoring import get_rate_limit_monitor, get_health_checker
+        from src.monitoring import get_rate_limit_monitor, get_health_checker, get_alert_manager
         from src.data.cache import get_cache
         
         # Rate limits
@@ -240,10 +254,16 @@ async def get_system_status():
         cache = get_cache()
         cache_stats = cache.get_stats()
         
+        # Stale threshold in minutes (configurable via env)
+        import os
+        stale_threshold_minutes = int(os.getenv("SCHEDULER_STALE_THRESHOLD_MINUTES", "10"))
+        
         # Scheduler status - check heartbeat recency
         scheduler_status = {
             "status": "unknown",
             "message": "Check logs for scheduler status",
+            "last_heartbeat": None,
+            "minutes_since": None,
         }
         try:
             from sqlalchemy import text
@@ -257,13 +277,47 @@ async def get_system_status():
                 row = result.fetchone()
                 if row and row[0]:
                     last_heartbeat = row[0]
+                    # Ensure timezone-aware comparison
+                    if last_heartbeat.tzinfo is None:
+                        last_heartbeat = last_heartbeat.replace(tzinfo=timezone.utc)
                     age = datetime.now(timezone.utc) - last_heartbeat
-                    if age < timedelta(minutes=10):
-                        scheduler_status = {"status": "healthy", "last_heartbeat": last_heartbeat.isoformat()}
+                    minutes_since = int(age.total_seconds() / 60)
+                    
+                    if age < timedelta(minutes=stale_threshold_minutes):
+                        scheduler_status = {
+                            "status": "healthy",
+                            "last_heartbeat": last_heartbeat.isoformat(),
+                            "minutes_since": minutes_since,
+                        }
                     else:
-                        scheduler_status = {"status": "stale", "last_heartbeat": last_heartbeat.isoformat()}
+                        scheduler_status = {
+                            "status": "stale",
+                            "last_heartbeat": last_heartbeat.isoformat(),
+                            "minutes_since": minutes_since,
+                            "message": f"No heartbeat for {minutes_since} minutes",
+                        }
+                        # Trigger P1 alert for stale scheduler
+                        try:
+                            alert_manager = get_alert_manager()
+                            alert_manager.alert_system_health(
+                                component="scheduler",
+                                status="stale",
+                                message=f"Scheduler heartbeat stale for {minutes_since} minutes",
+                                details={
+                                    "last_heartbeat": last_heartbeat.isoformat(),
+                                    "minutes_since": minutes_since,
+                                    "threshold_minutes": stale_threshold_minutes,
+                                }
+                            )
+                        except Exception as alert_err:
+                            logger.debug(f"Failed to create stale alert: {alert_err}")
                 else:
-                    scheduler_status = {"status": "no_heartbeats", "message": "No heartbeats recorded"}
+                    scheduler_status = {
+                        "status": "no_heartbeats",
+                        "message": "No heartbeats recorded",
+                        "last_heartbeat": None,
+                        "minutes_since": None,
+                    }
         except Exception as sched_err:
             logger.debug(f"Failed to check scheduler: {sched_err}")
         
@@ -271,27 +325,54 @@ async def get_system_status():
         db_status = {
             "status": "unknown",
             "message": "Run health check for full status",
+            "last_updated": None,
         }
         try:
             from sqlalchemy import text
             from app.backend.database.connection import engine
+            import time
             
+            start = time.time()
             with engine.connect() as conn:
                 result = conn.execute(text("SELECT 1"))
-                db_status = {"status": "healthy", "latency_ms": 1}
+                latency = int((time.time() - start) * 1000)
+                db_status = {
+                    "status": "healthy",
+                    "latency_ms": latency,
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
+                }
         except Exception as db_err:
             db_status = {"status": "error", "message": str(db_err)}
         
+        # Redis status with last_updated
+        redis_status = {
+            "status": "healthy" if cache_stats.get("backend") == "redis" else "degraded",
+            "backend": cache_stats.get("backend", "unknown"),
+            "keys": cache_stats.get("redis_keys", 0),
+            "memory": cache_stats.get("redis_used_memory", "unknown"),
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }
+        
+        # Add last_updated timestamps to rate limits
+        for api_name in rate_limits:
+            if "last_call_at" not in rate_limits[api_name] or rate_limits[api_name]["last_call_at"] is None:
+                rate_limits[api_name]["is_stale"] = True
+            else:
+                # Check if rate limit data is stale (> 1 hour old)
+                try:
+                    last_call = datetime.fromisoformat(rate_limits[api_name]["last_call_at"].replace("Z", "+00:00"))
+                    age_minutes = int((datetime.now(timezone.utc) - last_call).total_seconds() / 60)
+                    rate_limits[api_name]["minutes_since_update"] = age_minutes
+                    rate_limits[api_name]["is_stale"] = age_minutes > 60
+                except Exception:
+                    rate_limits[api_name]["is_stale"] = True
+        
         return SystemStatusResponse(
             scheduler=scheduler_status,
-            redis={
-                "status": "healthy" if cache_stats.get("backend") == "redis" else "degraded",
-                "backend": cache_stats.get("backend", "unknown"),
-                "keys": cache_stats.get("redis_keys", 0),
-                "memory": cache_stats.get("redis_used_memory", "unknown"),
-            },
+            redis=redis_status,
             database=db_status,
             rate_limits=rate_limits,
+            last_updated=datetime.now(timezone.utc).isoformat(),
         )
         
     except Exception as e:
@@ -439,24 +520,59 @@ async def get_agent_performance(
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
     agent_id: Optional[str] = Query(None, description="Filter by specific agent"),
 ):
-    """Get agent performance metrics."""
+    """Get agent performance metrics with freshness info."""
     try:
         from src.monitoring import get_analytics_service
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
         
         analytics = get_analytics_service()
         metrics = await analytics.get_agent_performance(days=days, agent_id=agent_id)
         
-        return [
-            AgentPerformanceResponse(
+        # Get last signal timestamps per agent
+        agent_timestamps = {}
+        stale_threshold_minutes = 60  # 1 hour
+        try:
+            with engine.connect() as conn:
+                result = conn.execute(text("""
+                    SELECT agent_id, MAX(timestamp) as last_signal
+                    FROM agent_signals
+                    WHERE timestamp > NOW() - INTERVAL :days_interval
+                    GROUP BY agent_id
+                """), {"days_interval": f"{days} days"})
+                
+                for row in result.fetchall():
+                    agent_timestamps[row[0]] = row[1]
+        except Exception as e:
+            logger.debug(f"Could not get agent timestamps: {e}")
+        
+        responses = []
+        for m in metrics.values():
+            last_signal = agent_timestamps.get(m.agent_id)
+            is_stale = False
+            last_signal_iso = None
+            
+            if last_signal:
+                if last_signal.tzinfo is None:
+                    last_signal = last_signal.replace(tzinfo=timezone.utc)
+                last_signal_iso = last_signal.isoformat()
+                age_minutes = (datetime.now(timezone.utc) - last_signal).total_seconds() / 60
+                is_stale = age_minutes > stale_threshold_minutes
+            else:
+                is_stale = True  # No signals = stale
+            
+            responses.append(AgentPerformanceResponse(
                 agent_id=m.agent_id,
                 total_signals=m.total_signals,
                 accuracy=m.accuracy,
                 avg_confidence=m.avg_confidence,
                 bullish_signals=m.bullish_signals,
                 bearish_signals=m.bearish_signals,
-            )
-            for m in metrics.values()
-        ]
+                last_signal_at=last_signal_iso,
+                is_stale=is_stale,
+            ))
+        
+        return responses
         
     except Exception as e:
         logger.error(f"Failed to get agent performance: {e}")
@@ -496,6 +612,85 @@ async def get_execution_quality(
         
     except Exception as e:
         logger.error(f"Failed to get execution quality: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.get("/metrics/freshness", response_model=DataFreshnessInfo)
+async def get_data_freshness():
+    """Get data freshness timestamps for all key metrics."""
+    try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        import os
+        
+        stale_threshold_minutes = int(os.getenv("DATA_STALE_THRESHOLD_MINUTES", "60"))
+        now = datetime.now(timezone.utc)
+        
+        freshness = DataFreshnessInfo()
+        
+        with engine.connect() as conn:
+            # Last workflow
+            try:
+                result = conn.execute(text("SELECT MAX(timestamp) FROM workflow_events"))
+                row = result.fetchone()
+                if row and row[0]:
+                    last_workflow = row[0]
+                    if last_workflow.tzinfo is None:
+                        last_workflow = last_workflow.replace(tzinfo=timezone.utc)
+                    freshness.last_workflow_at = last_workflow.isoformat()
+                    freshness.minutes_since_workflow = int((now - last_workflow).total_seconds() / 60)
+            except Exception:
+                pass
+            
+            # Last agent signal
+            try:
+                result = conn.execute(text("SELECT MAX(timestamp) FROM agent_signals"))
+                row = result.fetchone()
+                if row and row[0]:
+                    last_signal = row[0]
+                    if last_signal.tzinfo is None:
+                        last_signal = last_signal.replace(tzinfo=timezone.utc)
+                    freshness.last_signal_at = last_signal.isoformat()
+                    freshness.minutes_since_signal = int((now - last_signal).total_seconds() / 60)
+            except Exception:
+                pass
+            
+            # Last trade
+            try:
+                result = conn.execute(text("SELECT MAX(timestamp) FROM trade_executions"))
+                row = result.fetchone()
+                if row and row[0]:
+                    last_trade = row[0]
+                    if last_trade.tzinfo is None:
+                        last_trade = last_trade.replace(tzinfo=timezone.utc)
+                    freshness.last_trade_at = last_trade.isoformat()
+            except Exception:
+                pass
+            
+            # Last PM decision
+            try:
+                result = conn.execute(text("SELECT MAX(timestamp) FROM pm_decisions"))
+                row = result.fetchone()
+                if row and row[0]:
+                    last_pm = row[0]
+                    if last_pm.tzinfo is None:
+                        last_pm = last_pm.replace(tzinfo=timezone.utc)
+                    freshness.last_pm_decision_at = last_pm.isoformat()
+            except Exception:
+                pass
+        
+        # Determine if data is stale
+        if freshness.minutes_since_workflow and freshness.minutes_since_workflow > stale_threshold_minutes:
+            freshness.is_stale = True
+        elif freshness.minutes_since_signal and freshness.minutes_since_signal > stale_threshold_minutes:
+            freshness.is_stale = True
+        elif freshness.last_workflow_at is None and freshness.last_signal_at is None:
+            freshness.is_stale = True
+        
+        return freshness
+        
+    except Exception as e:
+        logger.error(f"Failed to get data freshness: {e}")
         raise HTTPException(500, str(e))
 
 

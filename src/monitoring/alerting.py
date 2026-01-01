@@ -332,28 +332,55 @@ class AlertManager:
     
     def alert_system_health(
         self,
-        service: str,
-        issue: str,
+        component: str = None,
+        service: str = None,
+        status: str = None,
+        issue: str = None,
+        message: str = None,
         details: Dict = None,
     ):
-        """Create an alert for system health issues."""
-        critical_issues = ["auth_failed", "connection_failed", "scheduler_dead"]
+        """
+        Create an alert for system health issues.
         
-        if issue in critical_issues:
+        Args:
+            component: System component (scheduler, database, redis)
+            service: Service name (legacy alias for component)
+            status: Component status (stale, down, error)
+            issue: Issue type (legacy)
+            message: Human-readable message
+            details: Additional details
+        """
+        # Support both old and new API
+        svc = component or service or "unknown"
+        iss = status or issue or "unknown"
+        msg = message or f"{svc} issue: {iss}"
+        
+        critical_issues = ["auth_failed", "connection_failed", "scheduler_dead", "down", "error"]
+        warning_issues = ["stale", "degraded", "warn"]
+        
+        if iss in critical_issues:
             self.create_alert(
                 priority=AlertPriority.P0,
                 category=AlertCategory.SYSTEM,
-                title=f"{service} critical: {issue}",
-                details=details or {},
-                service=service,
+                title=f"{svc} critical: {iss}",
+                details={"message": msg, **(details or {})},
+                service=svc,
             )
-        else:
+        elif iss in warning_issues:
             self.create_alert(
                 priority=AlertPriority.P1,
                 category=AlertCategory.SYSTEM,
-                title=f"{service} issue: {issue}",
-                details=details or {},
-                service=service,
+                title=f"{svc} warning: {iss}",
+                details={"message": msg, **(details or {})},
+                service=svc,
+            )
+        else:
+            self.create_alert(
+                priority=AlertPriority.P2,
+                category=AlertCategory.SYSTEM,
+                title=f"{svc} info: {iss}",
+                details={"message": msg, **(details or {})},
+                service=svc,
             )
     
     def alert_health_check_failed(
