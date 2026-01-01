@@ -115,6 +115,31 @@ class SignalConfig:
     )
 
 
+@dataclass
+class CooldownConfig:
+    """Trade cooldown and concentration parameters."""
+    
+    # Minimum minutes between trades for the same ticker
+    trade_cooldown_minutes: int = field(
+        default_factory=lambda: _env_int("TRADE_COOLDOWN_MINUTES", 30)
+    )
+    
+    # Maximum portfolio percentage allowed per ticker (0.10 = 10%)
+    max_position_pct_per_ticker: float = field(
+        default_factory=lambda: _env_float("MAX_POSITION_PCT_PER_TICKER", 0.15)
+    )
+    
+    # Enable/disable cooldown checks
+    cooldown_enabled: bool = field(
+        default_factory=lambda: _env_bool("TRADE_COOLDOWN_ENABLED", True)
+    )
+    
+    # Enable/disable concentration checks
+    concentration_check_enabled: bool = field(
+        default_factory=lambda: _env_bool("TRADE_CONCENTRATION_CHECK_ENABLED", True)
+    )
+
+
 @dataclass  
 class CapitalConfig:
     """Capital management parameters."""
@@ -257,6 +282,7 @@ class TradingConfig:
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     data: DataConfig = field(default_factory=DataConfig)
+    cooldown: CooldownConfig = field(default_factory=CooldownConfig)
     
     def to_dict(self) -> dict:
         """Export configuration as dictionary."""
@@ -318,3 +344,7 @@ def get_model_config() -> ModelConfig:
 
 def get_data_config() -> DataConfig:
     return get_trading_config().data
+
+
+def get_cooldown_config() -> CooldownConfig:
+    return get_trading_config().cooldown

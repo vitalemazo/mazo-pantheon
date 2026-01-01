@@ -20,13 +20,17 @@ from enum import Enum
 from src.trading.strategy_engine import get_strategy_engine, TradingSignal, SignalDirection
 from src.trading.alpaca_service import AlpacaService
 from src.trading.performance_tracker import get_performance_tracker
-from src.trading.config import get_signal_config, get_capital_config, get_scanner_config
+from src.trading.config import get_signal_config, get_capital_config, get_scanner_config, get_cooldown_config
 from src.graph.portfolio_context import build_portfolio_context, PortfolioContext
 from integration.mazo_bridge import MazoBridge
 from integration.unified_workflow import UnifiedWorkflow, execute_trades
 from src.trading.trade_history_service import TradeHistoryService, TradeRecord, get_trade_history_service
 
 logger = logging.getLogger(__name__)
+
+
+# In-memory cooldown tracker (ticker -> last trade timestamp)
+_trade_cooldowns: Dict[str, datetime] = {}
 
 
 class TradeDecision(Enum):
@@ -129,6 +133,158 @@ class AutomatedTradingService:
         self.last_run: Optional[datetime] = None
         self.last_result: Optional[AutomatedTradeResult] = None
         self.run_history: List[AutomatedTradeResult] = []
+        
+        # Cooldown config
+        self.cooldown_config = get_cooldown_config()
+    
+    def _check_cooldown(self, ticker: str) -> Tuple[bool, str]:
+        """
+        Check if a ticker is in cooldown period.
+        
+        Returns:
+            (can_trade, reason) - True if trade allowed, False with reason if blocked
+        """
+        global _trade_cooldowns
+        
+        if not self.cooldown_config.cooldown_enabled:
+            return True, ""
+        
+        last_trade_time = _trade_cooldowns.get(ticker)
+        if not last_trade_time:
+            return True, ""
+        
+        cooldown_minutes = self.cooldown_config.trade_cooldown_minutes
+        elapsed = (datetime.now() - last_trade_time).total_seconds() / 60
+        
+        if elapsed < cooldown_minutes:
+            remaining = int(cooldown_minutes - elapsed)
+            reason = f"Cooldown active: traded {int(elapsed)}m ago, {remaining}m remaining"
+            return False, reason
+        
+        return True, ""
+    
+    def _check_concentration(self, ticker: str, quantity: int, price: float) -> Tuple[bool, str]:
+        """
+        Check if adding this position would exceed concentration limits.
+        
+        Returns:
+            (can_trade, reason) - True if trade allowed, False with reason if blocked
+        """
+        if not self.cooldown_config.concentration_check_enabled:
+            return True, ""
+        
+        try:
+            account = self.alpaca.get_account()
+            positions = self.alpaca.get_positions()
+            
+            if not account:
+                return True, ""  # Can't check, allow trade
+            
+            portfolio_value = float(account.portfolio_value)
+            max_pct = self.cooldown_config.max_position_pct_per_ticker
+            max_value = portfolio_value * max_pct
+            
+            # Get current position value in this ticker
+            current_value = 0.0
+            for pos in (positions or []):
+                if pos.symbol.upper() == ticker.upper():
+                    current_value = abs(float(pos.market_value))
+                    break
+            
+            # Calculate new total value
+            new_trade_value = quantity * price
+            total_value = current_value + new_trade_value
+            
+            if total_value > max_value:
+                current_pct = (current_value / portfolio_value) * 100
+                new_pct = (total_value / portfolio_value) * 100
+                max_pct_display = max_pct * 100
+                reason = (
+                    f"Concentration limit: {ticker} would be {new_pct:.1f}% of portfolio "
+                    f"(current: {current_pct:.1f}%, max: {max_pct_display:.1f}%)"
+                )
+                return False, reason
+            
+            return True, ""
+            
+        except Exception as e:
+            logger.warning(f"Concentration check failed: {e}")
+            return True, ""  # Allow on error
+    
+    def _record_cooldown(self, ticker: str):
+        """Record that a trade was executed for cooldown tracking."""
+        global _trade_cooldowns
+        _trade_cooldowns[ticker] = datetime.now()
+        logger.debug(f"Recorded cooldown for {ticker}")
+    
+    def _serialize_agent_signals(self, analysis: Optional['AnalysisResult']) -> Dict[str, Any]:
+        """
+        Serialize agent signals to a JSON-friendly dict with real agent names.
+        
+        Handles various input formats:
+        - Dataclasses (AgentSignal)
+        - Nested dicts {ticker: {agent: signal_data}}
+        - Flat dicts {agent: signal_data}
+        
+        Returns:
+            Dict mapping agent_name -> {signal, confidence, reasoning}
+        """
+        from dataclasses import asdict, is_dataclass
+        
+        if not analysis or not hasattr(analysis, 'analyst_signals'):
+            return {}
+        
+        raw_signals = analysis.analyst_signals or {}
+        serialized = {}
+        
+        def extract_signal_data(obj) -> Optional[Dict[str, Any]]:
+            """Extract signal, confidence, reasoning from various formats."""
+            if obj is None:
+                return None
+            
+            if is_dataclass(obj) and not isinstance(obj, type):
+                # Convert dataclass to dict
+                try:
+                    obj = asdict(obj)
+                except Exception:
+                    obj = {
+                        "signal": getattr(obj, 'signal', getattr(obj, 'sig', 'neutral')),
+                        "confidence": getattr(obj, 'confidence', getattr(obj, 'conf', 50)),
+                        "reasoning": getattr(obj, 'reasoning', ''),
+                    }
+            
+            if isinstance(obj, dict):
+                return {
+                    "signal": str(obj.get("signal", obj.get("sig", "neutral"))),
+                    "confidence": float(obj.get("confidence", obj.get("conf", 50)) or 50),
+                    "reasoning": str(obj.get("reasoning", ""))[:500] if obj.get("reasoning") else None,
+                }
+            
+            return None
+        
+        # Handle nested format: {ticker: {agent: signal_data}}
+        for key, value in raw_signals.items():
+            if isinstance(value, dict):
+                # Check if this is a nested ticker->agent format
+                first_val = next(iter(value.values()), None) if value else None
+                if isinstance(first_val, dict) and any(k in first_val for k in ['signal', 'sig', 'confidence', 'conf']):
+                    # This is {ticker: {agent: signal_data}} - extract agent level
+                    for agent_name, agent_data in value.items():
+                        signal_dict = extract_signal_data(agent_data)
+                        if signal_dict:
+                            serialized[agent_name] = signal_dict
+                else:
+                    # This might be {agent: signal_data} directly
+                    signal_dict = extract_signal_data(value)
+                    if signal_dict:
+                        serialized[key] = signal_dict
+            else:
+                # Could be a dataclass
+                signal_dict = extract_signal_data(value)
+                if signal_dict:
+                    serialized[key] = signal_dict
+        
+        return serialized
     
     async def run_trading_cycle(
         self,
@@ -268,14 +424,9 @@ class AutomatedTradingService:
                                         except Exception as pm_err:
                                             logger.debug(f"Failed to update PM execution: {pm_err}")
                                     
-                                    # Track in performance tracker
-                                    self.performance_tracker.record_trade(
-                                        ticker=signal.ticker,
-                                        action=action,
-                                        quantity=analysis.pm_decision.get("quantity", 0),
-                                        price=trade_result.get("filled_price", signal.entry_price),
-                                        strategy=signal.strategy,
-                                    )
+                                    # NOTE: Trade is now recorded via TradeHistoryService in _execute_trade
+                                    # PerformanceTracker reads from the same table for metrics
+                                    # (Removed duplicate record_trade call to prevent double inserts)
                                 
                                 result.results.append({
                                     "ticker": signal.ticker,
@@ -954,6 +1105,59 @@ class AutomatedTradingService:
             if action == "hold" or quantity == 0:
                 return {"success": True, "message": "No trade needed (hold)"}
             
+            # =============================================
+            # COOLDOWN CHECK - Prevent duplicate trades
+            # =============================================
+            if action in ["buy", "short"]:  # Only check on opening positions
+                can_trade, cooldown_reason = self._check_cooldown(ticker)
+                if not can_trade:
+                    logger.info(f"⏳ Skipping {ticker}: {cooldown_reason}")
+                    try:
+                        event_logger.log_trade_execution(
+                            order_id=f"cooldown_skip_{ticker}_{datetime.now().timestamp()}",
+                            ticker=ticker,
+                            side=action,
+                            quantity=float(quantity),
+                            order_type="market",
+                            status="skipped",
+                            submitted_at=datetime.now(),
+                            reject_reason=cooldown_reason,
+                        )
+                    except Exception:
+                        pass
+                    return {"success": False, "message": cooldown_reason, "skipped": True, "reason": "cooldown"}
+            
+            # =============================================
+            # CONCENTRATION CHECK - Prevent over-exposure
+            # =============================================
+            if action in ["buy", "short"]:
+                entry_price = signal.entry_price if signal else pm_decision.get("entry_price", 0)
+                if entry_price <= 0:
+                    # Try to get current price
+                    try:
+                        quote = self.alpaca.get_quote(ticker)
+                        entry_price = float(quote.ask_price) if quote else 0
+                    except Exception:
+                        entry_price = 100  # Fallback
+                
+                can_trade, concentration_reason = self._check_concentration(ticker, quantity, entry_price)
+                if not can_trade:
+                    logger.info(f"📊 Skipping {ticker}: {concentration_reason}")
+                    try:
+                        event_logger.log_trade_execution(
+                            order_id=f"concentration_skip_{ticker}_{datetime.now().timestamp()}",
+                            ticker=ticker,
+                            side=action,
+                            quantity=float(quantity),
+                            order_type="market",
+                            status="skipped",
+                            submitted_at=datetime.now(),
+                            reject_reason=concentration_reason,
+                        )
+                    except Exception:
+                        pass
+                    return {"success": False, "message": concentration_reason, "skipped": True, "reason": "concentration"}
+            
             # Map action to order side
             if action in ["buy", "cover"]:
                 side = OrderSide.BUY
@@ -1000,24 +1204,25 @@ class AutomatedTradingService:
                 except Exception as log_err:
                     logger.warning(f"Failed to log trade execution: {log_err}")
                 
-                # Record trade with full context to TradeHistory
+                # Record cooldown for this ticker
+                self._record_cooldown(ticker)
+                
+                # Record trade with full context to TradeHistory (SINGLE SOURCE OF TRUTH)
                 try:
                     if self.trade_history:
-                        # Build agent signals dict from analysis
-                        agent_signals = {}
-                        if analysis and hasattr(analysis, 'analyst_signals'):
-                            agent_signals = analysis.analyst_signals or {}
+                        # Build agent signals dict - properly serialize to JSON-friendly format
+                        agent_signals = self._serialize_agent_signals(analysis)
                         
-                        # Get consensus info
+                        # Get consensus info from serialized signals
                         bullish_count = 0
                         bearish_count = 0
                         neutral_count = 0
                         for agent_name, sig_data in agent_signals.items():
                             if isinstance(sig_data, dict):
-                                sig = sig_data.get("signal", "").lower()
+                                sig = str(sig_data.get("signal", "")).lower()
                                 if "bullish" in sig or "buy" in sig:
                                     bullish_count += 1
-                                elif "bearish" in sig or "sell" in sig:
+                                elif "bearish" in sig or "sell" in sig or "short" in sig:
                                     bearish_count += 1
                                 else:
                                     neutral_count += 1

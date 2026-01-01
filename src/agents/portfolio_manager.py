@@ -133,12 +133,14 @@ def compute_allowed_actions(
         current_prices: dict[str, float],
         max_shares: dict[str, int],
         portfolio: dict[str, float],
-) -> dict[str, dict[str, int]]:
+) -> dict[str, dict[str, any]]:
     """Compute allowed actions and max quantities for each ticker.
     
-    NOTE: We always include ALL actions to give the LLM full autonomy.
-    The LLM can decide to take any action based on its analysis.
-    Quantity constraints are advisory, not blocking.
+    NOTE: We include all actions but respect risk manager limits.
+    If max_shares is 0 for a ticker, buy/short are blocked (not artificially floored to 1).
+    
+    Returns:
+        Dict of ticker -> {action: max_qty, ..., "_reason": str (if blocked)}
     """
     allowed = {}
     cash = float(portfolio.get("cash", 0.0))
@@ -164,51 +166,83 @@ def compute_allowed_actions(
         ticker_pending = [o for o in pending_orders if o.get('symbol') == ticker]
         has_pending = len(ticker_pending) > 0
 
-        # ALWAYS include all actions - let LLM decide
         actions = {}
+        block_reason = None
 
+        # Check if price data is missing
+        if price <= 0:
+            block_reason = f"Missing price data for {ticker}"
+            actions["buy"] = 0
+            actions["short"] = 0
+            actions["sell"] = long_shares if long_shares > 0 else 0
+            actions["cover"] = short_shares if short_shares > 0 else 0
+            actions["hold"] = 0
+            actions["_reason"] = block_reason
+            allowed[ticker] = actions
+            continue
+        
+        # Check if risk manager explicitly set max_qty to 0
+        if max_qty == 0:
+            block_reason = f"Risk limit: max position is 0 for {ticker}"
+        
         # BUY: Limited by cash/buying power and risk limits
-        if price > 0:
-            max_buy_cash = int(buying_power // price)
-            max_buy = max(1, min(max_qty, max_buy_cash)) if max_buy_cash > 0 else 0
-            # For paper trading, allow at least some shares if we have any buying power
-            if is_paper and max_buy == 0 and buying_power > price:
-                max_buy = int(buying_power // price)
-            actions["buy"] = max_buy
+        max_buy_cash = int(buying_power // price) if price > 0 else 0
+        if max_qty > 0 and max_buy_cash > 0:
+            # Both risk and cash allow trading
+            max_buy = min(max_qty, max_buy_cash)
+        elif is_paper and max_buy_cash > 0 and max_qty == 0:
+            # Paper trading: allow small position even if risk manager didn't run
+            # But only if risk data is missing (not explicitly blocked)
+            if "risk" not in str(max_shares.get(f"_{ticker}_reason", "")).lower():
+                max_buy = min(max_buy_cash, 5)  # Cap at 5 for paper safety
+            else:
+                max_buy = 0  # Explicitly blocked by risk
+        else:
+            max_buy = 0
+        actions["buy"] = max_buy
 
         # SELL: Can sell whatever long position we have
         actions["sell"] = long_shares if long_shares > 0 else 0
 
-        # SHORT: Limited by margin
-        if price > 0:
+        # SHORT: Limited by margin and risk
+        if max_qty > 0 and price > 0:
             if margin_requirement <= 0.0:
                 max_short = max_qty
             else:
                 available_margin = max(0.0, (equity / margin_requirement) - margin_used)
                 max_short_margin = int(available_margin // price)
-                max_short = max(0, min(max_qty, max_short_margin))
-            # For paper trading, be more generous
-            if is_paper and max_short == 0 and equity > 0:
-                max_short = max(1, int(equity * 0.3 / price))  # Allow up to 30% of equity
-            actions["short"] = max_short
+                max_short = min(max_qty, max_short_margin)
+        elif is_paper and equity > 0 and price > 0 and max_qty == 0:
+            # Paper trading: small short if not explicitly blocked
+            if "risk" not in str(max_shares.get(f"_{ticker}_reason", "")).lower():
+                max_short = min(5, int(equity * 0.1 / price))  # Cap at 10% of equity / 5 shares
+            else:
+                max_short = 0
+        else:
+            max_short = 0
+        actions["short"] = max_short
 
         # COVER: Can cover whatever short position we have  
         actions["cover"] = short_shares if short_shares > 0 else 0
 
         # REDUCE_LONG: Partial sell of long position (for rebalancing)
         if long_shares > 1:
-            actions["reduce_long"] = long_shares - 1  # Can reduce down to 1 share
-        
+            actions["reduce_long"] = long_shares - 1
+
         # REDUCE_SHORT: Partial cover of short position (for rebalancing)
         if short_shares > 1:
-            actions["reduce_short"] = short_shares - 1  # Can reduce down to 1 share
+            actions["reduce_short"] = short_shares - 1
 
         # HOLD: Always available
         actions["hold"] = 0
         
         # CANCEL: Available if there are pending orders
         if has_pending:
-            actions["cancel"] = len(ticker_pending)  # Number of orders that can be cancelled
+            actions["cancel"] = len(ticker_pending)
+        
+        # Add reason if blocked
+        if block_reason:
+            actions["_reason"] = block_reason
 
         allowed[ticker] = actions
 

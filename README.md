@@ -578,6 +578,12 @@ POSTGRES_PASSWORD=your-secure-password
 AUTO_TRADING_ENABLED=false   # Set to true to enable
 TRADING_INTERVAL_MINUTES=30  # How often to scan
 
+# Trade Cooldown & Concentration Limits
+TRADE_COOLDOWN_MINUTES=30    # Min minutes between trades for same ticker
+MAX_POSITION_PCT_PER_TICKER=0.15  # Max 15% of portfolio per ticker
+TRADE_COOLDOWN_ENABLED=true  # Enable/disable cooldown checks
+TRADE_CONCENTRATION_CHECK_ENABLED=true  # Enable/disable concentration checks
+
 # ===========================================
 # CACHE TTL (Optional - in seconds)
 # ===========================================
