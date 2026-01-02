@@ -164,6 +164,7 @@ class RateLimitMonitor:
                 window_start=quota.window_start,
                 window_resets_at=quota.window_resets_at,
                 utilization_pct=utilization,
+                last_call_at=quota.last_call_at,
             )
             
             # Log system health

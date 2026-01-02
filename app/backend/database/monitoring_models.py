@@ -440,6 +440,9 @@ class RateLimitTracking(Base):
     # Utilization
     utilization_pct = Column(Float, nullable=True)  # 0-100
     
+    # Tracking when last API call was made
+    last_call_at = Column(DateTime(timezone=True), nullable=True)
+    
     __table_args__ = (
         Index('idx_rate_limit_api', 'api_name'),
     )

@@ -388,11 +388,13 @@ async def get_rate_limits():
         from app.backend.database.connection import engine
         
         # Get latest rate limit status for each API from database
+        # Uses COALESCE to prefer last_call_at column, falling back to timestamp
         query = """
             WITH latest AS (
                 SELECT DISTINCT ON (api_name) 
                     api_name, calls_made, calls_remaining, 
-                    utilization_pct, window_resets_at, timestamp
+                    utilization_pct, window_resets_at, 
+                    COALESCE(last_call_at, timestamp) as last_call_at
                 FROM rate_limit_tracking
                 ORDER BY api_name, timestamp DESC
             )
@@ -691,6 +693,65 @@ async def get_data_freshness():
         
     except Exception as e:
         logger.error(f"Failed to get data freshness: {e}")
+        raise HTTPException(500, str(e))
+
+
+# =============================================================================
+# ACCURACY BACKFILL ENDPOINT
+# =============================================================================
+
+@router.post("/accuracy/backfill")
+async def trigger_accuracy_backfill(
+    days: int = Query(30, ge=1, le=365, description="Days to look back for closed trades"),
+):
+    """
+    Trigger a backfill of agent accuracy metrics from closed trades.
+    
+    This updates:
+    - pm_decisions.was_profitable (from realized P&L)
+    - agent_signals.was_correct (bullish/bearish vs trade outcome)
+    
+    After running, /monitoring/metrics/agents will reflect real accuracy.
+    """
+    try:
+        from src.monitoring.accuracy_backfill import get_accuracy_backfill_service
+        
+        service = get_accuracy_backfill_service()
+        result = await service.backfill_from_closed_trades(days=days)
+        
+        return {
+            "success": len(result.errors) == 0,
+            "trades_processed": result.trades_processed,
+            "pm_decisions_updated": result.pm_decisions_updated,
+            "agent_signals_updated": result.agent_signals_updated,
+            "errors": result.errors,
+        }
+        
+    except Exception as e:
+        logger.error(f"Accuracy backfill failed: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.get("/accuracy/summary")
+async def get_accuracy_summary():
+    """
+    Get a summary of accuracy data coverage.
+    
+    Shows how many agent signals and PM decisions have outcome data populated.
+    """
+    try:
+        from src.monitoring.accuracy_backfill import get_accuracy_backfill_service
+        
+        service = get_accuracy_backfill_service()
+        summary = await service.get_accuracy_summary()
+        
+        return {
+            "success": "error" not in summary,
+            **summary,
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get accuracy summary: {e}")
         raise HTTPException(500, str(e))
 
 

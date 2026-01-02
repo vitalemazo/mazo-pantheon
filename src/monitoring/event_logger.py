@@ -586,6 +586,7 @@ class EventLogger:
         window_start: datetime = None,
         window_resets_at: datetime = None,
         utilization_pct: float = None,
+        last_call_at: datetime = None,
     ):
         """Log rate limit usage."""
         self._store_event("rate_limit_tracking", {
@@ -595,6 +596,7 @@ class EventLogger:
             "window_start": window_start,
             "window_resets_at": window_resets_at,
             "utilization_pct": utilization_pct,
+            "last_call_at": last_call_at or datetime.now(timezone.utc),
         })
     
     # =========================================================================

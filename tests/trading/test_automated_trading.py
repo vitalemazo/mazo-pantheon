@@ -560,3 +560,82 @@ class TestExecuteTrade:
         assert "NVDA" in atm._trade_cooldowns
         can_trade, _ = service._check_cooldown("NVDA")
         assert can_trade is False
+    
+    def test_execute_trade_entry_price_from_fill(self, service, reset_cooldowns):
+        """Entry price should come from filled_avg_price when available."""
+        service.alpaca = MockAlpaca(positions=[], account=MockAccount())
+        service.trade_history = MockTradeHistoryService()
+        
+        # Set up order with known fill price
+        filled_price = 155.75
+        service.alpaca.submit_order = lambda **kwargs: MockOrderResult(
+            success=True,
+            order=MockOrder(id="order-fill-test", filled_avg_price=filled_price)
+        )
+        
+        mock_logger = MockEventLogger()
+        with patch("src.monitoring.get_event_logger", return_value=mock_logger):
+            asyncio.run(service._execute_trade(
+                ticker="AAPL",
+                pm_decision={"action": "buy", "quantity": 10},
+                portfolio=MagicMock(equity=100000, cash=50000, positions=[]),
+                signal=MagicMock(entry_price=150.0, strategy="test", direction=MagicMock(value="long"), confidence=75, reasoning="Test"),
+            ))
+        
+        # Check that entry_price in trade record matches the fill
+        assert len(service.trade_history.records) == 1
+        recorded = service.trade_history.records[0]
+        assert recorded.entry_price == filled_price
+    
+    def test_execute_trade_entry_price_fallback_to_signal(self, service, reset_cooldowns):
+        """Entry price should fall back to signal.entry_price when fill not available."""
+        service.alpaca = MockAlpaca(positions=[], account=MockAccount())
+        service.trade_history = MockTradeHistoryService()
+        
+        # Order without fill price (still pending)
+        service.alpaca.submit_order = lambda **kwargs: MockOrderResult(
+            success=True,
+            order=MockOrder(id="order-pending-test", filled_avg_price=None, status="accepted")
+        )
+        
+        signal_price = 148.50
+        mock_logger = MockEventLogger()
+        with patch("src.monitoring.get_event_logger", return_value=mock_logger):
+            asyncio.run(service._execute_trade(
+                ticker="MSFT",
+                pm_decision={"action": "buy", "quantity": 10},
+                portfolio=MagicMock(equity=100000, cash=50000, positions=[]),
+                signal=MagicMock(entry_price=signal_price, strategy="test", direction=MagicMock(value="long"), confidence=75, reasoning="Test"),
+            ))
+        
+        # Check that entry_price falls back to signal price
+        assert len(service.trade_history.records) == 1
+        recorded = service.trade_history.records[0]
+        assert recorded.entry_price == signal_price
+    
+    def test_execute_trade_entry_price_fallback_to_quote(self, service, reset_cooldowns):
+        """Entry price should fall back to quote when fill and signal not available."""
+        quote_price = 142.25
+        service.alpaca = MockAlpaca(positions=[], account=MockAccount())
+        service.alpaca.get_quote = lambda ticker: MagicMock(last_price=quote_price, ask_price=142.50)
+        service.trade_history = MockTradeHistoryService()
+        
+        # Order without fill price
+        service.alpaca.submit_order = lambda **kwargs: MockOrderResult(
+            success=True,
+            order=MockOrder(id="order-nofill-test", filled_avg_price=None, status="accepted")
+        )
+        
+        mock_logger = MockEventLogger()
+        with patch("src.monitoring.get_event_logger", return_value=mock_logger):
+            asyncio.run(service._execute_trade(
+                ticker="GOOGL",
+                pm_decision={"action": "buy", "quantity": 5},
+                portfolio=MagicMock(equity=100000, cash=50000, positions=[]),
+                signal=MagicMock(entry_price=None, strategy="test", direction=MagicMock(value="long"), confidence=75, reasoning="Test"),
+            ))
+        
+        # Check that entry_price falls back to quote last_price
+        assert len(service.trade_history.records) == 1
+        recorded = service.trade_history.records[0]
+        assert recorded.entry_price == quote_price

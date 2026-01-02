@@ -1184,7 +1184,26 @@ class AutomatedTradingService:
             if result and result.success:
                 order = result.order
                 order_id = order.id if order else f"manual_{ticker}_{submitted_at.timestamp()}"
-                filled_price = float(order.filled_avg_price) if order and order.filled_avg_price else None
+                
+                # Get fill price from order, or fallback to quote/signal price
+                filled_price = None
+                if order and order.filled_avg_price:
+                    filled_price = float(order.filled_avg_price)
+                else:
+                    # Fallback: use the entry_price we calculated for concentration check
+                    # or get fresh quote if we don't have it
+                    fallback_price = signal.entry_price if signal and signal.entry_price else None
+                    if not fallback_price:
+                        try:
+                            quote = self.alpaca.get_quote(ticker)
+                            fallback_price = float(quote.last_price) if quote and quote.last_price else None
+                            if not fallback_price:
+                                fallback_price = float(quote.ask_price) if quote and quote.ask_price else None
+                        except Exception:
+                            pass
+                    filled_price = fallback_price
+                    if filled_price:
+                        logger.debug(f"Using fallback price {filled_price} for {ticker} (order fill not yet available)")
                 
                 # Log successful trade execution to monitoring
                 try:

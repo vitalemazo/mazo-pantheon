@@ -19,6 +19,7 @@ from .health_check import (
     get_health_checker, run_pre_market_health_check, run_continuous_health_check
 )
 from .analytics import AnalyticsService, get_analytics_service
+from .accuracy_backfill import AccuracyBackfillService, get_accuracy_backfill_service
 
 __all__ = [
     # Event Logger
@@ -47,4 +48,8 @@ __all__ = [
     # Analytics
     "AnalyticsService",
     "get_analytics_service",
+    
+    # Accuracy Backfill
+    "AccuracyBackfillService",
+    "get_accuracy_backfill_service",
 ]
