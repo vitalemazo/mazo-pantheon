@@ -505,32 +505,57 @@ export function TradingDashboard() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-3 bg-slate-700/50 rounded-lg">
-                  <div className="text-slate-400 text-sm">Total P&L</div>
-                  <div className={`text-xl font-bold ${(metrics?.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {formatCurrency(metrics?.total_pnl || 0)}
+              {metrics?.has_data === false ? (
+                <div className="p-4 rounded-lg bg-amber-900/20 border border-amber-600/30">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-sm text-amber-200 font-medium">
+                        No trading data yet
+                      </p>
+                      <p className="text-xs text-amber-300/70 mt-1">
+                        {metrics.message || 'Run an AI trading cycle or wait for positions to close to see performance metrics.'}
+                      </p>
+                      <Button
+                        onClick={() => runAiTradingCycle(true)}
+                        disabled={aiLoading || automatedStatus?.is_running || automatedStatus?.success === false}
+                        size="sm"
+                        className="mt-3 bg-amber-600 hover:bg-amber-700 text-white"
+                      >
+                        <Rocket className="w-3 h-3 mr-2" />
+                        Run AI Cycle (Dry Run)
+                      </Button>
+                    </div>
                   </div>
                 </div>
-                <div className="p-3 bg-slate-700/50 rounded-lg">
-                  <div className="text-slate-400 text-sm">Avg Return</div>
-                  <div className={`text-xl font-bold ${(metrics?.average_return_pct || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {metrics?.average_return_pct != null ? `${metrics.average_return_pct}%` : 'N/A'}
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-3 bg-slate-700/50 rounded-lg">
+                    <div className="text-slate-400 text-sm">Total P&L</div>
+                    <div className={`text-xl font-bold ${(metrics?.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {formatCurrency(metrics?.total_pnl || 0)}
+                    </div>
+                  </div>
+                  <div className="p-3 bg-slate-700/50 rounded-lg">
+                    <div className="text-slate-400 text-sm">Avg Return</div>
+                    <div className={`text-xl font-bold ${(metrics?.average_return_pct || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {metrics?.average_return_pct != null ? `${metrics.average_return_pct}%` : 'N/A'}
+                    </div>
+                  </div>
+                  <div className="p-3 bg-slate-700/50 rounded-lg">
+                    <div className="text-slate-400 text-sm">Profit Factor</div>
+                    <div className="text-xl font-bold text-cyan-400">
+                      {metrics?.profit_factor != null ? metrics.profit_factor : 'N/A'}
+                    </div>
+                  </div>
+                  <div className="p-3 bg-slate-700/50 rounded-lg">
+                    <div className="text-slate-400 text-sm">Avg Hold Time</div>
+                    <div className="text-xl font-bold text-purple-400">
+                      {metrics?.average_holding_hours != null ? `${metrics.average_holding_hours}h` : 'N/A'}
+                    </div>
                   </div>
                 </div>
-                <div className="p-3 bg-slate-700/50 rounded-lg">
-                  <div className="text-slate-400 text-sm">Profit Factor</div>
-                  <div className="text-xl font-bold text-cyan-400">
-                    {metrics?.profit_factor != null ? metrics.profit_factor : 'N/A'}
-                  </div>
-                </div>
-                <div className="p-3 bg-slate-700/50 rounded-lg">
-                  <div className="text-slate-400 text-sm">Avg Hold Time</div>
-                  <div className="text-xl font-bold text-purple-400">
-                    {metrics?.average_holding_hours != null ? `${metrics.average_holding_hours}h` : 'N/A'}
-                  </div>
-                </div>
-              </div>
+              )}
             </CardContent>
           </Card>
         </div>

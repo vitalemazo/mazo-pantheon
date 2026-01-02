@@ -419,6 +419,8 @@ class PerformanceTracker:
             
             if not closed_trades:
                 return {
+                    "has_data": False,
+                    "message": "No closed trades yet — run an AI trading cycle or wait for positions to close to populate metrics.",
                     "total_trades": 0,
                     "winning_trades": 0,
                     "losing_trades": 0,
@@ -461,6 +463,7 @@ class PerformanceTracker:
             avg_holding = sum(holding_hours) / len(holding_hours) if holding_hours else None
             
             return {
+                "has_data": True,
                 "total_trades": len(closed_trades),
                 "winning_trades": len(winning),
                 "losing_trades": len(losing),

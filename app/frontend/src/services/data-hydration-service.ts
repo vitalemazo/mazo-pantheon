@@ -81,12 +81,20 @@ export interface AgentPerformance {
 }
 
 export interface PerformanceMetrics {
+  has_data?: boolean;
+  message?: string;
   total_trades: number;
   winning_trades: number;
   losing_trades: number;
   win_rate: number | null;
   total_pnl: number;
   avg_return_pct: number | null;
+  average_pnl?: number | null;
+  average_return_pct?: number | null;
+  profit_factor?: number | null;
+  average_holding_hours?: number | null;
+  biggest_winner?: { ticker: string; pnl: number; return_pct: number } | null;
+  biggest_loser?: { ticker: string; pnl: number; return_pct: number } | null;
 }
 
 export interface WatchlistItem {
