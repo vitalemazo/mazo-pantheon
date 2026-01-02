@@ -221,6 +221,119 @@ class AutomatedTradingService:
         global _trade_cooldowns
         _trade_cooldowns[ticker] = datetime.now()
         logger.debug(f"Recorded cooldown for {ticker}")
+
+    def _check_pdt_limits(self) -> Dict[str, Any]:
+        """
+        Check Pattern Day Trader limits.
+        
+        Returns:
+            Dict with 'blocked' (bool) and 'reason' (str) if blocked
+        """
+        import os
+        
+        # Check if PDT enforcement is enabled
+        enforce_pdt = os.getenv("ENFORCE_PDT", "true").lower() == "true"
+        if not enforce_pdt:
+            return {"blocked": False}
+        
+        try:
+            pdt_status = self.alpaca.check_pdt_status()
+            
+            if not pdt_status.get("can_day_trade"):
+                return {
+                    "blocked": True,
+                    "reason": pdt_status.get("warning") or "PDT limit reached - day trading restricted",
+                    "daytrade_count": pdt_status.get("daytrade_count"),
+                    "equity": pdt_status.get("equity"),
+                }
+            
+            # Log warning if approaching limit
+            if pdt_status.get("warning"):
+                logger.warning(f"⚠️ PDT Warning: {pdt_status['warning']}")
+            
+            return {"blocked": False, "pdt_status": pdt_status}
+            
+        except Exception as e:
+            logger.warning(f"PDT check failed: {e}")
+            return {"blocked": False}  # Don't block on error
+
+    def _check_risk_limits(self) -> Dict[str, Any]:
+        """
+        Check portfolio-wide risk limits.
+        
+        Returns:
+            Dict with violations and status
+        """
+        from src.trading.config import get_risk_config
+        
+        risk_config = get_risk_config()
+        violations = []
+        
+        try:
+            positions = self.alpaca.get_positions()
+            account = self.alpaca.get_account()
+            portfolio_value = account.portfolio_value
+            
+            # Check total positions limit
+            if len(positions) >= risk_config.max_total_positions:
+                violations.append(
+                    f"Max positions reached: {len(positions)}/{risk_config.max_total_positions}"
+                )
+            
+            # Check individual position concentration
+            for pos in positions:
+                pos_value = abs(float(pos.market_value))
+                pos_pct = (pos_value / portfolio_value) * 100 if portfolio_value > 0 else 0
+                max_pct = risk_config.max_position_pct * 100
+                
+                if pos_pct > max_pct:
+                    violations.append(
+                        f"{pos.symbol} exceeds max position: {pos_pct:.1f}% > {max_pct:.1f}%"
+                    )
+            
+            return {
+                "violations": violations,
+                "position_count": len(positions),
+                "max_positions": risk_config.max_total_positions,
+                "can_add_position": len(positions) < risk_config.max_total_positions,
+            }
+            
+        except Exception as e:
+            logger.warning(f"Risk limit check failed: {e}")
+            return {"violations": [], "can_add_position": True}
+
+    def _check_hold_time_violations(self) -> List[Dict[str, Any]]:
+        """
+        Check for positions that have exceeded max hold time.
+        
+        Returns:
+            List of positions that should be rotated out
+        """
+        from src.trading.config import get_risk_config
+        
+        risk_config = get_risk_config()
+        max_hold_hours = risk_config.max_hold_hours
+        violations = []
+        
+        try:
+            # Check trade history for entry times
+            if hasattr(self, 'trade_history') and self.trade_history:
+                # Get open positions and their entry times
+                positions = self.alpaca.get_positions()
+                
+                for pos in positions:
+                    # Look up entry time from trade history
+                    # For now, we'll use a simpler approach based on change_today
+                    # Full implementation would query trade_history table
+                    
+                    # Placeholder: Log warning for positions held a long time
+                    # This can be enhanced with actual entry time tracking
+                    pass
+                    
+        except Exception as e:
+            logger.warning(f"Hold time check failed: {e}")
+        
+        return violations
     
     def _serialize_agent_signals(self, analysis: Optional['AnalysisResult']) -> Dict[str, Any]:
         """
@@ -332,6 +445,21 @@ class AutomatedTradingService:
                 trades_executed=0,
                 total_execution_time_ms=0,
                 errors=["AUTO_TRADING_ENABLED=false - live trading blocked. Set to 'true' to enable."]
+            )
+        
+        # Check Pattern Day Trader status before starting
+        pdt_status = self._check_pdt_limits()
+        if pdt_status.get("blocked"):
+            logger.warning(f"⚠️ PDT limit reached - {pdt_status.get('reason')}")
+            return AutomatedTradeResult(
+                timestamp=start_time,
+                tickers_screened=0,
+                signals_found=0,
+                mazo_validated=0,
+                trades_analyzed=0,
+                trades_executed=0,
+                total_execution_time_ms=0,
+                errors=[f"PDT protection: {pdt_status.get('reason')}"]
             )
         
         self.is_running = True
@@ -1423,6 +1551,28 @@ class AutomatedTradingService:
                             logger.info(f"✓ Trade recorded to TradeHistory: ID {trade_id}")
                 except Exception as hist_err:
                     logger.warning(f"Failed to record trade to TradeHistory: {hist_err}")
+                
+                # =============================================
+                # SET POSITION RULES FOR POSITION MONITOR
+                # =============================================
+                # If PM specified stop_loss/take_profit, set them in the position monitor
+                if action in ["buy", "short"]:  # Only for opening positions
+                    try:
+                        from src.trading.position_monitor import get_position_monitor
+                        position_monitor = get_position_monitor()
+                        
+                        stop_loss_pct = pm_decision.get("stop_loss_pct")
+                        take_profit_pct = pm_decision.get("take_profit_pct")
+                        
+                        if stop_loss_pct or take_profit_pct:
+                            position_monitor.set_position_rules(
+                                ticker=ticker,
+                                stop_loss_pct=stop_loss_pct,
+                                take_profit_pct=take_profit_pct
+                            )
+                            logger.info(f"✓ Set position rules for {ticker}: SL={stop_loss_pct}%, TP={take_profit_pct}%")
+                    except Exception as pm_err:
+                        logger.warning(f"Failed to set position rules: {pm_err}")
                 
                 return {
                     "success": True,

@@ -116,6 +116,33 @@ class BaseStrategy:
             return []
         # Return most recent 'days' prices
         return [p.close for p in prices[-days:]]
+
+    def _get_current_price(self, ticker: str, alpaca_service: 'AlpacaService' = None) -> Optional[float]:
+        """
+        Get current intraday price if available, otherwise use last close.
+        
+        Args:
+            ticker: Stock symbol
+            alpaca_service: Optional Alpaca service for live quotes
+            
+        Returns:
+            Current price or None
+        """
+        import os
+        use_intraday = os.getenv("USE_INTRADAY_DATA", "true").lower() == "true"
+        
+        if use_intraday and alpaca_service:
+            try:
+                # Try to get live quote
+                current = alpaca_service.get_current_price(ticker)
+                if current and current > 0:
+                    return current
+            except Exception as e:
+                logger.debug(f"Could not get live quote for {ticker}: {e}")
+        
+        # Fallback to last close
+        prices = self._get_price_data(ticker, days=1)
+        return prices[-1] if prices else None
     
     def _calculate_sma(self, prices: List[float], period: int) -> Optional[float]:
         """Calculate Simple Moving Average."""

@@ -422,6 +422,56 @@ class AlpacaService:
         account = self.get_account()
         return account.portfolio_value
 
+    def check_pdt_status(self) -> Dict[str, Any]:
+        """
+        Check Pattern Day Trader status and limits.
+        
+        Returns:
+            Dict with:
+            - is_pdt: bool - Account flagged as PDT
+            - daytrade_count: int - Day trades in rolling 5 days
+            - equity: float - Account equity
+            - can_day_trade: bool - Whether new day trades are allowed
+            - warning: str or None - Warning message if near limit
+        """
+        account = self.get_account()
+        
+        equity = account.equity
+        is_pdt = account.pattern_day_trader
+        daytrade_count = account.daytrade_count
+        
+        # PDT rules:
+        # - If equity >= $25k, no restrictions
+        # - If equity < $25k and not PDT flagged, max 3 day trades in 5 business days
+        # - If PDT flagged and equity < $25k, account is restricted
+        
+        can_day_trade = True
+        warning = None
+        
+        if equity >= 25000:
+            # No PDT restrictions with $25k+ equity
+            can_day_trade = True
+        elif is_pdt:
+            # Already flagged as PDT with < $25k - restricted
+            can_day_trade = False
+            warning = f"PDT flagged with ${equity:,.2f} equity (< $25k). Day trading restricted."
+        elif daytrade_count >= 3:
+            # Would trigger PDT if one more day trade
+            can_day_trade = False
+            warning = f"At {daytrade_count}/3 day trades in 5 days. One more would trigger PDT flag."
+        elif daytrade_count >= 2:
+            # Warning - approaching limit
+            warning = f"At {daytrade_count}/3 day trades. Approaching PDT limit."
+        
+        return {
+            "is_pdt": is_pdt,
+            "daytrade_count": daytrade_count,
+            "equity": equity,
+            "can_day_trade": can_day_trade,
+            "warning": warning,
+            "pdt_threshold": 25000,
+        }
+
     # ==================== Assets ====================
 
     def get_asset(self, symbol: str, use_cache: bool = True) -> Optional[AssetInfo]:
@@ -476,6 +526,125 @@ class AlpacaService:
         """Clear the asset info cache."""
         global _asset_cache
         _asset_cache.clear()
+
+    # ==================== Market Data (Quotes) ====================
+
+    def get_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Get latest quote for a symbol.
+        
+        Uses Alpaca's data API for real-time quotes.
+        
+        Args:
+            symbol: Stock symbol
+            
+        Returns:
+            Dict with bid, ask, last, timestamp, or None on error
+        """
+        symbol = symbol.upper()
+        
+        try:
+            # Use the market data API endpoint
+            # Paper trading uses the same data API as live
+            data_url = "https://data.alpaca.markets/v2"
+            
+            response = requests.get(
+                f"{data_url}/stocks/{symbol}/quotes/latest",
+                headers=self._headers(),
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                quote = data.get("quote", {})
+                
+                return {
+                    "symbol": symbol,
+                    "bid": float(quote.get("bp", 0)),
+                    "ask": float(quote.get("ap", 0)),
+                    "bid_size": int(quote.get("bs", 0)),
+                    "ask_size": int(quote.get("as", 0)),
+                    "last": float(quote.get("bp", 0) + quote.get("ap", 0)) / 2 if quote.get("bp") else None,
+                    "timestamp": quote.get("t"),
+                }
+            else:
+                print(f"[Alpaca] ⚠️ Quote API returned {response.status_code} for {symbol}")
+                return None
+                
+        except Exception as e:
+            print(f"[Alpaca] ⚠️ Error fetching quote for {symbol}: {e}")
+            return None
+
+    def get_last_trade(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Get last trade for a symbol (more reliable than quotes for last price).
+        
+        Args:
+            symbol: Stock symbol
+            
+        Returns:
+            Dict with price, size, timestamp, or None on error
+        """
+        symbol = symbol.upper()
+        
+        try:
+            data_url = "https://data.alpaca.markets/v2"
+            
+            response = requests.get(
+                f"{data_url}/stocks/{symbol}/trades/latest",
+                headers=self._headers(),
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                trade = data.get("trade", {})
+                
+                return {
+                    "symbol": symbol,
+                    "price": float(trade.get("p", 0)),
+                    "size": int(trade.get("s", 0)),
+                    "timestamp": trade.get("t"),
+                }
+            else:
+                print(f"[Alpaca] ⚠️ Trade API returned {response.status_code} for {symbol}")
+                return None
+                
+        except Exception as e:
+            print(f"[Alpaca] ⚠️ Error fetching last trade for {symbol}: {e}")
+            return None
+
+    def get_current_price(self, symbol: str) -> Optional[float]:
+        """
+        Get current price for a symbol using best available method.
+        
+        Tries last trade first, then quote midpoint.
+        
+        Args:
+            symbol: Stock symbol
+            
+        Returns:
+            Current price or None
+        """
+        # Try last trade first (most accurate)
+        trade = self.get_last_trade(symbol)
+        if trade and trade.get("price"):
+            return trade["price"]
+        
+        # Fallback to quote midpoint
+        quote = self.get_quote(symbol)
+        if quote and quote.get("bid") and quote.get("ask"):
+            return (quote["bid"] + quote["ask"]) / 2
+        
+        # Try position current price
+        try:
+            position = self.get_position(symbol)
+            if position and position.current_price:
+                return position.current_price
+        except Exception:
+            pass
+        
+        return None
 
     # ==================== Positions ====================
 

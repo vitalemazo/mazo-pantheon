@@ -87,6 +87,26 @@ class RiskConfig:
     max_hold_hours: int = field(
         default_factory=lambda: _env_int("TRADING_RISK_MAX_HOLD_HOURS", 120)  # 5 days
     )
+    
+    # PDT protection
+    enforce_pdt: bool = field(
+        default_factory=lambda: _env_bool("ENFORCE_PDT", True)  # Enable PDT protection
+    )
+    pdt_equity_threshold: float = field(
+        default_factory=lambda: _env_float("PDT_EQUITY_THRESHOLD", 25000.0)  # PDT threshold
+    )
+
+
+@dataclass
+class IntradayConfig:
+    """Intraday data settings."""
+    
+    use_intraday_data: bool = field(
+        default_factory=lambda: _env_bool("USE_INTRADAY_DATA", True)
+    )
+    quote_cache_seconds: int = field(
+        default_factory=lambda: _env_int("QUOTE_CACHE_SECONDS", 30)
+    )
 
 
 @dataclass
@@ -300,7 +320,7 @@ class DataConfig:
 @dataclass
 class TradingConfig:
     """Master configuration container."""
-    
+
     risk: RiskConfig = field(default_factory=RiskConfig)
     signal: SignalConfig = field(default_factory=SignalConfig)
     capital: CapitalConfig = field(default_factory=CapitalConfig)
@@ -309,6 +329,7 @@ class TradingConfig:
     data: DataConfig = field(default_factory=DataConfig)
     cooldown: CooldownConfig = field(default_factory=CooldownConfig)
     fractional: FractionalConfig = field(default_factory=FractionalConfig)
+    intraday: IntradayConfig = field(default_factory=IntradayConfig)
     
     def to_dict(self) -> dict:
         """Export configuration as dictionary."""
@@ -378,3 +399,7 @@ def get_cooldown_config() -> CooldownConfig:
 
 def get_fractional_config() -> FractionalConfig:
     return get_trading_config().fractional
+
+
+def get_intraday_config() -> IntradayConfig:
+    return get_trading_config().intraday
