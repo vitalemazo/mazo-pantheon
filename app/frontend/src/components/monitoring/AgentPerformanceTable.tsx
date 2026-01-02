@@ -250,13 +250,19 @@ export function AgentPerformanceTable() {
                       {agent.total_signals}
                     </TableCell>
                     <TableCell className="text-right">
-                      <span className={
-                        agent.accuracy >= 0.6 ? 'text-green-500' :
-                        agent.accuracy >= 0.4 ? 'text-yellow-500' :
-                        'text-red-500'
-                      }>
-                        {(agent.accuracy * 100).toFixed(0)}%
-                      </span>
+                      {agent.accuracy > 0 ? (
+                        <span className={
+                          agent.accuracy >= 0.6 ? 'text-green-500' :
+                          agent.accuracy >= 0.4 ? 'text-yellow-500' :
+                          'text-red-500'
+                        }>
+                          {(agent.accuracy * 100).toFixed(0)}%
+                        </span>
+                      ) : (
+                        <span className="text-slate-500" title="No closed trades yet to measure accuracy">
+                          N/A
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       {agent.avg_confidence.toFixed(0)}%

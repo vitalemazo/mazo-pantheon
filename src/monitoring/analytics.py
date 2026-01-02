@@ -208,13 +208,9 @@ class AnalyticsService:
                 # Check if we have any outcome data
                 if correct > 0 or incorrect > 0:
                     has_outcome_data = True
-                else:
-                    # No outcome data - use confidence as proxy for accuracy
-                    # Scale confidence to a reasonable accuracy estimate
-                    # Higher confidence = higher estimated accuracy
-                    estimated_correct = int(row.total_signals * (avg_conf / 100) * 0.7)
-                    correct = estimated_correct
-                    incorrect = row.total_signals - estimated_correct
+                # NOTE: We no longer fabricate accuracy from confidence.
+                # If there's no outcome data, accuracy will be 0 (displayed as "N/A" in UI).
+                # Real accuracy comes from the accuracy backfill service after trades close.
                 
                 metrics[row.agent_id] = AgentPerformanceMetrics(
                     agent_id=row.agent_id,
@@ -247,10 +243,9 @@ class AnalyticsService:
                 result = session.execute(text(simple_query), params)
                 
                 for row in result:
-                    # Estimate accuracy from confidence for display purposes
-                    # (shows confidence as proxy for accuracy when no outcome data)
                     avg_conf = float(row.avg_confidence) if row.avg_confidence else 50.0
-                    estimated_accuracy = int(avg_conf * 0.6 / 100 * row.total_signals)  # Conservative estimate
+                    # NOTE: No outcome data available - accuracy will be 0 (N/A in UI)
+                    # Real accuracy is populated by accuracy backfill after trades close
                     
                     metrics[row.agent_id] = AgentPerformanceMetrics(
                         agent_id=row.agent_id,
@@ -258,8 +253,8 @@ class AnalyticsService:
                         bullish_signals=row.bullish or 0,
                         bearish_signals=row.bearish or 0,
                         neutral_signals=row.neutral or 0,
-                        correct_predictions=estimated_accuracy,
-                        incorrect_predictions=row.total_signals - estimated_accuracy,
+                        correct_predictions=0,  # No data yet
+                        incorrect_predictions=0,  # No data yet
                         avg_confidence=avg_conf,
                     )
             
