@@ -755,45 +755,54 @@ class FMPGateway:
     # Market Performance
     # =========================================================================
     
-    def get_sector_performance(self) -> List[SectorPerformance]:
+    def get_sector_performance(self, target_date: str = None) -> List[SectorPerformance]:
         """
-        Get sector performance.
+        Get sector performance snapshot.
         
-        Note: This endpoint may require a higher-tier FMP subscription.
-        Returns empty list if unavailable.
+        Uses the stable API endpoint: sector-performance-snapshot
+        
+        Args:
+            target_date: Optional date in YYYY-MM-DD format. Defaults to today.
         """
         if not is_module_enabled(FMPModule.MARKET):
             return []
         
-        cache_key = "fmp_sector_performance"
+        # Default to today if no date provided
+        if not target_date:
+            from datetime import datetime
+            target_date = datetime.now().strftime("%Y-%m-%d")
+        
+        cache_key = f"fmp_sector_performance_{target_date}"
         if cached := _cache_get(self._cache, cache_key):
             return [SectorPerformance(**s) for s in cached]
         
         try:
-            # Try the stable API endpoint
-            data = self._client._request("sector-performance", {})
+            # Use sector-performance-snapshot endpoint (stable API)
+            # Date is required for this endpoint
+            params = {"date": target_date}
+            
+            data = self._client._request("sector-performance-snapshot", params)
             if data:
                 results = [
                     SectorPerformance(
                         sector=s.get("sector", ""),
-                        change_percentage=float(str(s.get("changesPercentage", "0")).replace("%", "")),
+                        change_percentage=float(str(s.get("averageChange", s.get("changesPercentage", "0"))).replace("%", "")),
                     )
                     for s in data
                 ]
                 _cache_set(self._cache, cache_key, [asdict(r) for r in results], 300)
                 return results
         except Exception as e:
-            # This endpoint may not be available on all FMP plans
             logger.debug(f"Sector performance unavailable: {e}")
         return []
     
     def get_gainers(self, limit: int = 10) -> List[MarketMover]:
-        """Get top gainers."""
+        """Get top gainers (biggest price increases)."""
         if not is_module_enabled(FMPModule.MARKET):
             return []
-        
+
         try:
-            data = self._client._request("stock_market/gainers", {})
+            data = self._client._request("biggest-gainers", {})
             return [
                 MarketMover(
                     symbol=s.get("symbol", ""),
@@ -809,12 +818,12 @@ class FMPGateway:
         return []
     
     def get_losers(self, limit: int = 10) -> List[MarketMover]:
-        """Get top losers."""
+        """Get top losers (biggest price drops)."""
         if not is_module_enabled(FMPModule.MARKET):
             return []
-        
+
         try:
-            data = self._client._request("stock_market/losers", {})
+            data = self._client._request("biggest-losers", {})
             return [
                 MarketMover(
                     symbol=s.get("symbol", ""),
@@ -833,9 +842,9 @@ class FMPGateway:
         """Get most actively traded stocks."""
         if not is_module_enabled(FMPModule.MARKET):
             return []
-        
+
         try:
-            data = self._client._request("stock_market/actives", {})
+            data = self._client._request("most-actives", {})
             return [
                 MarketMover(
                     symbol=s.get("symbol", ""),
