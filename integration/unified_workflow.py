@@ -387,7 +387,8 @@ class UnifiedWorkflow:
         self,
         ticker: str,
         analysts: List[str] = None,
-        mazo_research: str = None
+        mazo_research: str = None,
+        workflow_id: uuid.UUID = None
     ) -> Tuple[str, float, List[AgentSignal], Dict]:
         """
         Run the AI Hedge Fund and extract signals.
@@ -396,6 +397,7 @@ class UnifiedWorkflow:
             ticker: Stock ticker symbol
             analysts: List of analyst keys to use (None = all)
             mazo_research: Optional Mazo research to pass to Portfolio Manager
+            workflow_id: Workflow ID for consistent logging
 
         Returns:
             Tuple of (signal, confidence, agent_signals, raw_result)
@@ -417,6 +419,7 @@ class UnifiedWorkflow:
             model_name=self.model_name,
             model_provider=self.model_provider,
             mazo_research=mazo_research,  # Pass Mazo's research to Portfolio Manager
+            workflow_id=workflow_id,  # Pass workflow_id for PM logging
         )
 
         # Extract signals from agents
@@ -561,15 +564,15 @@ class UnifiedWorkflow:
             start_time = datetime.now()
 
             if mode == WorkflowMode.SIGNAL_ONLY:
-                result = self._signal_only(ticker, analysts)
+                result = self._signal_only(ticker, analysts, workflow_id=workflow_id)
             elif mode == WorkflowMode.RESEARCH_ONLY:
-                result = self._research_only(ticker, research_depth)
+                result = self._research_only(ticker, research_depth, workflow_id=workflow_id)
             elif mode == WorkflowMode.PRE_RESEARCH:
-                result = self._pre_research_flow(ticker, analysts, research_depth)
+                result = self._pre_research_flow(ticker, analysts, research_depth, workflow_id=workflow_id)
             elif mode == WorkflowMode.POST_RESEARCH:
-                result = self._post_research_flow(ticker, analysts, research_depth)
+                result = self._post_research_flow(ticker, analysts, research_depth, workflow_id=workflow_id)
             elif mode == WorkflowMode.FULL:
-                result = self._full_flow(ticker, analysts, research_depth)
+                result = self._full_flow(ticker, analysts, research_depth, workflow_id=workflow_id)
             else:
                 result = UnifiedResult(
                     ticker=ticker,
@@ -606,14 +609,20 @@ class UnifiedWorkflow:
     def _signal_only(
         self,
         ticker: str,
-        analysts: List[str]
+        analysts: List[str],
+        workflow_id: uuid.UUID = None
     ) -> UnifiedResult:
         """
         Just run AI Hedge Fund signal generation.
         """
+        if not workflow_id:
+            workflow_id = uuid.uuid4()
+            
         print(f"  [AI Hedge Fund] Generating signal for {ticker}...")
 
-        signal, confidence, agent_signals, raw_result = self._run_hedge_fund(ticker, analysts)
+        signal, confidence, agent_signals, raw_result = self._run_hedge_fund(
+            ticker, analysts, workflow_id=workflow_id
+        )
 
         # Build recommendations from the decision
         recommendations = []
@@ -719,9 +728,10 @@ class UnifiedWorkflow:
         # Portfolio Manager will consider Mazo's analysis when making decisions
         print(f"  [AI Hedge Fund] Analyzing {ticker} with Mazo research context...")
         signal, confidence, agent_signals, raw_result = self._run_hedge_fund(
-            ticker, 
+            ticker,
             analysts,
-            mazo_research=research.answer if research else None
+            mazo_research=research.answer if research else None,
+            workflow_id=workflow_id
         )
 
         # Build recommendations
@@ -765,7 +775,9 @@ class UnifiedWorkflow:
 
         # Step 1: AI Hedge Fund signal
         print(f"  [AI Hedge Fund] Generating signal for {ticker}...")
-        signal, confidence, agent_signals, raw_result = self._run_hedge_fund(ticker, analysts)
+        signal, confidence, agent_signals, raw_result = self._run_hedge_fund(
+            ticker, analysts, workflow_id=workflow_id
+        )
 
         # Get the portfolio manager's reasoning for Mazo to explain
         decisions = raw_result.get('decisions', {})
@@ -872,9 +884,10 @@ class UnifiedWorkflow:
         # This allows Portfolio Manager to consider Mazo's counter-arguments
         print(f"  [AI Hedge Fund] Analyzing {ticker} with Mazo research context...")
         signal, confidence, agent_signals, raw_result = self._run_hedge_fund(
-            ticker, 
+            ticker,
             analysts,
-            mazo_research=initial_research.answer if initial_research else None
+            mazo_research=initial_research.answer if initial_research else None,
+            workflow_id=workflow_id
         )
 
         # Get the portfolio manager's reasoning for Mazo to explain
