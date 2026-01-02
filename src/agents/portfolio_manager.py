@@ -59,8 +59,16 @@ def _get_fmp_context(tickers: list[str]) -> str:
                 top_sectors = sorted(sectors, key=lambda x: x.get("change_percentage", 0), reverse=True)[:3]
                 bottom_sectors = sorted(sectors, key=lambda x: x.get("change_percentage", 0))[:3]
                 context_parts.append("SECTOR PERFORMANCE:")
-                context_parts.append(f"  Top: {', '.join([f\"{s['sector']} ({s['change_percentage']:+.1f}%)\" for s in top_sectors])}")
-                context_parts.append(f"  Bottom: {', '.join([f\"{s['sector']} ({s['change_percentage']:+.1f}%)\" for s in bottom_sectors])}")
+                top_str = ", ".join([
+                    "{} ({:+.1f}%)".format(s.get("sector", "?"), s.get("change_percentage", 0)) 
+                    for s in top_sectors
+                ])
+                bottom_str = ", ".join([
+                    "{} ({:+.1f}%)".format(s.get("sector", "?"), s.get("change_percentage", 0)) 
+                    for s in bottom_sectors
+                ])
+                context_parts.append(f"  Top: {top_str}")
+                context_parts.append(f"  Bottom: {bottom_str}")
         except Exception:
             pass
         

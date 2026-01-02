@@ -28,6 +28,19 @@ from src.data.cache import get_cache
 logger = logging.getLogger(__name__)
 
 
+def _cache_get(cache, key: str):
+    """Helper to access cache internal _get method."""
+    if hasattr(cache, '_get'):
+        return cache._get(key)
+    return None
+
+
+def _cache_set(cache, key: str, value, ttl: int = 3600):
+    """Helper to access cache internal _set method."""
+    if hasattr(cache, '_set'):
+        cache._set(key, value, ttl)
+
+
 # =============================================================================
 # Configuration: Enable/disable FMP data families via environment
 # =============================================================================
@@ -143,9 +156,9 @@ class InsiderTrade:
     """Insider trading activity."""
     symbol: str
     filing_date: str
-    transaction_date: Optional[str] = None
     reporting_name: str
     transaction_type: str  # P-Purchase, S-Sale
+    transaction_date: Optional[str] = None
     securities_owned: Optional[float] = None
     securities_transacted: Optional[float] = None
     price: Optional[float] = None
@@ -316,7 +329,7 @@ class FMPGateway:
             return None
         
         cache_key = f"fmp_profile_{symbol}"
-        if cached := self._cache.get(cache_key):
+        if cached := _cache_get(self._cache, cache_key):
             return CompanyProfile(**cached) if isinstance(cached, dict) else cached
         
         try:
@@ -340,7 +353,7 @@ class FMPGateway:
                     is_etf=p.get("isEtf", False),
                     is_actively_trading=p.get("isActivelyTrading", True),
                 )
-                self._cache.set(cache_key, asdict(profile), ttl=86400)  # 24hr
+                _cache_set(self._cache, cache_key, asdict(profile), 86400)  # 24hr
                 return profile
         except Exception as e:
             logger.error(f"Failed to get company profile for {symbol}: {e}")
@@ -748,7 +761,7 @@ class FMPGateway:
             return []
         
         cache_key = "fmp_sector_performance"
-        if cached := self._cache.get(cache_key):
+        if cached := _cache_get(self._cache, cache_key):
             return [SectorPerformance(**s) for s in cached]
         
         try:
@@ -760,7 +773,7 @@ class FMPGateway:
                 )
                 for s in (data or [])
             ]
-            self._cache.set(cache_key, [asdict(r) for r in results], ttl=300)
+            _cache_set(self._cache, cache_key, [asdict(r) for r in results], 300)
             return results
         except Exception as e:
             logger.debug(f"Failed to get sector performance: {e}")
