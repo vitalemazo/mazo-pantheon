@@ -158,12 +158,15 @@ class TestCheckPDTStatus:
         # Mock account with high equity
         mock_account = AlpacaAccount(
             id="test",
+            account_number="123456",
             status="ACTIVE",
             currency="USD",
             cash=30000.0,
             portfolio_value=50000.0,
             equity=50000.0,
             buying_power=100000.0,
+            long_market_value=20000.0,
+            short_market_value=0.0,
             initial_margin=0,
             maintenance_margin=0,
             pattern_day_trader=False,
@@ -189,12 +192,15 @@ class TestCheckPDTStatus:
         # Mock account with low equity and at day trade limit
         mock_account = AlpacaAccount(
             id="test",
+            account_number="123456",
             status="ACTIVE",
             currency="USD",
             cash=5000.0,
             portfolio_value=5000.0,
             equity=5000.0,
             buying_power=10000.0,
+            long_market_value=0.0,
+            short_market_value=0.0,
             initial_margin=0,
             maintenance_margin=0,
             pattern_day_trader=False,
@@ -220,12 +226,15 @@ class TestCheckPDTStatus:
         # Mock account approaching limit
         mock_account = AlpacaAccount(
             id="test",
+            account_number="123456",
             status="ACTIVE",
             currency="USD",
             cash=10000.0,
             portfolio_value=10000.0,
             equity=10000.0,
             buying_power=20000.0,
+            long_market_value=0.0,
+            short_market_value=0.0,
             initial_margin=0,
             maintenance_margin=0,
             pattern_day_trader=False,
@@ -251,12 +260,15 @@ class TestCheckPDTStatus:
         # Mock account already PDT flagged with low equity
         mock_account = AlpacaAccount(
             id="test",
+            account_number="123456",
             status="ACTIVE",
             currency="USD",
             cash=5000.0,
             portfolio_value=5000.0,
             equity=5000.0,
             buying_power=10000.0,
+            long_market_value=0.0,
+            short_market_value=0.0,
             initial_margin=0,
             maintenance_margin=0,
             pattern_day_trader=True,  # Already flagged
@@ -296,8 +308,9 @@ class TestAssetInfo:
             tradable=True,
             marginable=True,
             shortable=True,
-            min_order_size=None,
-            min_trade_increment=None
+            easy_to_borrow=True,
+            min_order_size=1.0,
+            min_trade_increment=1.0
         ))
         
         assert service.is_fractionable("AAPL") is True
@@ -321,8 +334,9 @@ class TestAssetInfo:
             tradable=True,
             marginable=True,
             shortable=True,
-            min_order_size=None,
-            min_trade_increment=None
+            easy_to_borrow=False,
+            min_order_size=1.0,
+            min_trade_increment=1.0
         ))
         
         assert service.is_fractionable("BRK.A") is False

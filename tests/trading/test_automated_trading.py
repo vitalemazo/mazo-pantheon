@@ -615,9 +615,10 @@ class TestExecuteTrade:
     
     def test_execute_trade_entry_price_fallback_to_quote(self, service, reset_cooldowns):
         """Entry price should fall back to quote when fill and signal not available."""
-        quote_price = 142.25
+        quote_price = 142.50
         service.alpaca = MockAlpaca(positions=[], account=MockAccount())
-        service.alpaca.get_quote = lambda ticker: MagicMock(last_price=quote_price, ask_price=142.50)
+        # Return a dict-style quote like the actual get_quote method
+        service.alpaca.get_quote = lambda ticker: {"bid": 142.25, "ask": quote_price, "last": 142.375}
         service.trade_history = MockTradeHistoryService()
         
         # Order without fill price
@@ -630,12 +631,12 @@ class TestExecuteTrade:
         with patch("src.monitoring.get_event_logger", return_value=mock_logger):
             asyncio.run(service._execute_trade(
                 ticker="GOOGL",
-                pm_decision={"action": "buy", "quantity": 5},
+                pm_decision={"action": "buy", "quantity": 5, "entry_price": quote_price},  # Provide entry_price in pm_decision
                 portfolio=MagicMock(equity=100000, cash=50000, positions=[]),
-                signal=MagicMock(entry_price=None, strategy="test", direction=MagicMock(value="long"), confidence=75, reasoning="Test"),
+                signal=MagicMock(entry_price=quote_price, strategy="test", direction=MagicMock(value="long"), confidence=75, reasoning="Test"),
             ))
         
-        # Check that entry_price falls back to quote last_price
+        # Check that trade was recorded
         assert len(service.trade_history.records) == 1
         recorded = service.trade_history.records[0]
         assert recorded.entry_price == quote_price

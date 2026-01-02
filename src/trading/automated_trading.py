@@ -1396,8 +1396,8 @@ class AutomatedTradingService:
             # CONCENTRATION CHECK - Prevent over-exposure
             # =============================================
             if action in ["buy", "short"]:
-                entry_price = signal.entry_price if signal else pm_decision.get("entry_price", 0)
-                if entry_price <= 0:
+                entry_price = signal.entry_price if signal and signal.entry_price else pm_decision.get("entry_price", 0)
+                if not entry_price or entry_price <= 0:
                     # Try to get current price
                     try:
                         quote = self.alpaca.get_quote(ticker)
