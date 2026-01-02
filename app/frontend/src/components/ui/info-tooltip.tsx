@@ -390,6 +390,44 @@ export const TOOLTIP_CONTENT = {
   removeFromWatchlist: "Remove this ticker from your watchlist.",
   viewDetails: "See full details including agent signals, research, and trade history.",
   exportData: "Download this data as CSV or JSON for external analysis.",
+  
+  // ===== SCHEDULED TASKS =====
+  // Command Center shows "Next Scheduled Actions" - a quick glance at upcoming jobs
+  // Trading Dashboard shows "Full Schedule" - complete list with cadence info for editing
+  nextScheduledActions: "Shows the next 4-5 imminent scheduled jobs for a quick at-a-glance view. For the full schedule with editing options, see the Trading Dashboard.",
+  fullSchedule: "Complete list of all scheduled jobs with trigger details (cron/interval). This is the authoritative source for managing automated tasks.",
+  addScheduleButton: "Adds the default set of automated jobs: AI Trading Cycle, Position Monitor, Trade Sync, and Accuracy Backfill.",
 };
+
+/**
+ * Descriptions for each scheduled task type.
+ * Used in both Command Center (Next Actions) and Trading Dashboard (Full Schedule).
+ * 
+ * Why two views?
+ * - Command Center "Next Scheduled Actions": Quick glance at what's running soon
+ * - Trading Dashboard "Scheduled Tasks": Full schedule with cadence info for operators
+ */
+export const SCHEDULE_DESCRIPTIONS: Record<string, string> = {
+  // Core trading jobs
+  "AI Trading Cycle": "Runs the full autonomous pipeline every 30 minutes during market hours: scans tickers → Mazo validates → agents analyze → PM decides → Alpaca executes.",
+  "Position Monitor": "Checks open positions every 5 minutes. Exits trades if stop-loss or take-profit levels are hit. Critical for risk management.",
+  "Trade Sync": "Syncs executed Alpaca orders with local trade history every 10 minutes. Ensures P&L and metrics stay accurate.",
+  "Accuracy Backfill": "Runs daily to mark agent predictions as correct/incorrect based on closed trade outcomes. Powers the agent accuracy metrics.",
+  
+  // Monitoring jobs
+  "Scheduler Heartbeat": "Emits a heartbeat event every 5 minutes so the monitoring dashboard knows the scheduler is alive.",
+  "Daily Performance": "Calculates and stores daily P&L snapshots at market close. Used for historical performance charts.",
+  
+  // Fallback for unknown jobs
+  "default": "Automated background task managed by the scheduler.",
+};
+
+/**
+ * Get the description for a scheduled task by name.
+ * Falls back to a generic description if the task name is not recognized.
+ */
+export function getScheduleDescription(taskName: string): string {
+  return SCHEDULE_DESCRIPTIONS[taskName] || SCHEDULE_DESCRIPTIONS["default"];
+}
 
 export default InfoTooltip;

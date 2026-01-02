@@ -23,7 +23,7 @@ import {
   AlertCircle,
   Settings
 } from 'lucide-react';
-import { InfoTooltip, TOOLTIP_CONTENT, WithTooltip } from '@/components/ui/info-tooltip';
+import { InfoTooltip, TOOLTIP_CONTENT, WithTooltip, getScheduleDescription } from '@/components/ui/info-tooltip';
 
 function formatCurrency(value: number): string {
   const sign = value >= 0 ? '' : '-';
@@ -459,24 +459,28 @@ export function TradingDashboard() {
 
         {/* Scheduled Tasks & Metrics */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Scheduled Tasks */}
+          {/* Full Schedule - Authoritative list with cadence info for operators
+              (Command Center shows "Next Actions" for quick glance) */}
           <Card className="bg-slate-800/50 border-slate-700">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="flex items-center gap-2 text-white">
                   <Calendar className="w-5 h-5 text-orange-400" />
                   Scheduled Tasks
+                  <InfoTooltip content={TOOLTIP_CONTENT.fullSchedule} />
                 </CardTitle>
                 {scheduler && !scheduler.is_running && (
-                  <Button 
-                    size="sm" 
-                    variant="outline"
-                    onClick={addDefaultSchedule}
-                    className="border-orange-500 text-orange-400 hover:bg-orange-500/20"
-                  >
-                    <Plus className="w-4 h-4 mr-1" />
-                    Add Schedule
-                  </Button>
+                  <WithTooltip content={TOOLTIP_CONTENT.addScheduleButton}>
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      onClick={addDefaultSchedule}
+                      className="border-orange-500 text-orange-400 hover:bg-orange-500/20"
+                    >
+                      <Plus className="w-4 h-4 mr-1" />
+                      Add Schedule
+                    </Button>
+                  </WithTooltip>
                 )}
               </div>
             </CardHeader>
@@ -490,23 +494,31 @@ export function TradingDashboard() {
               ) : (
                 <div className="space-y-2">
                   {scheduler.scheduled_tasks.map((task) => (
-                    <div 
+                    <WithTooltip 
                       key={task.id}
-                      className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg"
+                      content={getScheduleDescription(task.name)}
+                      side="left"
                     >
-                      <div>
-                        <span className="font-medium text-white">{task.name}</span>
-                        <div className="text-xs text-slate-400">
-                          {task.trigger}
+                      <div 
+                        className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg cursor-help hover:bg-slate-700/70 transition-colors"
+                        tabIndex={0}
+                        role="button"
+                        aria-label={`${task.name}: ${getScheduleDescription(task.name)}`}
+                      >
+                        <div>
+                          <span className="font-medium text-white">{task.name}</span>
+                          <div className="text-xs text-slate-400">
+                            {task.trigger}
+                          </div>
+                        </div>
+                        <div className="text-right text-sm">
+                          <div className="text-slate-400">Next run:</div>
+                          <div className="text-cyan-400">
+                            {task.next_run ? new Date(task.next_run).toLocaleTimeString() : 'N/A'}
+                          </div>
                         </div>
                       </div>
-                      <div className="text-right text-sm">
-                        <div className="text-slate-400">Next run:</div>
-                        <div className="text-cyan-400">
-                          {task.next_run ? new Date(task.next_run).toLocaleTimeString() : 'N/A'}
-                        </div>
-                      </div>
-                    </div>
+                    </WithTooltip>
                   ))}
                 </div>
               )}

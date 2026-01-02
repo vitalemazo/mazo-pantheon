@@ -24,7 +24,7 @@ import {
   XCircle,
   BarChart3
 } from 'lucide-react';
-import { InfoTooltip, TOOLTIP_CONTENT, WithTooltip } from '@/components/ui/info-tooltip';
+import { InfoTooltip, TOOLTIP_CONTENT, WithTooltip, getScheduleDescription } from '@/components/ui/info-tooltip';
 
 function formatCurrency(value: number): string {
   const sign = value >= 0 ? '' : '-';
@@ -237,12 +237,14 @@ export function CommandCenter() {
                 </CardContent>
               </Card>
 
-              {/* Scheduled Tasks */}
+              {/* Next Scheduled Actions - Quick glance at upcoming jobs
+                  (Full schedule with editing is in Trading Dashboard) */}
               <Card className="bg-slate-800/50 border-slate-700">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-white">
                     <Clock className="w-5 h-5 text-orange-400" />
                     Next Scheduled Actions
+                    <InfoTooltip content={TOOLTIP_CONTENT.nextScheduledActions} />
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -250,19 +252,28 @@ export function CommandCenter() {
                     <div className="text-center py-6 text-slate-400">
                       <Clock className="w-10 h-10 mx-auto mb-2 opacity-50" />
                       <p>No scheduled tasks</p>
+                      <p className="text-xs mt-1">Go to Trading Dashboard to add schedule</p>
                     </div>
                   ) : (
                     <div className="space-y-2">
                       {scheduler.scheduled_tasks.slice(0, 5).map((task: ScheduledTask) => (
-                        <div 
+                        <WithTooltip 
                           key={task.id}
-                          className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg"
+                          content={getScheduleDescription(task.name)}
+                          side="left"
                         >
-                          <span className="text-white">{task.name}</span>
-                          <span className="text-cyan-400 text-sm font-mono">
-                            {task.next_run ? new Date(task.next_run).toLocaleTimeString() : 'N/A'}
-                          </span>
-                        </div>
+                          <div
+                            className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg cursor-help hover:bg-slate-700/70 transition-colors"
+                            tabIndex={0}
+                            role="button"
+                            aria-label={`${task.name}: ${getScheduleDescription(task.name)}`}
+                          >
+                            <span className="text-white">{task.name}</span>
+                            <span className="text-cyan-400 text-sm font-mono">
+                              {task.next_run ? new Date(task.next_run).toLocaleTimeString() : 'N/A'}
+                            </span>
+                          </div>
+                        </WithTooltip>
                       ))}
                     </div>
                   )}
