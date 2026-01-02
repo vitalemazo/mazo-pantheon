@@ -272,6 +272,9 @@ class AlpacaService:
         url = f"{self.base_url}/{endpoint}"
         rate_monitor = _get_rate_limit_monitor()
         
+        # Determine call type from endpoint for telemetry
+        call_type = self._get_call_type(endpoint)
+        
         start_time = time.time()
         try:
             response = requests.request(
@@ -305,6 +308,7 @@ class AlpacaService:
                 if rate_monitor:
                     rate_monitor.record_call(
                         "alpaca",
+                        call_type=call_type,
                         success=False,
                         latency_ms=latency_ms,
                     )
@@ -315,6 +319,7 @@ class AlpacaService:
                 remaining = response.headers.get("X-RateLimit-Remaining")
                 rate_monitor.record_call(
                     "alpaca",
+                    call_type=call_type,
                     success=True,
                     rate_limit_remaining=int(remaining) if remaining else None,
                     latency_ms=latency_ms,
@@ -329,10 +334,33 @@ class AlpacaService:
             if rate_monitor:
                 rate_monitor.record_call(
                     "alpaca",
+                    call_type=call_type,
                     success=False,
                     latency_ms=latency_ms,
                 )
             raise
+    
+    def _get_call_type(self, endpoint: str) -> str:
+        """Map endpoint to call type for telemetry."""
+        endpoint_lower = endpoint.lower()
+        if "orders" in endpoint_lower:
+            return "orders"
+        elif "positions" in endpoint_lower:
+            return "positions"
+        elif "account" in endpoint_lower:
+            return "account"
+        elif "assets" in endpoint_lower:
+            return "assets"
+        elif "clock" in endpoint_lower:
+            return "clock"
+        elif "calendar" in endpoint_lower:
+            return "calendar"
+        elif "watchlist" in endpoint_lower:
+            return "watchlist"
+        elif "activities" in endpoint_lower:
+            return "activities"
+        else:
+            return "general"
 
     # ==================== Account ====================
 

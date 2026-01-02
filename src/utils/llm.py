@@ -302,6 +302,7 @@ def call_llm(
                 api_name = _get_api_name_for_provider(model_provider, api_keys)
                 rate_monitor.record_call(
                     api_name=api_name,
+                    call_type="chat_completion",
                     success=True,
                     latency_ms=attempt_latency_ms,
                 )
@@ -360,6 +361,7 @@ def call_llm(
                     api_name = _get_api_name_for_provider(model_provider, api_keys)
                     rate_monitor.record_call(
                         api_name=api_name,
+                        call_type="chat_completion",
                         success=False,
                     )
             elif "timeout" in error_str:

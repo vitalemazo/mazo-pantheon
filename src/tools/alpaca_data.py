@@ -155,6 +155,9 @@ class AlpacaDataClient:
         url = f"{self.BASE_URL}/{version}/{endpoint}"
         rate_monitor = _get_rate_limit_monitor()
         
+        # Determine call type from endpoint for telemetry
+        call_type = self._get_call_type(endpoint)
+        
         start_time = time.time()
         try:
             response = requests.request(
@@ -194,6 +197,7 @@ class AlpacaDataClient:
                 if rate_monitor:
                     rate_monitor.record_call(
                         "alpaca_data",
+                        call_type=call_type,
                         success=False,
                         latency_ms=latency_ms,
                     )
@@ -204,6 +208,7 @@ class AlpacaDataClient:
                 remaining = response.headers.get("X-RateLimit-Remaining")
                 rate_monitor.record_call(
                     "alpaca_data",
+                    call_type=call_type,
                     success=True,
                     rate_limit_remaining=int(remaining) if remaining else None,
                     latency_ms=latency_ms,
@@ -218,6 +223,7 @@ class AlpacaDataClient:
             if rate_monitor:
                 rate_monitor.record_call(
                     "alpaca_data",
+                    call_type=call_type,
                     success=False,
                     latency_ms=latency_ms,
                 )
@@ -227,10 +233,29 @@ class AlpacaDataClient:
             if rate_monitor:
                 rate_monitor.record_call(
                     "alpaca_data",
+                    call_type=call_type,
                     success=False,
                     latency_ms=latency_ms,
                 )
             raise
+    
+    def _get_call_type(self, endpoint: str) -> str:
+        """Map endpoint to call type for telemetry."""
+        endpoint_lower = endpoint.lower()
+        if "bars" in endpoint_lower:
+            return "bars"
+        elif "quotes" in endpoint_lower or "quote" in endpoint_lower:
+            return "quotes"
+        elif "trades" in endpoint_lower:
+            return "trades"
+        elif "snapshot" in endpoint_lower:
+            return "snapshot"
+        elif "news" in endpoint_lower:
+            return "news"
+        elif "screener" in endpoint_lower or "movers" in endpoint_lower:
+            return "screener"
+        else:
+            return "general"
     
     # ==================== Price Data ====================
     

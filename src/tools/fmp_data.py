@@ -140,6 +140,9 @@ class FMPDataClient:
             params = {}
         params["apikey"] = self.api_key
         
+        # Determine call type from endpoint for telemetry
+        call_type = self._get_call_type(endpoint)
+        
         rate_monitor = _get_rate_limit_monitor()
         start_time = time.time()
         
@@ -172,6 +175,7 @@ class FMPDataClient:
                 if rate_monitor:
                     rate_monitor.record_call(
                         "fmp_data",
+                        call_type=call_type,
                         success=False,
                         latency_ms=latency_ms,
                     )
@@ -182,6 +186,7 @@ class FMPDataClient:
                 remaining = response.headers.get("X-RateLimit-Remaining")
                 rate_monitor.record_call(
                     "fmp_data",
+                    call_type=call_type,
                     success=True,
                     rate_limit_remaining=int(remaining) if remaining else None,
                     latency_ms=latency_ms,
@@ -192,13 +197,39 @@ class FMPDataClient:
         except requests.exceptions.Timeout:
             latency_ms = int((time.time() - start_time) * 1000)
             if rate_monitor:
-                rate_monitor.record_call("fmp_data", success=False, latency_ms=latency_ms)
+                rate_monitor.record_call("fmp_data", call_type=call_type, success=False, latency_ms=latency_ms)
             raise Exception("FMP API timeout")
         except requests.exceptions.RequestException as e:
             latency_ms = int((time.time() - start_time) * 1000)
             if rate_monitor:
-                rate_monitor.record_call("fmp_data", success=False, latency_ms=latency_ms)
+                rate_monitor.record_call("fmp_data", call_type=call_type, success=False, latency_ms=latency_ms)
             raise
+    
+    def _get_call_type(self, endpoint: str) -> str:
+        """Map endpoint to call type for telemetry."""
+        endpoint_lower = endpoint.lower()
+        if "quote" in endpoint_lower:
+            return "quote"
+        elif "price" in endpoint_lower or "historical" in endpoint_lower:
+            return "prices"
+        elif "income" in endpoint_lower or "balance" in endpoint_lower or "cash" in endpoint_lower:
+            return "financials"
+        elif "ratio" in endpoint_lower or "metric" in endpoint_lower:
+            return "metrics"
+        elif "profile" in endpoint_lower:
+            return "profile"
+        elif "news" in endpoint_lower:
+            return "news"
+        elif "insider" in endpoint_lower:
+            return "insider"
+        elif "analyst" in endpoint_lower or "estimate" in endpoint_lower:
+            return "analyst"
+        elif "transcript" in endpoint_lower or "earnings" in endpoint_lower:
+            return "earnings"
+        elif "screener" in endpoint_lower or "stock-list" in endpoint_lower:
+            return "screener"
+        else:
+            return "general"
 
     # ==================== Price Data ====================
     

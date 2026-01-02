@@ -271,7 +271,7 @@ _data_rate_limiter = DataAPIRateLimiter(
 )
 
 
-def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: dict = None, max_retries: int = 3) -> requests.Response:
+def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: dict = None, max_retries: int = 3, call_type: str = "general") -> requests.Response:
     """
     Make an API request with rate limiting handling and exponential backoff.
     
@@ -281,6 +281,7 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
         method: HTTP method (GET or POST)
         json_data: JSON data for POST requests
         max_retries: Maximum number of retries (default: 3)
+        call_type: Type of call for telemetry (e.g., "prices", "financials")
     
     Returns:
         requests.Response: The response object
@@ -334,6 +335,7 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
                     remaining = response.headers.get("X-RateLimit-Remaining")
                     rate_monitor.record_call(
                         "financial_datasets",
+                        call_type=call_type,
                         success=(response.status_code < 400),
                         rate_limit_remaining=int(remaining) if remaining else None,
                         latency_ms=latency_ms,
@@ -346,6 +348,7 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
             if rate_monitor:
                 rate_monitor.record_call(
                     "financial_datasets",
+                    call_type=call_type,
                     success=False,
                     latency_ms=latency_ms,
                 )
@@ -355,6 +358,7 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
             if rate_monitor:
                 rate_monitor.record_call(
                     "financial_datasets",
+                    call_type=call_type,
                     success=False,
                     latency_ms=latency_ms,
                 )
@@ -468,7 +472,7 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
         headers["X-API-KEY"] = financial_api_key
 
     url = f"https://api.financialdatasets.ai/prices/?ticker={ticker}&interval=day&interval_multiplier=1&start_date={start_date}&end_date={end_date}"
-    response = _make_api_request(url, headers)
+    response = _make_api_request(url, headers, call_type="prices")
     if response.status_code != 200:
         return []
 
@@ -593,7 +597,7 @@ def get_financial_metrics(
         headers["X-API-KEY"] = financial_api_key
 
     url = f"https://api.financialdatasets.ai/financial-metrics/?ticker={ticker}&report_period_lte={end_date}&limit={limit}&period={period}"
-    response = _make_api_request(url, headers)
+    response = _make_api_request(url, headers, call_type="metrics")
     if response.status_code != 200:
         return []
 
@@ -636,7 +640,7 @@ def search_line_items(
         "period": period,
         "limit": limit,
     }
-    response = _make_api_request(url, headers, method="POST", json_data=body)
+    response = _make_api_request(url, headers, method="POST", json_data=body, call_type="financials")
     if response.status_code != 200:
         return []
     
@@ -718,7 +722,7 @@ def get_insider_trades(
             url += f"&filing_date_gte={start_date}"
         url += f"&limit={limit}"
 
-        response = _make_api_request(url, headers)
+        response = _make_api_request(url, headers, call_type="insider")
         if response.status_code != 200:
             break
 
@@ -875,7 +879,7 @@ def get_company_news(
             url += f"&start_date={start_date}"
         url += f"&limit={limit}"
 
-        response = _make_api_request(url, headers)
+        response = _make_api_request(url, headers, call_type="news")
         if response.status_code != 200:
             break
 
@@ -925,7 +929,7 @@ def get_market_cap(
             headers["X-API-KEY"] = financial_api_key
 
         url = f"https://api.financialdatasets.ai/company/facts/?ticker={ticker}"
-        response = _make_api_request(url, headers)
+        response = _make_api_request(url, headers, call_type="company")
         if response.status_code != 200:
             print(f"Error fetching company facts: {ticker} - {response.status_code}")
             return None
