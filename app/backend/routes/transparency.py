@@ -352,28 +352,36 @@ async def get_round_table(
                 """
                 result = conn.execute(text(wf_query), {"workflow_id": workflow_id})
             else:
-                # Get latest workflow
+                # Get latest workflow - order by MAX timestamp
                 wf_query = """
-                    SELECT DISTINCT ON (workflow_id) 
-                           workflow_id, workflow_type, ticker,
-                           MIN(timestamp) OVER (PARTITION BY workflow_id) as started_at,
-                           MAX(timestamp) OVER (PARTITION BY workflow_id) as completed_at,
-                           status as final_status
+                    SELECT 
+                        workflow_id, workflow_type, 
+                        MAX(ticker) as ticker,
+                        MIN(timestamp) as started_at,
+                        MAX(timestamp) as completed_at,
+                        MAX(CASE WHEN step_name = 'trading_cycle_complete' THEN 'completed'
+                                 WHEN step_name = 'trading_cycle_error' THEN 'failed'
+                                 ELSE 'running' END) as final_status
                     FROM workflow_events
                     WHERE workflow_type = 'automated_trading'
-                    ORDER BY workflow_id, timestamp DESC
+                    GROUP BY workflow_id, workflow_type
+                    ORDER BY MAX(timestamp) DESC
                     LIMIT 1
                 """
                 if ticker:
                     wf_query = """
-                        SELECT DISTINCT ON (workflow_id)
-                               workflow_id, workflow_type, ticker,
-                               MIN(timestamp) OVER (PARTITION BY workflow_id) as started_at,
-                               MAX(timestamp) OVER (PARTITION BY workflow_id) as completed_at,
-                               status as final_status
+                        SELECT 
+                            workflow_id, workflow_type,
+                            MAX(ticker) as ticker,
+                            MIN(timestamp) as started_at,
+                            MAX(timestamp) as completed_at,
+                            MAX(CASE WHEN step_name = 'trading_cycle_complete' THEN 'completed'
+                                     WHEN step_name = 'trading_cycle_error' THEN 'failed'
+                                     ELSE 'running' END) as final_status
                         FROM workflow_events
                         WHERE workflow_type = 'automated_trading' AND ticker = :ticker
-                        ORDER BY workflow_id, timestamp DESC
+                        GROUP BY workflow_id, workflow_type
+                        ORDER BY MAX(timestamp) DESC
                         LIMIT 1
                     """
                     result = conn.execute(text(wf_query), {"ticker": ticker})
@@ -778,6 +786,147 @@ async def get_round_table(
         
     except Exception as e:
         logger.error(f"Failed to get round table: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.post("/round-table/test-populate")
+async def populate_test_data():
+    """
+    Populate test data for Round Table demonstration.
+    Creates a complete workflow with all 8 stages for testing the UI.
+    """
+    try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        import uuid
+        import json
+        from datetime import datetime, timedelta, timezone
+        
+        workflow_id = uuid.uuid4()
+        now = datetime.now(timezone.utc)
+        ticker = "AAPL"
+        
+        with engine.connect() as conn:
+            # 1. Workflow Events - Start
+            conn.execute(text("""
+                INSERT INTO workflow_events (timestamp, id, workflow_id, workflow_type, step_name, status, ticker, payload)
+                VALUES (:ts, :id, :wf_id, 'automated_trading', 'trading_cycle_start', 'started', :ticker, :payload)
+            """), {
+                "ts": now - timedelta(minutes=5),
+                "id": uuid.uuid4(),
+                "wf_id": workflow_id,
+                "ticker": ticker,
+                "payload": json.dumps({"auto_trading_enabled": True, "market_hours": True, "tickers": ["AAPL", "GOOGL", "MSFT"]})
+            })
+            
+            # Capital rotation
+            conn.execute(text("""
+                INSERT INTO workflow_events (timestamp, id, workflow_id, workflow_type, step_name, status, ticker, payload)
+                VALUES (:ts, :id, :wf_id, 'automated_trading', 'capital_rotation', 'completed', :ticker, :payload)
+            """), {
+                "ts": now - timedelta(minutes=4, seconds=30),
+                "id": uuid.uuid4(),
+                "wf_id": workflow_id,
+                "ticker": ticker,
+                "payload": json.dumps({"portfolio_value": 100000, "buying_power": 45000, "day_trades_remaining": 3})
+            })
+            
+            # Strategy screening
+            conn.execute(text("""
+                INSERT INTO workflow_events (timestamp, id, workflow_id, workflow_type, step_name, status, ticker, payload)
+                VALUES (:ts, :id, :wf_id, 'automated_trading', 'strategy_screening', 'completed', :ticker, :payload)
+            """), {
+                "ts": now - timedelta(minutes=4),
+                "id": uuid.uuid4(),
+                "wf_id": workflow_id,
+                "ticker": ticker,
+                "payload": json.dumps({"ticker_count": 10, "signals_found": 3, "signals": [{"ticker": "AAPL", "signal": "bullish"}]})
+            })
+            
+            # Complete event
+            conn.execute(text("""
+                INSERT INTO workflow_events (timestamp, id, workflow_id, workflow_type, step_name, status, ticker, payload)
+                VALUES (:ts, :id, :wf_id, 'automated_trading', 'trading_cycle_complete', 'completed', :ticker, :payload)
+            """), {
+                "ts": now,
+                "id": uuid.uuid4(),
+                "wf_id": workflow_id,
+                "ticker": ticker,
+                "payload": json.dumps({"total_duration_ms": 300000})
+            })
+            
+            # 2. Agent Signals
+            agents = [
+                ("warren_buffett", "value", "bullish", 78),
+                ("charlie_munger", "value", "bullish", 82),
+                ("ben_graham", "value", "neutral", 55),
+                ("peter_lynch", "growth", "bullish", 85),
+                ("cathie_wood", "growth", "bullish", 90),
+                ("michael_burry", "contrarian", "bearish", 65),
+                ("bill_ackman", "activist", "bullish", 72),
+                ("stanley_druckenmiller", "macro", "bullish", 68),
+                ("fundamentals_analyst", "fundamental", "bullish", 75),
+                ("technicals_analyst", "technical", "bullish", 80),
+                ("sentiment_analyst", "sentiment", "bullish", 70),
+                ("valuation_analyst", "valuation", "neutral", 50),
+            ]
+            
+            for agent_id, agent_type, signal, confidence in agents:
+                conn.execute(text("""
+                    INSERT INTO agent_signals (timestamp, id, workflow_id, agent_id, agent_type, ticker, signal, confidence, reasoning)
+                    VALUES (:ts, :id, :wf_id, :agent_id, :agent_type, :ticker, :signal, :confidence, :reasoning)
+                """), {
+                    "ts": now - timedelta(minutes=2),
+                    "id": uuid.uuid4(),
+                    "wf_id": workflow_id,
+                    "agent_id": agent_id,
+                    "agent_type": agent_type,
+                    "ticker": ticker,
+                    "signal": signal,
+                    "confidence": confidence,
+                    "reasoning": f"{agent_id.replace('_', ' ').title()} analysis indicates {signal} outlook based on key metrics."
+                })
+            
+            # 3. PM Decision
+            conn.execute(text("""
+                INSERT INTO pm_decisions (timestamp, id, workflow_id, ticker, action, quantity, stop_loss_pct, take_profit_pct,
+                                         reasoning_raw, confidence, portfolio_equity, portfolio_cash, consensus_direction, consensus_score,
+                                         bullish_count, bearish_count, neutral_count)
+                VALUES (:ts, :id, :wf_id, :ticker, 'buy', 50, 5.0, 15.0, :reasoning, 75, 100000, 45000, 'bullish', 75, 9, 1, 2)
+            """), {
+                "ts": now - timedelta(minutes=1),
+                "id": uuid.uuid4(),
+                "wf_id": workflow_id,
+                "ticker": ticker,
+                "reasoning": "Strong bullish consensus from value and growth analysts. Cathie Wood and Peter Lynch highly confident. Risk-adjusted position size with 5% stop loss."
+            })
+            
+            # 4. Trade Execution
+            order_id = f"test-order-{uuid.uuid4().hex[:8]}"
+            conn.execute(text("""
+                INSERT INTO trade_executions (timestamp, id, workflow_id, order_id, ticker, side, order_type, quantity,
+                                             status, filled_qty, filled_avg_price, submitted_at, filled_at)
+                VALUES (:ts, :id, :wf_id, :order_id, :ticker, 'buy', 'market', 50, 'filled', 50, 185.50, :submitted, :filled)
+            """), {
+                "ts": now - timedelta(seconds=30),
+                "id": uuid.uuid4(),
+                "wf_id": workflow_id,
+                "order_id": order_id,
+                "ticker": ticker,
+                "submitted": now - timedelta(seconds=35),
+                "filled": now - timedelta(seconds=30)
+            })
+            
+            conn.commit()
+        
+        return {
+            "success": True,
+            "workflow_id": str(workflow_id),
+            "message": f"Created test workflow with 12 agent signals, PM decision, and execution. View at /transparency/round-table?workflow_id={workflow_id}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to populate test data: {e}")
         raise HTTPException(500, str(e))
 
 

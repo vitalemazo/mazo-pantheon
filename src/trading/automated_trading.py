@@ -436,9 +436,10 @@ class AutomatedTradingService:
             for signal, validation in validated_signals:
                 try:
                     analysis = await self._run_full_analysis(
-                        signal, 
-                        validation, 
-                        portfolio_context
+                        signal,
+                        validation,
+                        portfolio_context,
+                        workflow_id=workflow_id  # Pass workflow_id for consistent logging
                     )
                     result.trades_analyzed += 1
                     
@@ -982,9 +983,17 @@ class AutomatedTradingService:
         self,
         signal: TradingSignal,
         validation: ValidationResult,
-        portfolio_context: PortfolioContext
+        portfolio_context: PortfolioContext,
+        workflow_id: 'uuid.UUID' = None
     ) -> Optional[AnalysisResult]:
-        """Run full AI analyst pipeline."""
+        """Run full AI analyst pipeline.
+        
+        Args:
+            signal: Trading signal to analyze
+            validation: Mazo validation result
+            portfolio_context: Portfolio context
+            workflow_id: Workflow ID for logging (passed from run_trading_cycle)
+        """
         try:
             # Create workflow
             workflow = UnifiedWorkflow()
@@ -1019,8 +1028,10 @@ class AutomatedTradingService:
             except ImportError:
                 pass
             
+            # Use passed workflow_id or generate one
             import uuid as uuid_module
-            workflow_id = uuid_module.uuid4()
+            if workflow_id is None:
+                workflow_id = uuid_module.uuid4()
             
             # Get agent signals from result - can be in different formats
             result_agent_signals = []
