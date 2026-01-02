@@ -2,7 +2,7 @@ import { Flow } from '@/types/flow';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 
 // Define tab types
-export type TabType = 'flow' | 'settings' | 'unified-workflow' | 'portfolio' | 'trading' | 'command-center';
+export type TabType = 'flow' | 'settings' | 'unified-workflow' | 'portfolio' | 'trading' | 'command-center' | 'monitoring' | 'round-table';
 
 export interface Tab {
   id: string;
@@ -77,6 +77,15 @@ export function TabsProvider({ children }: TabsProviderProps) {
     }
     if (type === 'trading') {
       return 'trading';
+    }
+    if (type === 'command-center') {
+      return 'command-center';
+    }
+    if (type === 'monitoring') {
+      return 'monitoring';
+    }
+    if (type === 'round-table') {
+      return 'round-table';
     }
     return `${type}-${Date.now()}`;
   }, []);
