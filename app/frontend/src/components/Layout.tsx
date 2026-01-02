@@ -1,3 +1,17 @@
+/**
+ * Layout
+ * 
+ * Main application layout with floating panels and tab management.
+ * 
+ * Structure:
+ * - TopBar: Navigation and panel toggles
+ * - TabBar: Open tabs
+ * - Main content: Active tab content
+ * - Left sidebar: AI Activity Feed
+ * - Right sidebar: Intelligence Panel
+ * - Bottom panel: Output & Research
+ */
+
 import { BottomPanel } from '@/components/panels/bottom/bottom-panel';
 import { AgentActivityFeed } from '@/components/panels/left/AgentActivityFeed';
 import { IntelligencePanel } from '@/components/panels/right/IntelligencePanel';
@@ -19,7 +33,6 @@ import { ReactNode, useEffect, useState } from 'react';
 import { PanelHints } from './layout/panel-hints';
 import { TopBar } from './layout/top-bar';
 
-// Create a LayoutContent component to access the FlowContext, TabsContext, and LayoutContext
 function LayoutContent({ children: _children }: { children: ReactNode }) {
   const { reactFlowInstance } = useFlowContext();
   const { openTab } = useTabsContext();
@@ -39,41 +52,7 @@ function LayoutContent({ children: _children }: { children: ReactNode }) {
   const [rightSidebarWidth, setRightSidebarWidth] = useState(280);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(300);
 
-  const handleSettingsClick = () => {
-    const tabData = TabService.createSettingsTab();
-    openTab(tabData);
-  };
-
-  const handleUnifiedWorkflowClick = () => {
-    const tabData = TabService.createUnifiedWorkflowTab();
-    openTab(tabData);
-  };
-
-  const handlePortfolioClick = () => {
-    const tabData = TabService.createPortfolioTab();
-    openTab(tabData);
-  };
-
-  const handleTradingClick = () => {
-    const tabData = TabService.createTradingTab();
-    openTab(tabData);
-  };
-
-  const handleCommandCenterClick = () => {
-    const tabData = TabService.createCommandCenterTab();
-    openTab(tabData);
-  };
-
-  const handleMonitoringClick = () => {
-    const tabData = TabService.createMonitoringTab();
-    openTab(tabData);
-  };
-
-  const handleRoundTableClick = () => {
-    const tabData = TabService.createRoundTableTab();
-    openTab(tabData);
-  };
-
+  // Navigation handlers - 5 core views
   const handleControlTowerClick = () => {
     const tabData = TabService.createControlTowerTab();
     openTab(tabData);
@@ -84,12 +63,26 @@ function LayoutContent({ children: _children }: { children: ReactNode }) {
     openTab(tabData);
   };
 
+  const handleRoundTableClick = () => {
+    const tabData = TabService.createRoundTableTab();
+    openTab(tabData);
+  };
+
+  const handleMonitoringClick = () => {
+    const tabData = TabService.createMonitoringTab();
+    openTab(tabData);
+  };
+
+  const handleSettingsClick = () => {
+    const tabData = TabService.createSettingsTab();
+    openTab(tabData);
+  };
+
   // Add keyboard shortcuts for toggling sidebars and fit view
   useLayoutKeyboardShortcuts(
     () => setIsRightCollapsed(!isRightCollapsed), // Cmd+I for right sidebar
     () => setIsLeftCollapsed(!isLeftCollapsed),   // Cmd+B for left sidebar
     () => reactFlowInstance.fitView({ padding: 0.1, duration: 500 }), // Cmd+O for fit view
-    // Note: undo/redo will be handled directly in the Flow component for now
     undefined, // undo
     undefined, // redo
     toggleBottomPanel, // Cmd+J for bottom panel
@@ -105,7 +98,7 @@ function LayoutContent({ children: _children }: { children: ReactNode }) {
     SidebarStorageService.saveRightSidebarState(isRightCollapsed);
   }, [isRightCollapsed]);
 
-  // Calculate tab bar and bottom panel positioning based on actual sidebar widths
+  // Calculate positioning based on sidebar widths
   const getSidebarBasedStyle = () => {
     let left = 0;
     let right = 0;
@@ -134,15 +127,11 @@ function LayoutContent({ children: _children }: { children: ReactNode }) {
         onToggleLeft={() => setIsLeftCollapsed(!isLeftCollapsed)}
         onToggleRight={() => setIsRightCollapsed(!isRightCollapsed)}
         onToggleBottom={toggleBottomPanel}
-        onSettingsClick={handleSettingsClick}
-        onUnifiedWorkflowClick={handleUnifiedWorkflowClick}
-        onPortfolioClick={handlePortfolioClick}
-        onTradingClick={handleTradingClick}
-        onCommandCenterClick={handleCommandCenterClick}
-        onMonitoringClick={handleMonitoringClick}
-        onRoundTableClick={handleRoundTableClick}
         onControlTowerClick={handleControlTowerClick}
         onTradingWorkspaceClick={handleTradingWorkspaceClick}
+        onRoundTableClick={handleRoundTableClick}
+        onMonitoringClick={handleMonitoringClick}
+        onSettingsClick={handleSettingsClick}
       />
 
       {/* Tab Bar - positioned absolutely like bottom panel */}

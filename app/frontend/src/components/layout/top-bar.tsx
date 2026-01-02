@@ -1,4 +1,20 @@
+/**
+ * TopBar
+ * 
+ * Application top bar with navigation and controls.
+ * 
+ * Navigation (5 main tabs):
+ * 1. Control Tower (rocket) - Unified command center
+ * 2. Trading Workspace (briefcase) - Positions, performance, health
+ * 3. Round Table (users) - AI decision transparency
+ * 4. Monitoring (gauge) - System health & alerts
+ * 5. Settings (gear) - Configuration
+ * 
+ * Plus panel toggles and keyboard shortcuts.
+ */
+
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   Tooltip,
   TooltipContent,
@@ -6,14 +22,22 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings, Bot, Activity, BarChart3, Crosshair, Sparkles, Gauge, Users, Rocket, Briefcase } from 'lucide-react';
+import { 
+  Keyboard, 
+  PanelBottom, 
+  PanelLeft, 
+  PanelRight, 
+  Settings, 
+  Sparkles, 
+  Gauge, 
+  Users, 
+  Rocket, 
+  Briefcase,
+  Info
+} from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { KeyboardShortcutsDialog } from './keyboard-shortcuts-dialog';
 import { API_BASE_URL } from '@/lib/api-config';
-
-// Feature flags for UI consolidation
-const USE_CONTROL_TOWER = true;      // Merges AI Hedge Fund + Command Center
-const USE_TRADING_WORKSPACE = true;  // Merges Trading Dashboard + Portfolio Health
 
 interface TopBarProps {
   isLeftCollapsed: boolean;
@@ -22,15 +46,11 @@ interface TopBarProps {
   onToggleLeft: () => void;
   onToggleRight: () => void;
   onToggleBottom: () => void;
-  onSettingsClick: () => void;
-  onUnifiedWorkflowClick: () => void;
-  onPortfolioClick: () => void;
-  onTradingClick: () => void;
-  onCommandCenterClick: () => void;
-  onMonitoringClick: () => void;
+  onControlTowerClick: () => void;
+  onTradingWorkspaceClick: () => void;
   onRoundTableClick: () => void;
-  onControlTowerClick?: () => void;
-  onTradingWorkspaceClick?: () => void;
+  onMonitoringClick: () => void;
+  onSettingsClick: () => void;
 }
 
 export function TopBar({
@@ -40,18 +60,18 @@ export function TopBar({
   onToggleLeft,
   onToggleRight,
   onToggleBottom,
-  onSettingsClick,
-  onUnifiedWorkflowClick,
-  onPortfolioClick,
-  onTradingClick,
-  onCommandCenterClick,
-  onMonitoringClick,
-  onRoundTableClick,
   onControlTowerClick,
   onTradingWorkspaceClick,
+  onRoundTableClick,
+  onMonitoringClick,
+  onSettingsClick,
 }: TopBarProps) {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [isAutonomousActive, setIsAutonomousActive] = useState(false);
+  const [showNewLayoutBadge, setShowNewLayoutBadge] = useState(() => {
+    // Show badge until user dismisses it
+    return localStorage.getItem('mazo_new_layout_dismissed') !== 'true';
+  });
   
   // Check autonomous mode status periodically
   useEffect(() => {
@@ -75,20 +95,49 @@ export function TopBar({
     };
     
     checkStatus();
-    const interval = setInterval(checkStatus, 15000); // Check every 15 seconds
+    const interval = setInterval(checkStatus, 15000);
     return () => clearInterval(interval);
   }, []);
+
+  const dismissNewLayoutBadge = () => {
+    localStorage.setItem('mazo_new_layout_dismissed', 'true');
+    setShowNewLayoutBadge(false);
+  };
 
   return (
     <TooltipProvider delayDuration={300}>
       <div className="absolute top-0 right-0 z-40 flex items-center gap-0 py-1 px-2 bg-panel/80">
+        {/* New Layout Badge */}
+        {showNewLayoutBadge && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div 
+                className="flex items-center gap-1.5 px-2 py-1 mr-2 rounded-full bg-indigo-500/20 border border-indigo-500/50 cursor-pointer hover:bg-indigo-500/30 transition-colors"
+                onClick={dismissNewLayoutBadge}
+              >
+                <Info className="w-3 h-3 text-indigo-400" />
+                <span className="text-xs font-medium text-indigo-400">New Layout</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-xs">
+              <div className="space-y-1">
+                <span className="font-medium">Simplified Navigation</span>
+                <p className="text-xs text-muted-foreground">
+                  5 core views: Control Tower, Trading Workspace, Round Table, Monitoring, Settings.
+                  Click to dismiss.
+                </p>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        )}
+
         {/* Autonomous Mode Indicator */}
         {isAutonomousActive && (
           <Tooltip>
             <TooltipTrigger asChild>
               <div 
                 className="flex items-center gap-1.5 px-2 py-1 mr-2 rounded-full bg-emerald-500/20 border border-emerald-500/50 cursor-pointer hover:bg-emerald-500/30 transition-colors"
-                onClick={USE_CONTROL_TOWER && onControlTowerClick ? onControlTowerClick : onUnifiedWorkflowClick}
+                onClick={onControlTowerClick}
               >
                 <Sparkles className="w-3 h-3 text-emerald-400 animate-pulse" />
                 <span className="text-xs font-medium text-emerald-400">AI LIVE</span>
@@ -101,7 +150,7 @@ export function TopBar({
           </Tooltip>
         )}
         
-        {/* Left Sidebar Toggle */}
+        {/* Panel Toggles */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -118,14 +167,13 @@ export function TopBar({
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="flex flex-col gap-0.5">
-            <span className="font-medium">Flows Panel</span>
+            <span className="font-medium">AI Activity Panel</span>
             <span className="text-xs text-muted-foreground">
-              {isLeftCollapsed ? 'Show' : 'Hide'} flow list • ⌘B
+              {isLeftCollapsed ? 'Show' : 'Hide'} activity feed • ⌘B
             </span>
           </TooltipContent>
         </Tooltip>
 
-        {/* Bottom Panel Toggle */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -144,12 +192,11 @@ export function TopBar({
           <TooltipContent side="bottom" className="flex flex-col gap-0.5">
             <span className="font-medium">Output & Research</span>
             <span className="text-xs text-muted-foreground">
-              {isBottomCollapsed ? 'Show' : 'Hide'} output and Mazo research • ⌘J
+              {isBottomCollapsed ? 'Show' : 'Hide'} output panel • ⌘J
             </span>
           </TooltipContent>
         </Tooltip>
 
-        {/* Right Sidebar Toggle */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -166,9 +213,9 @@ export function TopBar({
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="flex flex-col gap-0.5">
-            <span className="font-medium">Components Panel</span>
+            <span className="font-medium">Intelligence Panel</span>
             <span className="text-xs text-muted-foreground">
-              {isRightCollapsed ? 'Show' : 'Hide'} drag & drop components • ⌘I
+              {isRightCollapsed ? 'Show' : 'Hide'} components • ⌘I
             </span>
           </TooltipContent>
         </Tooltip>
@@ -176,159 +223,54 @@ export function TopBar({
         {/* Divider */}
         <div className="w-px h-5 bg-ramp-grey-700 mx-1" />
 
-        {/* Control Tower (NEW - replaces AI Hedge Fund + Command Center) */}
-        {USE_CONTROL_TOWER && onControlTowerClick && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onControlTowerClick}
-                className="h-8 w-8 p-0 text-indigo-400 hover:text-indigo-300 hover:bg-ramp-grey-700 transition-colors"
-                aria-label="Open Control Tower"
-              >
-                <Rocket size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="flex flex-col gap-0.5">
-              <span className="font-medium">Control Tower</span>
-              <span className="text-xs text-muted-foreground">Unified command center • Autopilot • AI team</span>
-            </TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* AI Hedge Fund (Legacy - hidden when Control Tower is enabled) */}
-        {!USE_CONTROL_TOWER && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onUnifiedWorkflowClick}
-                className="h-8 w-8 p-0 text-purple-400 hover:text-purple-300 hover:bg-ramp-grey-700 transition-colors"
-                aria-label="Open AI Hedge Fund"
-              >
-                <Bot size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="flex flex-col gap-0.5">
-              <span className="font-medium">AI Hedge Fund</span>
-              <span className="text-xs text-muted-foreground">Autonomous trading • Budget control</span>
-            </TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* Trading Workspace (NEW - replaces Trading Dashboard + Portfolio Health) */}
-        {USE_TRADING_WORKSPACE && onTradingWorkspaceClick && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onTradingWorkspaceClick}
-                className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-ramp-grey-700 transition-colors"
-                aria-label="Open Trading Workspace"
-              >
-                <Briefcase size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="flex flex-col gap-0.5">
-              <span className="font-medium">Trading Workspace</span>
-              <span className="text-xs text-muted-foreground">Positions • Performance • Health • Research</span>
-            </TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* Portfolio Health (Legacy - hidden when Trading Workspace is enabled) */}
-        {!USE_TRADING_WORKSPACE && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onPortfolioClick}
-                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-ramp-grey-700 transition-colors"
-                aria-label="Open portfolio health"
-              >
-                <Activity size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="flex flex-col gap-0.5">
-              <span className="font-medium">Portfolio Health</span>
-              <span className="text-xs text-muted-foreground">AI-powered portfolio analysis • ⌘P</span>
-            </TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* Trading Dashboard (Legacy - hidden when Trading Workspace is enabled) */}
-        {!USE_TRADING_WORKSPACE && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onTradingClick}
-                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-ramp-grey-700 transition-colors"
-                aria-label="Open trading dashboard"
-              >
-                <BarChart3 size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="flex flex-col gap-0.5">
-              <span className="font-medium">Trading Dashboard</span>
-              <span className="text-xs text-muted-foreground">Performance & strategies • ⌘T</span>
-            </TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* Command Center (Legacy - hidden when Control Tower is enabled) */}
-        {!USE_CONTROL_TOWER && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onCommandCenterClick}
-                className="h-8 w-8 p-0 text-amber-400 hover:text-amber-300 hover:bg-ramp-grey-700 transition-colors"
-                aria-label="Open command center"
-              >
-                <Crosshair size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="flex flex-col gap-0.5">
-              <span className="font-medium">Command Center</span>
-              <span className="text-xs text-muted-foreground">Unified view • Trade history • Agent leaderboard</span>
-            </TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* Monitoring Dashboard */}
+        {/* Main Navigation - 5 Core Views */}
+        
+        {/* 1. Control Tower */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="sm"
-              onClick={onMonitoringClick}
-              className="h-8 w-8 p-0 text-cyan-400 hover:text-cyan-300 hover:bg-ramp-grey-700 transition-colors"
-              aria-label="Open monitoring dashboard"
+              onClick={onControlTowerClick}
+              className="h-8 w-8 p-0 text-indigo-400 hover:text-indigo-300 hover:bg-ramp-grey-700 transition-colors"
+              aria-label="Open Control Tower"
             >
-              <Gauge size={16} />
+              <Rocket size={16} />
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="flex flex-col gap-0.5">
-            <span className="font-medium">Monitoring</span>
-            <span className="text-xs text-muted-foreground">System health • Alerts • Performance metrics</span>
+            <span className="font-medium">Control Tower</span>
+            <span className="text-xs text-muted-foreground">Autopilot • AI team • Positions</span>
           </TooltipContent>
         </Tooltip>
 
-        {/* Round Table */}
+        {/* 2. Trading Workspace */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onTradingWorkspaceClick}
+              className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-ramp-grey-700 transition-colors"
+              aria-label="Open Trading Workspace"
+            >
+              <Briefcase size={16} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="flex flex-col gap-0.5">
+            <span className="font-medium">Trading Workspace</span>
+            <span className="text-xs text-muted-foreground">Performance • Health • Research</span>
+          </TooltipContent>
+        </Tooltip>
+
+        {/* 3. Round Table */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="sm"
               onClick={onRoundTableClick}
-              className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-ramp-grey-700 transition-colors"
+              className="h-8 w-8 p-0 text-purple-400 hover:text-purple-300 hover:bg-ramp-grey-700 transition-colors"
               aria-label="Open Round Table"
             >
               <Users size={16} />
@@ -336,9 +278,31 @@ export function TopBar({
           </TooltipTrigger>
           <TooltipContent side="bottom" className="flex flex-col gap-0.5">
             <span className="font-medium">Round Table</span>
-            <span className="text-xs text-muted-foreground">Full AI decision transparency • Audit pipeline</span>
+            <span className="text-xs text-muted-foreground">AI decision transparency • Pipeline audit</span>
           </TooltipContent>
         </Tooltip>
+
+        {/* 4. Monitoring */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onMonitoringClick}
+              className="h-8 w-8 p-0 text-cyan-400 hover:text-cyan-300 hover:bg-ramp-grey-700 transition-colors"
+              aria-label="Open Monitoring"
+            >
+              <Gauge size={16} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="flex flex-col gap-0.5">
+            <span className="font-medium">Monitoring</span>
+            <span className="text-xs text-muted-foreground">System health • Rate limits • Alerts</span>
+          </TooltipContent>
+        </Tooltip>
+
+        {/* Divider */}
+        <div className="w-px h-5 bg-ramp-grey-700 mx-1" />
 
         {/* Keyboard Shortcuts */}
         <Tooltip>
@@ -358,7 +322,7 @@ export function TopBar({
           </TooltipContent>
         </Tooltip>
 
-        {/* Settings */}
+        {/* 5. Settings */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -373,7 +337,7 @@ export function TopBar({
           </TooltipTrigger>
           <TooltipContent side="bottom" className="flex flex-col gap-0.5">
             <span className="font-medium">Settings</span>
-            <span className="text-xs text-muted-foreground">API keys and preferences • ⌘,</span>
+            <span className="text-xs text-muted-foreground">API keys • Preferences • ⌘,</span>
           </TooltipContent>
         </Tooltip>
       </div>
@@ -385,4 +349,4 @@ export function TopBar({
       />
     </TooltipProvider>
   );
-} 
+}
