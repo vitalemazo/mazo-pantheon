@@ -746,6 +746,69 @@ async def get_trading_guardrails():
         }
 
 
+@router.get("/data-sources/fmp")
+async def get_fmp_module_status():
+    """
+    Get FMP Ultimate module status.
+    
+    Returns which FMP data modules are enabled and their health status.
+    """
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway, FMPModule, is_module_enabled
+        
+        gateway = get_fmp_gateway()
+        
+        # Get module status
+        modules = {}
+        for module in FMPModule:
+            modules[module.name.lower()] = {
+                "enabled": is_module_enabled(module),
+                "env_var": module.value,
+            }
+        
+        # Test a simple call to verify FMP is working
+        health_status = "unknown"
+        health_message = None
+        
+        if gateway.is_configured():
+            try:
+                # Quick health check - get sector performance
+                sectors = gateway.get_sector_performance()
+                if sectors:
+                    health_status = "healthy"
+                    health_message = f"FMP responding, {len(sectors)} sectors"
+                else:
+                    health_status = "degraded"
+                    health_message = "FMP configured but no data returned"
+            except Exception as he:
+                health_status = "error"
+                health_message = str(he)
+        else:
+            health_status = "not_configured"
+            health_message = "FMP_API_KEY not set"
+        
+        return {
+            "success": True,
+            "configured": gateway.is_configured(),
+            "health": {
+                "status": health_status,
+                "message": health_message,
+            },
+            "modules": modules,
+            "enabled_count": sum(1 for m in modules.values() if m["enabled"]),
+            "total_count": len(modules),
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get FMP module status: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "configured": False,
+            "modules": {},
+        }
+
+
 # =============================================================================
 # PERFORMANCE METRICS ENDPOINTS
 # =============================================================================

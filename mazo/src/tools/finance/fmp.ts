@@ -749,3 +749,348 @@ export function shouldUseFmpFallback(dataType: 'prices' | 'metrics' | 'news' | '
       return true;
   }
 }
+
+
+// =============================================================================
+// FMP Ultimate Data Functions
+// =============================================================================
+// These functions provide access to the full FMP Ultimate data catalog.
+// Each module can be toggled via environment variables (FMP_MODULE_*).
+
+/**
+ * Check if an FMP module is enabled.
+ */
+function isModuleEnabled(module: string): boolean {
+  const envVar = `FMP_MODULE_${module.toUpperCase()}`;
+  const val = process.env[envVar];
+  return val === undefined || val === '' || val.toLowerCase() === 'true';
+}
+
+/**
+ * Generic FMP API call helper.
+ */
+async function fmpRequest<T>(endpoint: string, params: Record<string, string> = {}): Promise<T | null> {
+  const apiKey = getFmpApiKey();
+  if (!apiKey) {
+    console.log('FMP API key not configured');
+    return null;
+  }
+
+  try {
+    const queryParams = new URLSearchParams({ ...params, apikey: apiKey });
+    const url = `${FMP_BASE_URL}/${endpoint}?${queryParams}`;
+    
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`FMP ${endpoint} failed: ${response.status}`);
+      return null;
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error(`FMP ${endpoint} error:`, error);
+    return null;
+  }
+}
+
+// ---- Company Data ----
+
+export interface CompanyProfile {
+  symbol: string;
+  companyName: string;
+  sector: string;
+  industry: string;
+  description: string;
+  ceo?: string;
+  website?: string;
+  country?: string;
+  mktCap?: number;
+  fullTimeEmployees?: number;
+  ipoDate?: string;
+}
+
+/**
+ * Get full company profile.
+ */
+export async function getFmpCompanyProfile(ticker: string): Promise<CompanyProfile | null> {
+  if (!isModuleEnabled('FUNDAMENTALS')) return null;
+  
+  const data = await fmpRequest<CompanyProfile[]>('profile', { symbol: ticker });
+  return data && data.length > 0 ? data[0] : null;
+}
+
+/**
+ * Get company peer list.
+ */
+export async function getFmpCompanyPeers(ticker: string): Promise<string[]> {
+  if (!isModuleEnabled('FUNDAMENTALS')) return [];
+  
+  const data = await fmpRequest<Array<{ peersList: string[] }>>('stock_peers', { symbol: ticker });
+  return data && data.length > 0 ? data[0].peersList || [] : [];
+}
+
+// ---- Analyst Data ----
+
+export interface AnalystEstimate {
+  symbol: string;
+  date: string;
+  estimatedEpsAvg?: number;
+  estimatedRevenueAvg?: number;
+  numberAnalystsEstimatedEps?: number;
+  numberAnalystsEstimatedRevenue?: number;
+}
+
+/**
+ * Get analyst estimates.
+ */
+export async function getFmpAnalystEstimates(ticker: string, period: string = 'annual', limit: number = 4): Promise<AnalystEstimate[]> {
+  if (!isModuleEnabled('ANALYSTS')) return [];
+  
+  const data = await fmpRequest<AnalystEstimate[]>('analyst-estimates', { 
+    symbol: ticker, 
+    period, 
+    limit: String(limit) 
+  });
+  return data || [];
+}
+
+export interface PriceTarget {
+  symbol: string;
+  publishedDate: string;
+  analystName?: string;
+  analystCompany?: string;
+  priceTarget?: number;
+  priceWhenPosted?: number;
+}
+
+/**
+ * Get analyst price targets.
+ */
+export async function getFmpPriceTargets(ticker: string, limit: number = 10): Promise<PriceTarget[]> {
+  if (!isModuleEnabled('ANALYSTS')) return [];
+  
+  const data = await fmpRequest<PriceTarget[]>('price-target', { symbol: ticker });
+  return (data || []).slice(0, limit);
+}
+
+/**
+ * Get consensus price target.
+ */
+export async function getFmpPriceTargetConsensus(ticker: string): Promise<Record<string, unknown> | null> {
+  if (!isModuleEnabled('ANALYSTS')) return null;
+  
+  const data = await fmpRequest<Record<string, unknown>[]>('price-target-consensus', { symbol: ticker });
+  return data && data.length > 0 ? data[0] : null;
+}
+
+export interface StockGrade {
+  symbol: string;
+  date: string;
+  gradingCompany: string;
+  previousGrade?: string;
+  newGrade?: string;
+  action?: string;
+}
+
+/**
+ * Get stock upgrade/downgrade history.
+ */
+export async function getFmpStockGrades(ticker: string, limit: number = 10): Promise<StockGrade[]> {
+  if (!isModuleEnabled('ANALYSTS')) return [];
+  
+  const data = await fmpRequest<StockGrade[]>('grade', { symbol: ticker, limit: String(limit) });
+  return data || [];
+}
+
+// ---- Insider & Institutional Data ----
+
+export interface InsiderTrade {
+  symbol: string;
+  filingDate: string;
+  transactionDate?: string;
+  reportingName: string;
+  transactionType: string;
+  securitiesTransacted?: number;
+  price?: number;
+}
+
+/**
+ * Get insider trading activity.
+ */
+export async function getFmpInsiderTrades(ticker: string, limit: number = 50): Promise<InsiderTrade[]> {
+  if (!isModuleEnabled('INSIDER')) return [];
+  
+  const data = await fmpRequest<InsiderTrade[]>('insider-trading', { symbol: ticker, limit: String(limit) });
+  return data || [];
+}
+
+/**
+ * Get institutional holders.
+ */
+export async function getFmpInstitutionalHolders(ticker: string): Promise<Record<string, unknown>[]> {
+  if (!isModuleEnabled('FILINGS')) return [];
+  
+  const data = await fmpRequest<Record<string, unknown>[]>('institutional-holder', { symbol: ticker });
+  return data || [];
+}
+
+// ---- Calendar Data ----
+
+export interface EarningsEvent {
+  symbol: string;
+  date: string;
+  epsEstimated?: number;
+  eps?: number;
+  revenueEstimated?: number;
+  revenue?: number;
+  time?: string;
+}
+
+/**
+ * Get earnings calendar.
+ */
+export async function getFmpEarningsCalendar(fromDate?: string, toDate?: string): Promise<EarningsEvent[]> {
+  if (!isModuleEnabled('CALENDAR')) return [];
+  
+  const params: Record<string, string> = {};
+  if (fromDate) params.from = fromDate;
+  if (toDate) params.to = toDate;
+  
+  const data = await fmpRequest<EarningsEvent[]>('earning_calendar', params);
+  return data || [];
+}
+
+/**
+ * Get economic calendar.
+ */
+export async function getFmpEconomicCalendar(fromDate?: string, toDate?: string): Promise<Record<string, unknown>[]> {
+  if (!isModuleEnabled('CALENDAR')) return [];
+  
+  const params: Record<string, string> = {};
+  if (fromDate) params.from = fromDate;
+  if (toDate) params.to = toDate;
+  
+  const data = await fmpRequest<Record<string, unknown>[]>('economic_calendar', params);
+  return data || [];
+}
+
+// ---- Market Data ----
+
+export interface SectorPerformance {
+  sector: string;
+  changesPercentage: number;
+}
+
+/**
+ * Get sector performance.
+ */
+export async function getFmpSectorPerformance(): Promise<SectorPerformance[]> {
+  if (!isModuleEnabled('MARKET')) return [];
+  
+  const data = await fmpRequest<SectorPerformance[]>('sector-performance', {});
+  return data || [];
+}
+
+export interface MarketMover {
+  symbol: string;
+  name: string;
+  change: number;
+  changesPercentage: number;
+  price: number;
+}
+
+/**
+ * Get market movers (gainers, losers, actives).
+ */
+export async function getFmpMarketMovers(type: 'gainers' | 'losers' | 'actives' = 'gainers', limit: number = 10): Promise<MarketMover[]> {
+  if (!isModuleEnabled('MARKET')) return [];
+  
+  const data = await fmpRequest<MarketMover[]>(`stock_market/${type}`, {});
+  return (data || []).slice(0, limit);
+}
+
+// ---- Non-Equity Markets ----
+
+export interface CommodityQuote {
+  symbol: string;
+  name: string;
+  price: number;
+  change: number;
+  changesPercentage: number;
+}
+
+/**
+ * Get commodity quotes.
+ */
+export async function getFmpCommodityQuotes(): Promise<CommodityQuote[]> {
+  if (!isModuleEnabled('COMMODITIES')) return [];
+  
+  const data = await fmpRequest<CommodityQuote[]>('quote/commodity', {});
+  return data || [];
+}
+
+export interface CryptoQuote {
+  symbol: string;
+  name: string;
+  price: number;
+  change: number;
+  changesPercentage: number;
+  marketCap?: number;
+}
+
+/**
+ * Get cryptocurrency quotes.
+ */
+export async function getFmpCryptoQuotes(limit: number = 20): Promise<CryptoQuote[]> {
+  if (!isModuleEnabled('CRYPTO')) return [];
+  
+  const data = await fmpRequest<CryptoQuote[]>('quote/crypto', {});
+  return (data || []).slice(0, limit);
+}
+
+// ---- ESG Data ----
+
+export interface ESGScore {
+  symbol: string;
+  date: string;
+  environmentScore?: number;
+  socialScore?: number;
+  governanceScore?: number;
+  ESGScore?: number;
+  ESGRating?: string;
+}
+
+/**
+ * Get ESG score.
+ */
+export async function getFmpEsgScore(ticker: string): Promise<ESGScore | null> {
+  if (!isModuleEnabled('ESG')) return null;
+  
+  const data = await fmpRequest<ESGScore[]>('esg-environmental-social-governance-data', { symbol: ticker });
+  return data && data.length > 0 ? data[0] : null;
+}
+
+// ---- Module Status ----
+
+/**
+ * Get status of all FMP modules.
+ */
+export function getFmpModuleStatus(): Record<string, boolean> {
+  const modules = [
+    'FUNDAMENTALS', 'ANALYSTS', 'FILINGS', 'INSIDER', 
+    'CALENDAR', 'MACRO', 'MARKET', 'ETF', 
+    'COMMODITIES', 'FOREX', 'CRYPTO', 'ESG'
+  ];
+  
+  const status: Record<string, boolean> = {};
+  for (const mod of modules) {
+    status[mod.toLowerCase()] = isModuleEnabled(mod);
+  }
+  return status;
+}

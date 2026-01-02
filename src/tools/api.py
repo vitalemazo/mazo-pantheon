@@ -966,3 +966,321 @@ def prices_to_df(prices: list[Price]) -> pd.DataFrame:
 def get_price_data(ticker: str, start_date: str, end_date: str, api_key: str = None) -> pd.DataFrame:
     prices = get_prices(ticker, start_date, end_date, api_key=api_key)
     return prices_to_df(prices)
+
+
+# =============================================================================
+# FMP Gateway Helper Functions
+# =============================================================================
+# These functions provide access to the full FMP Ultimate data catalog.
+# Each data family can be toggled via environment variables (FMP_MODULE_*).
+
+def get_company_profile(ticker: str) -> dict | None:
+    """
+    Get full company profile including sector, industry, description, CEO.
+    
+    Returns dict with: symbol, company_name, sector, industry, description,
+    ceo, website, country, market_cap, employees, ipo_date
+    """
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        gateway = get_fmp_gateway()
+        profile = gateway.get_company_profile(ticker)
+        if profile:
+            from dataclasses import asdict
+            return asdict(profile)
+    except Exception as e:
+        logger.debug(f"Failed to get company profile for {ticker}: {e}")
+    return None
+
+
+def get_company_peers(ticker: str) -> list[str]:
+    """Get list of peer company symbols."""
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        gateway = get_fmp_gateway()
+        peers = gateway.get_company_peers(ticker)
+        return peers.peers if peers else []
+    except Exception as e:
+        logger.debug(f"Failed to get company peers for {ticker}: {e}")
+    return []
+
+
+def get_analyst_estimates(ticker: str, period: str = "annual", limit: int = 4) -> list[dict]:
+    """
+    Get analyst earnings and revenue estimates.
+    
+    Returns list of estimates with: date, estimated_eps_avg, estimated_revenue_avg, etc.
+    """
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        from dataclasses import asdict
+        gateway = get_fmp_gateway()
+        estimates = gateway.get_analyst_estimates(ticker, period, limit)
+        return [asdict(e) for e in estimates]
+    except Exception as e:
+        logger.debug(f"Failed to get analyst estimates for {ticker}: {e}")
+    return []
+
+
+def get_price_targets(ticker: str, limit: int = 10) -> list[dict]:
+    """
+    Get analyst price targets.
+    
+    Returns list of targets with: analyst_name, analyst_company, price_target, upside
+    """
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        from dataclasses import asdict
+        gateway = get_fmp_gateway()
+        targets = gateway.get_price_targets(ticker, limit)
+        return [asdict(t) for t in targets]
+    except Exception as e:
+        logger.debug(f"Failed to get price targets for {ticker}: {e}")
+    return []
+
+
+def get_price_target_consensus(ticker: str) -> dict | None:
+    """Get consensus price target with average, high, low."""
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        gateway = get_fmp_gateway()
+        return gateway.get_price_target_consensus(ticker)
+    except Exception as e:
+        logger.debug(f"Failed to get price target consensus for {ticker}: {e}")
+    return None
+
+
+def get_stock_grades(ticker: str, limit: int = 10) -> list[dict]:
+    """
+    Get stock upgrade/downgrade history.
+    
+    Returns list with: grading_company, previous_grade, new_grade, action
+    """
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        from dataclasses import asdict
+        gateway = get_fmp_gateway()
+        grades = gateway.get_stock_grades(ticker, limit)
+        return [asdict(g) for g in grades]
+    except Exception as e:
+        logger.debug(f"Failed to get stock grades for {ticker}: {e}")
+    return []
+
+
+def get_analyst_recommendations(ticker: str) -> dict | None:
+    """Get analyst recommendation summary (strong buy, buy, hold, sell, strong sell counts)."""
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        gateway = get_fmp_gateway()
+        return gateway.get_analyst_recommendations(ticker)
+    except Exception as e:
+        logger.debug(f"Failed to get analyst recommendations for {ticker}: {e}")
+    return None
+
+
+def get_fmp_insider_trades(ticker: str, limit: int = 50) -> list[dict]:
+    """
+    Get insider trading activity from FMP.
+    
+    Returns list with: filing_date, transaction_date, reporting_name, 
+    transaction_type (P=Purchase, S=Sale), securities_transacted, price
+    """
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        from dataclasses import asdict
+        gateway = get_fmp_gateway()
+        trades = gateway.get_insider_trades(ticker, limit)
+        return [asdict(t) for t in trades]
+    except Exception as e:
+        logger.debug(f"Failed to get insider trades for {ticker}: {e}")
+    return []
+
+
+def get_form_13f(ticker: str = None, cik: str = None, limit: int = 100) -> list[dict]:
+    """
+    Get 13F institutional holdings.
+    
+    Query by symbol (who holds it) or by CIK (what an institution holds).
+    """
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        from dataclasses import asdict
+        gateway = get_fmp_gateway()
+        filings = gateway.get_form_13f(symbol=ticker, cik=cik, limit=limit)
+        return [asdict(f) for f in filings]
+    except Exception as e:
+        logger.debug(f"Failed to get 13F data: {e}")
+    return []
+
+
+def get_institutional_holders(ticker: str) -> list[dict]:
+    """Get institutional holders for a symbol."""
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        gateway = get_fmp_gateway()
+        return gateway.get_institutional_holders(ticker)
+    except Exception as e:
+        logger.debug(f"Failed to get institutional holders for {ticker}: {e}")
+    return []
+
+
+def get_earnings_calendar(from_date: str = None, to_date: str = None) -> list[dict]:
+    """
+    Get earnings calendar.
+    
+    Returns list with: symbol, date, eps_estimated, eps_actual, revenue_estimated, time
+    """
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        from dataclasses import asdict
+        gateway = get_fmp_gateway()
+        events = gateway.get_earnings_calendar(from_date, to_date)
+        return [asdict(e) for e in events]
+    except Exception as e:
+        logger.debug(f"Failed to get earnings calendar: {e}")
+    return []
+
+
+def get_economic_calendar(from_date: str = None, to_date: str = None) -> list[dict]:
+    """Get economic events calendar."""
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        gateway = get_fmp_gateway()
+        return gateway.get_economic_calendar(from_date, to_date)
+    except Exception as e:
+        logger.debug(f"Failed to get economic calendar: {e}")
+    return []
+
+
+def get_macro_indicators(indicator: str = None) -> list[dict]:
+    """
+    Get macroeconomic indicators (GDP, CPI, unemployment, etc.).
+    
+    Common indicators: GDP, CPI, UNRATE (unemployment), PAYEMS (nonfarm payrolls)
+    """
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        from dataclasses import asdict
+        gateway = get_fmp_gateway()
+        indicators = gateway.get_economic_indicators(indicator)
+        return [asdict(i) for i in indicators]
+    except Exception as e:
+        logger.debug(f"Failed to get macro indicators: {e}")
+    return []
+
+
+def get_sector_performance() -> list[dict]:
+    """Get sector performance (change percentages)."""
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        from dataclasses import asdict
+        gateway = get_fmp_gateway()
+        sectors = gateway.get_sector_performance()
+        return [asdict(s) for s in sectors]
+    except Exception as e:
+        logger.debug(f"Failed to get sector performance: {e}")
+    return []
+
+
+def get_market_movers(mover_type: str = "gainers", limit: int = 10) -> list[dict]:
+    """
+    Get market movers (gainers, losers, most active).
+    
+    Args:
+        mover_type: "gainers", "losers", or "actives"
+    """
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        from dataclasses import asdict
+        gateway = get_fmp_gateway()
+        
+        if mover_type == "gainers":
+            movers = gateway.get_gainers(limit)
+        elif mover_type == "losers":
+            movers = gateway.get_losers(limit)
+        else:
+            movers = gateway.get_most_active(limit)
+        
+        return [asdict(m) for m in movers]
+    except Exception as e:
+        logger.debug(f"Failed to get market movers: {e}")
+    return []
+
+
+def get_etf_holdings(etf_symbol: str) -> list[dict]:
+    """Get ETF constituent holdings."""
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        from dataclasses import asdict
+        gateway = get_fmp_gateway()
+        holdings = gateway.get_etf_holdings(etf_symbol)
+        return [asdict(h) for h in holdings]
+    except Exception as e:
+        logger.debug(f"Failed to get ETF holdings for {etf_symbol}: {e}")
+    return []
+
+
+def get_commodity_quotes() -> list[dict]:
+    """Get commodity quotes (gold, oil, etc.)."""
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        from dataclasses import asdict
+        gateway = get_fmp_gateway()
+        quotes = gateway.get_commodity_quotes()
+        return [asdict(q) for q in quotes]
+    except Exception as e:
+        logger.debug(f"Failed to get commodity quotes: {e}")
+    return []
+
+
+def get_forex_quotes() -> list[dict]:
+    """Get forex quotes."""
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        from dataclasses import asdict
+        gateway = get_fmp_gateway()
+        quotes = gateway.get_forex_quotes()
+        return [asdict(q) for q in quotes]
+    except Exception as e:
+        logger.debug(f"Failed to get forex quotes: {e}")
+    return []
+
+
+def get_crypto_quotes(limit: int = 20) -> list[dict]:
+    """Get cryptocurrency quotes."""
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        from dataclasses import asdict
+        gateway = get_fmp_gateway()
+        quotes = gateway.get_crypto_quotes(limit)
+        return [asdict(q) for q in quotes]
+    except Exception as e:
+        logger.debug(f"Failed to get crypto quotes: {e}")
+    return []
+
+
+def get_esg_score(ticker: str) -> dict | None:
+    """Get ESG (Environmental, Social, Governance) score."""
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        from dataclasses import asdict
+        gateway = get_fmp_gateway()
+        score = gateway.get_esg_score(ticker)
+        return asdict(score) if score else None
+    except Exception as e:
+        logger.debug(f"Failed to get ESG score for {ticker}: {e}")
+    return None
+
+
+def get_fmp_module_status() -> dict:
+    """Get status of all FMP modules (enabled/disabled)."""
+    try:
+        from src.data.fmp_gateway import get_fmp_gateway
+        gateway = get_fmp_gateway()
+        return {
+            "configured": gateway.is_configured(),
+            "modules": gateway.get_module_status(),
+        }
+    except Exception as e:
+        logger.debug(f"Failed to get FMP module status: {e}")
+    return {"configured": False, "modules": {}}

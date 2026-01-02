@@ -31,6 +31,105 @@ def _get_event_logger():
     return _event_logger
 
 
+def _get_fmp_context(tickers: list[str]) -> str:
+    """
+    Get enriched FMP context for PM decisions.
+    
+    Includes:
+    - Analyst consensus and price targets
+    - Recent insider activity
+    - Macro/sector performance
+    - Upcoming earnings events
+    """
+    try:
+        from src.tools.api import (
+            get_analyst_recommendations,
+            get_price_target_consensus,
+            get_fmp_insider_trades,
+            get_sector_performance,
+            get_earnings_calendar,
+        )
+        
+        context_parts = []
+        
+        # Get sector performance (market context)
+        try:
+            sectors = get_sector_performance()
+            if sectors:
+                top_sectors = sorted(sectors, key=lambda x: x.get("change_percentage", 0), reverse=True)[:3]
+                bottom_sectors = sorted(sectors, key=lambda x: x.get("change_percentage", 0))[:3]
+                context_parts.append("SECTOR PERFORMANCE:")
+                context_parts.append(f"  Top: {', '.join([f\"{s['sector']} ({s['change_percentage']:+.1f}%)\" for s in top_sectors])}")
+                context_parts.append(f"  Bottom: {', '.join([f\"{s['sector']} ({s['change_percentage']:+.1f}%)\" for s in bottom_sectors])}")
+        except Exception:
+            pass
+        
+        # Get ticker-specific data
+        for ticker in tickers[:5]:  # Limit to avoid too many API calls
+            ticker_context = []
+            
+            # Analyst recommendations
+            try:
+                recs = get_analyst_recommendations(ticker)
+                if recs:
+                    buy = recs.get("analystRatingsbuy", 0) + recs.get("analystRatingsStrongBuy", 0)
+                    sell = recs.get("analystRatingsSell", 0) + recs.get("analystRatingsStrongSell", 0)
+                    hold = recs.get("analystRatingsHold", 0)
+                    total = buy + sell + hold
+                    if total > 0:
+                        ticker_context.append(f"Analysts: {buy} buy, {hold} hold, {sell} sell")
+            except Exception:
+                pass
+            
+            # Price target consensus
+            try:
+                pt = get_price_target_consensus(ticker)
+                if pt:
+                    avg = pt.get("targetConsensus") or pt.get("targetMedian")
+                    high = pt.get("targetHigh")
+                    low = pt.get("targetLow")
+                    if avg:
+                        ticker_context.append(f"Price Target: ${avg:.2f} (range: ${low:.2f}-${high:.2f})")
+            except Exception:
+                pass
+            
+            # Recent insider activity
+            try:
+                insider = get_fmp_insider_trades(ticker, limit=5)
+                if insider:
+                    buys = sum(1 for t in insider if t.get("transaction_type", "").upper() == "P")
+                    sells = len(insider) - buys
+                    ticker_context.append(f"Insider Activity (recent): {buys} buys, {sells} sells")
+            except Exception:
+                pass
+            
+            if ticker_context:
+                context_parts.append(f"\n{ticker}: " + " | ".join(ticker_context))
+        
+        # Check for upcoming earnings
+        try:
+            from datetime import datetime, timedelta
+            today = datetime.now().strftime("%Y-%m-%d")
+            next_week = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+            earnings = get_earnings_calendar(today, next_week)
+            
+            ticker_earnings = [e for e in earnings if e.get("symbol") in tickers]
+            if ticker_earnings:
+                context_parts.append("\nEARNINGS THIS WEEK:")
+                for e in ticker_earnings[:3]:
+                    context_parts.append(f"  {e['symbol']} on {e['date']} ({e.get('time', 'TBD')})")
+        except Exception:
+            pass
+        
+        if context_parts:
+            return "\n=== MARKET INTELLIGENCE (FMP) ===\n" + "\n".join(context_parts)
+        
+    except Exception as e:
+        logger.debug(f"Failed to get FMP context: {e}")
+    
+    return ""
+
+
 class PortfolioDecision(BaseModel):
     action: Literal["buy", "sell", "short", "cover", "hold", "cancel", "reduce_long", "reduce_short"]
     quantity: float = Field(description="Number of shares to trade (supports fractional, 0 for cancel/hold)")
@@ -612,6 +711,9 @@ def generate_trading_decision(
             "Keep reasoning concise (max 150 chars). Return JSON only."
         )
     
+    # Get FMP market intelligence for enhanced context
+    fmp_context = _get_fmp_context(tickers_for_llm)
+    
     # Enhanced prompt with portfolio awareness, historical context, and Mazo research
     template = ChatPromptTemplate.from_messages(
         [
@@ -622,6 +724,7 @@ def generate_trading_decision(
                 "=== PORTFOLIO STATE ===\n{portfolio_context}\n\n"
                 "=== ANALYST SIGNALS (18 AI Agents) ===\n{signals}\n\n"
                 "{mazo_research}"
+                "{fmp_context}"
                 "=== ALLOWED ACTIONS (max qty per action) ===\n{allowed}\n\n"
                 "DECISION REQUIRED: For each ticker, pick ONE action.\n"
                 "Priority order:\n"
@@ -654,6 +757,7 @@ def generate_trading_decision(
         "signals": json.dumps(compact_signals, indent=2, ensure_ascii=False),
         "allowed": json.dumps(compact_allowed, indent=2, ensure_ascii=False),
         "mazo_research": mazo_section,
+        "fmp_context": fmp_context,
     }
     prompt = template.invoke(prompt_data)
 
