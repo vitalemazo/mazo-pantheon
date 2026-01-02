@@ -74,6 +74,11 @@ function LayoutContent({ children: _children }: { children: ReactNode }) {
     openTab(tabData);
   };
 
+  const handleControlTowerClick = () => {
+    const tabData = TabService.createControlTowerTab();
+    openTab(tabData);
+  };
+
   // Add keyboard shortcuts for toggling sidebars and fit view
   useLayoutKeyboardShortcuts(
     () => setIsRightCollapsed(!isRightCollapsed), // Cmd+I for right sidebar
@@ -131,6 +136,7 @@ function LayoutContent({ children: _children }: { children: ReactNode }) {
         onCommandCenterClick={handleCommandCenterClick}
         onMonitoringClick={handleMonitoringClick}
         onRoundTableClick={handleRoundTableClick}
+        onControlTowerClick={handleControlTowerClick}
       />
 
       {/* Tab Bar - positioned absolutely like bottom panel */}
