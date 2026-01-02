@@ -681,32 +681,34 @@ async def get_round_table(
                     error=exec_row[13],
                 )
             
-            # 7. Get Post-Trade Status from trade_history
+            # 7. Get Post-Trade Status from trade_history (join via order_id from execution)
             post_query = """
                 SELECT th.id, th.ticker, th.status, th.entry_price, th.exit_price,
                        th.stop_loss_price, th.take_profit_price,
                        th.realized_pnl, th.return_pct
                 FROM trade_history th
-                JOIN trade_decision_context tdc ON th.id = tdc.trade_id
-                WHERE tdc.workflow_id = :workflow_id
+                WHERE th.order_id = :order_id
                 ORDER BY th.created_at DESC
                 LIMIT 1
             """
             try:
-                result = conn.execute(text(post_query), {"workflow_id": wf_id})
-                post_row = result.fetchone()
-                if post_row:
-                    response.post_trade = PostTradeStage(
-                        trade_id=post_row[0],
-                        ticker=post_row[1],
-                        status=post_row[2],
-                        stop_loss_price=post_row[5],
-                        take_profit_price=post_row[6],
-                        exit_price=post_row[4],
-                        realized_pnl=post_row[7],
-                        return_pct=post_row[8],
-                        sync_status="synced" if post_row[2] else "pending",
-                    )
+                # Get order_id from execution stage
+                exec_order_id = response.execution.order_id
+                if exec_order_id:
+                    result = conn.execute(text(post_query), {"order_id": exec_order_id})
+                    post_row = result.fetchone()
+                    if post_row:
+                        response.post_trade = PostTradeStage(
+                            trade_id=post_row[0],
+                            ticker=post_row[1],
+                            status=post_row[2],
+                            stop_loss_price=post_row[5],
+                            take_profit_price=post_row[6],
+                            exit_price=post_row[4],
+                            realized_pnl=post_row[7],
+                            return_pct=post_row[8],
+                            sync_status="synced" if post_row[2] else "pending",
+                        )
             except Exception as e:
                 logger.debug(f"Post-trade query failed: {e}")
             
@@ -714,19 +716,21 @@ async def get_round_table(
             # STAGE 8: Feedback Loop
             # =================================================================
             try:
-                # Get trade outcome from trade_history + trade_decision_context
-                feedback_query = """
-                    SELECT 
-                        th.id, th.order_id, th.realized_pnl, th.return_pct,
-                        th.status, tdc.was_profitable
-                    FROM trade_history th
-                    JOIN trade_decision_context tdc ON th.id = tdc.trade_id
-                    WHERE tdc.workflow_id = :workflow_id
-                    ORDER BY th.created_at DESC
-                    LIMIT 1
-                """
-                result = conn.execute(text(feedback_query), {"workflow_id": wf_id})
-                fb_row = result.fetchone()
+                # Get trade outcome from trade_history (via order_id from execution)
+                if exec_order_id:
+                    feedback_query = """
+                        SELECT
+                            th.id, th.order_id, th.realized_pnl, th.return_pct,
+                            th.status
+                        FROM trade_history th
+                        WHERE th.order_id = :order_id
+                        ORDER BY th.created_at DESC
+                        LIMIT 1
+                    """
+                    result = conn.execute(text(feedback_query), {"order_id": exec_order_id})
+                    fb_row = result.fetchone()
+                else:
+                    fb_row = None
                 
                 if fb_row:
                     response.feedback_loop.trade_recorded = True
@@ -734,7 +738,8 @@ async def get_round_table(
                     response.feedback_loop.order_id = fb_row[1]
                     response.feedback_loop.realized_pnl = fb_row[2]
                     response.feedback_loop.return_pct = fb_row[3]
-                    response.feedback_loop.was_profitable = fb_row[5]
+                    # Calculate was_profitable from realized_pnl
+                    response.feedback_loop.was_profitable = (fb_row[2] or 0) > 0 if fb_row[2] is not None else None
                     response.feedback_loop.status = "updated" if fb_row[4] == "closed" else "pending"
                     
                     # Get agent accuracy updates for this trade
@@ -901,7 +906,32 @@ async def populate_test_data():
                 "reasoning": "Strong bullish consensus from value and growth analysts. Cathie Wood and Peter Lynch highly confident. Risk-adjusted position size with 5% stop loss."
             })
             
-            # 4. Trade Execution
+            # 4. Mazo Research
+            conn.execute(text("""
+                INSERT INTO mazo_research (timestamp, id, workflow_id, ticker, query, mode, response, sentiment, 
+                                          sentiment_confidence, key_points, sources, success)
+                VALUES (:ts, :id, :wf_id, :ticker, :query, 'deep', :response, 'bullish', 75, :key_points, :sources, true)
+            """), {
+                "ts": now - timedelta(minutes=3),
+                "id": uuid.uuid4(),
+                "wf_id": workflow_id,
+                "ticker": ticker,
+                "query": f"Comprehensive analysis of {ticker} investment opportunity",
+                "response": f"Based on thorough analysis of {ticker}, the outlook is positive. Strong fundamentals, growing market share, and favorable industry trends support a bullish stance. The company shows consistent revenue growth and margin expansion.",
+                "key_points": json.dumps([
+                    "Revenue growth of 15% YoY",
+                    "Market leadership in key segments",
+                    "Strong balance sheet with low debt",
+                    "Expanding into new markets"
+                ]),
+                "sources": json.dumps([
+                    {"title": "Q3 Earnings Report", "type": "SEC Filing"},
+                    {"title": "Industry Analysis", "type": "Research Report"},
+                    {"title": "Recent News", "type": "News Article"}
+                ])
+            })
+            
+            # 5. Trade Execution
             order_id = f"test-order-{uuid.uuid4().hex[:8]}"
             conn.execute(text("""
                 INSERT INTO trade_executions (timestamp, id, workflow_id, order_id, ticker, side, order_type, quantity,
@@ -917,12 +947,27 @@ async def populate_test_data():
                 "filled": now - timedelta(seconds=30)
             })
             
+            # 6. Trade History (for Post-Trade Monitoring)
+            conn.execute(text("""
+                INSERT INTO trade_history (created_at, ticker, action, quantity, entry_price, exit_price, status,
+                                          order_id, stop_loss_pct, take_profit_pct, realized_pnl, return_pct,
+                                          entry_time, exit_time)
+                VALUES (:ts, :ticker, 'buy', 50, 185.50, 192.00, 'closed', :order_id, 5.0, 15.0, 325.00, 3.5,
+                        :entry_time, :exit_time)
+            """), {
+                "ts": now - timedelta(seconds=20),
+                "ticker": ticker,
+                "order_id": order_id,
+                "entry_time": now - timedelta(hours=2),
+                "exit_time": now - timedelta(seconds=20)
+            })
+
             conn.commit()
-        
+
         return {
             "success": True,
             "workflow_id": str(workflow_id),
-            "message": f"Created test workflow with 12 agent signals, PM decision, and execution. View at /transparency/round-table?workflow_id={workflow_id}"
+            "message": f"Created complete test workflow with all 8 stages. View at /transparency/round-table?workflow_id={workflow_id}"
         }
         
     except Exception as e:
