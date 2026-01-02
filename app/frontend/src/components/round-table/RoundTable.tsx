@@ -237,7 +237,7 @@ function PipelineStage({
           </div>
           <div className="flex-1 text-left">
             <div className="font-medium">{title}</div>
-            {duration && (
+            {duration != null && duration > 0 && (
               <div className="text-xs text-slate-500">{duration}ms</div>
             )}
           </div>
@@ -799,10 +799,10 @@ export function RoundTable() {
                     </div>
                   </PipelineStage>
 
-                  {/* Stage 3: AI Agents */}
+                  {/* Stage 4: AI Agents */}
                   <PipelineStage
                     icon={Users}
-                    title="AI Agents"
+                    title={`AI Agents${roundTable.agents.agents.length > 0 ? ` (${roundTable.agents.agents.length})` : ''}`}
                     status={getStageStatus(roundTable.agents.agents.length > 0, roundTable.status)}
                     duration={roundTable.agents.total_duration_ms}
                   >
