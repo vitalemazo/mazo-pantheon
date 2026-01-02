@@ -756,7 +756,12 @@ class FMPGateway:
     # =========================================================================
     
     def get_sector_performance(self) -> List[SectorPerformance]:
-        """Get sector performance."""
+        """
+        Get sector performance.
+        
+        Note: This endpoint may require a higher-tier FMP subscription.
+        Returns empty list if unavailable.
+        """
         if not is_module_enabled(FMPModule.MARKET):
             return []
         
@@ -765,18 +770,21 @@ class FMPGateway:
             return [SectorPerformance(**s) for s in cached]
         
         try:
+            # Try the stable API endpoint
             data = self._client._request("sector-performance", {})
-            results = [
-                SectorPerformance(
-                    sector=s.get("sector", ""),
-                    change_percentage=float(s.get("changesPercentage", 0)),
-                )
-                for s in (data or [])
-            ]
-            _cache_set(self._cache, cache_key, [asdict(r) for r in results], 300)
-            return results
+            if data:
+                results = [
+                    SectorPerformance(
+                        sector=s.get("sector", ""),
+                        change_percentage=float(str(s.get("changesPercentage", "0")).replace("%", "")),
+                    )
+                    for s in data
+                ]
+                _cache_set(self._cache, cache_key, [asdict(r) for r in results], 300)
+                return results
         except Exception as e:
-            logger.debug(f"Failed to get sector performance: {e}")
+            # This endpoint may not be available on all FMP plans
+            logger.debug(f"Sector performance unavailable: {e}")
         return []
     
     def get_gainers(self, limit: int = 10) -> List[MarketMover]:

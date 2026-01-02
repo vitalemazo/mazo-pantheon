@@ -772,11 +772,11 @@ async def get_fmp_module_status():
         
         if gateway.is_configured():
             try:
-                # Quick health check - get sector performance
-                sectors = gateway.get_sector_performance()
-                if sectors:
+                # Quick health check - get a simple quote
+                profile = gateway.get_company_profile("AAPL")
+                if profile:
                     health_status = "healthy"
-                    health_message = f"FMP responding, {len(sectors)} sectors"
+                    health_message = f"FMP responding ({profile.company_name})"
                 else:
                     health_status = "degraded"
                     health_message = "FMP configured but no data returned"
