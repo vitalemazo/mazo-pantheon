@@ -308,9 +308,28 @@ class AutomatedTradingService:
             AutomatedTradeResult with full cycle details
         """
         import uuid as uuid_module
+        import os
+        
         start_time = datetime.now()
-        self.is_running = True
         workflow_id = uuid_module.uuid4()
+        
+        # Check AUTO_TRADING_ENABLED flag (safety guardrail)
+        auto_enabled = os.getenv("AUTO_TRADING_ENABLED", "false").lower() == "true"
+        
+        if not auto_enabled and execute_trades_flag and not dry_run:
+            logger.warning("⚠️ AUTO_TRADING_ENABLED=false - blocking live trade execution")
+            return AutomatedTradeResult(
+                timestamp=start_time,
+                tickers_screened=0,
+                signals_found=0,
+                mazo_validated=0,
+                trades_analyzed=0,
+                trades_executed=0,
+                total_execution_time_ms=0,
+                errors=["AUTO_TRADING_ENABLED=false - live trading blocked. Set to 'true' to enable."]
+            )
+        
+        self.is_running = True
         
         signal_config = get_signal_config()
         min_conf = min_confidence or signal_config.min_signal_confidence

@@ -234,18 +234,27 @@ class TradingScheduler:
         jobs_added["position_monitor"] = job_id
         
         # AI-powered automated trading (every 30 minutes during market hours)
-        job_id = self.add_interval_task(
-            task_type=TaskType.AUTOMATED_TRADING,
-            name="AI Trading Cycle",
-            minutes=30,
-            parameters={
-                "during_market_hours": True,
-                "min_confidence": 65,
-                "max_signals": 3,
-                "execute_trades": True
-            }
-        )
-        jobs_added["ai_trading"] = job_id
+        # ONLY add this job if AUTO_TRADING_ENABLED=true
+        import os
+        auto_trading_enabled = os.getenv("AUTO_TRADING_ENABLED", "false").lower() == "true"
+        
+        if auto_trading_enabled:
+            job_id = self.add_interval_task(
+                task_type=TaskType.AUTOMATED_TRADING,
+                name="AI Trading Cycle",
+                minutes=30,
+                parameters={
+                    "during_market_hours": True,
+                    "min_confidence": 65,
+                    "max_signals": 3,
+                    "execute_trades": True
+                }
+            )
+            jobs_added["ai_trading"] = job_id
+            logger.info("✅ AI Trading Cycle job enabled (AUTO_TRADING_ENABLED=true)")
+        else:
+            logger.info("⏸️ AI Trading Cycle job SKIPPED (AUTO_TRADING_ENABLED=false)")
+            jobs_added["ai_trading"] = None
         
         # Sync trade status from Alpaca (every 15 minutes during market hours)
         job_id = self.add_interval_task(
