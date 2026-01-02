@@ -561,7 +561,7 @@ export function ControlTower() {
                             <div>
                               <div className="font-medium text-white">{pos.ticker}</div>
                               <div className="text-xs text-slate-400">
-                                {formatShares(pos.qty)} shares @ {pos.avg_entry_price ? formatCurrency(pos.avg_entry_price) : 'N/A'}
+                                {formatShares(pos.qty)} @ {pos.avg_entry_price ? formatCurrency(pos.avg_entry_price) : 'N/A'}
                               </div>
                             </div>
                             <div className="text-right">
