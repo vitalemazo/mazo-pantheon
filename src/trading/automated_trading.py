@@ -163,10 +163,15 @@ class AutomatedTradingService:
         
         return True, ""
     
-    def _check_concentration(self, ticker: str, quantity: int, price: float) -> Tuple[bool, str]:
+    def _check_concentration(self, ticker: str, quantity: float, price: float) -> Tuple[bool, str]:
         """
         Check if adding this position would exceed concentration limits.
         
+        Args:
+            ticker: Stock symbol
+            quantity: Number of shares (supports fractional)
+            price: Current price per share
+
         Returns:
             (can_trade, reason) - True if trade allowed, False with reason if blocked
         """

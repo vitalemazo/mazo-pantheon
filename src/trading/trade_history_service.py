@@ -29,7 +29,7 @@ class TradeRecord:
     """Complete record of a trade with full context"""
     ticker: str
     action: str
-    quantity: int
+    quantity: float  # Supports fractional shares
     entry_price: Optional[float] = None
     order_id: Optional[str] = None
     
@@ -67,7 +67,7 @@ class TradeRecord:
     
     # PM decision
     pm_action: Optional[str] = None
-    pm_quantity: Optional[int] = None
+    pm_quantity: Optional[float] = None  # Supports fractional shares
     pm_confidence: Optional[float] = None
     pm_reasoning: Optional[str] = None
     pm_stop_loss_pct: Optional[float] = None

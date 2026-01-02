@@ -140,7 +140,7 @@ class AgentSignal:
 class TradeResult:
     """Result of a trade execution"""
     action: str  # buy, sell, hold, short, cover, reduce_long, reduce_short
-    quantity: int = 0
+    quantity: float = 0.0  # Supports fractional shares
     executed: bool = False
     order_id: Optional[str] = None
     filled_price: Optional[float] = None
@@ -1037,14 +1037,17 @@ def execute_trades(
                 qty = float(pos.qty)
                 pl = float(pos.unrealized_pl)
                 pl_sign = "+" if pl >= 0 else ""
-                print(f"     • {pos.symbol}: {qty:.0f} shares ({pl_sign}${pl:,.2f})")
+                qty_display = f"{qty:.4f}" if qty != int(qty) else f"{int(qty)}"
+                print(f"     • {pos.symbol}: {qty_display} shares ({pl_sign}${pl:,.2f})")
         else:
             print(f"\n  📊 No current positions")
         
         if pending_orders:
             print(f"\n  📋 Pending Orders ({len(pending_orders)}):")
             for order in pending_orders:
-                print(f"     • {order.symbol}: {order.side} {float(order.qty):.0f} shares ({order.status})")
+                qty = float(order.qty)
+                qty_display = f"{qty:.4f}" if qty != int(qty) else f"{int(qty)}"
+                print(f"     • {order.symbol}: {order.side} {qty_display} shares ({order.status})")
         
         print(f"{'='*50}\n")
     except Exception as e:
@@ -1140,9 +1143,11 @@ def execute_trades(
                 position = alpaca.get_position(ticker)
                 if position and float(position.qty) > 0:
                     current_qty = float(position.qty)
-                    shares_to_sell = min(quantity, int(current_qty) - 1)  # Keep at least 1 share
+                    # For fractional, allow reducing to any amount > 0
+                    min_remaining = 0.0001  # Minimum fractional position
+                    shares_to_sell = min(quantity, current_qty - min_remaining)
                     if shares_to_sell > 0:
-                        print(f"    🔄 Reducing LONG position: selling {shares_to_sell} of {int(current_qty)} shares")
+                        print(f"    🔄 Reducing LONG position: selling {shares_to_sell:.4f} of {current_qty:.4f} shares")
                         if not dry_run:
                             trade_result = alpaca.execute_decision(
                                 symbol=ticker,
@@ -1157,7 +1162,7 @@ def execute_trades(
                                     order_id=trade_result.order.id if trade_result.order else None,
                                     error=None
                                 )
-                                print(f"    ✅ Reduced position: {int(current_qty)} → {int(current_qty) - shares_to_sell} shares")
+                                print(f"    ✅ Reduced position: {current_qty:.4f} → {current_qty - shares_to_sell:.4f} shares")
                             else:
                                 result.trade = TradeResult(
                                     action="reduce_long",
@@ -1171,18 +1176,18 @@ def execute_trades(
                                 action="reduce_long",
                                 quantity=shares_to_sell,
                                 executed=False,
-                                order_id=f"DRY_RUN_{ticker}_reduce_long_{shares_to_sell}",
+                                order_id=f"DRY_RUN_{ticker}_reduce_long_{shares_to_sell:.4f}",
                                 error=None
                             )
-                            print(f"    → DRY RUN: Would sell {shares_to_sell} shares to reduce position")
+                            print(f"    → DRY RUN: Would sell {shares_to_sell:.4f} shares to reduce position")
                     else:
                         result.trade = TradeResult(
                             action="reduce_long",
-                            quantity=0,
+                            quantity=0.0,
                             executed=False,
                             error="Position too small to reduce further"
                         )
-                        print(f"    → Position too small to reduce (only {int(current_qty)} shares)")
+                        print(f"    → Position too small to reduce (only {current_qty:.4f} shares)")
                 else:
                     result.trade = TradeResult(
                         action="reduce_long",
@@ -1207,9 +1212,11 @@ def execute_trades(
                 position = alpaca.get_position(ticker)
                 if position and float(position.qty) < 0:
                     current_qty = abs(float(position.qty))
-                    shares_to_cover = min(quantity, int(current_qty) - 1)  # Keep at least 1 share
+                    # For fractional, allow reducing to any amount > 0
+                    min_remaining = 0.0001  # Minimum fractional position
+                    shares_to_cover = min(quantity, current_qty - min_remaining)
                     if shares_to_cover > 0:
-                        print(f"    🔄 Reducing SHORT position: covering {shares_to_cover} of {int(current_qty)} shares")
+                        print(f"    🔄 Reducing SHORT position: covering {shares_to_cover:.4f} of {current_qty:.4f} shares")
                         if not dry_run:
                             trade_result = alpaca.execute_decision(
                                 symbol=ticker,
@@ -1224,7 +1231,7 @@ def execute_trades(
                                     order_id=trade_result.order.id if trade_result.order else None,
                                     error=None
                                 )
-                                print(f"    ✅ Reduced position: {int(current_qty)} → {int(current_qty) - shares_to_cover} shares short")
+                                print(f"    ✅ Reduced position: {current_qty:.4f} → {current_qty - shares_to_cover:.4f} shares short")
                             else:
                                 result.trade = TradeResult(
                                     action="reduce_short",
@@ -1238,18 +1245,18 @@ def execute_trades(
                                 action="reduce_short",
                                 quantity=shares_to_cover,
                                 executed=False,
-                                order_id=f"DRY_RUN_{ticker}_reduce_short_{shares_to_cover}",
+                                order_id=f"DRY_RUN_{ticker}_reduce_short_{shares_to_cover:.4f}",
                                 error=None
                             )
-                            print(f"    → DRY RUN: Would cover {shares_to_cover} shares to reduce short position")
+                            print(f"    → DRY RUN: Would cover {shares_to_cover:.4f} shares to reduce short position")
                     else:
                         result.trade = TradeResult(
                             action="reduce_short",
-                            quantity=0,
+                            quantity=0.0,
                             executed=False,
                             error="Position too small to reduce further"
                         )
-                        print(f"    → Position too small to reduce (only {int(current_qty)} shares short)")
+                        print(f"    → Position too small to reduce (only {current_qty:.4f} shares short)")
                 else:
                     result.trade = TradeResult(
                         action="reduce_short",
@@ -1313,7 +1320,9 @@ def execute_trades(
                         )
                         continue
                 elif action == "buy" and pos_qty < 0:
-                    print(f"    ⚠️ You have a SHORT position ({abs(pos_qty)} shares). Covering it first...")
+                    short_qty = abs(pos_qty)
+                    short_display = f"{short_qty:.4f}" if short_qty != int(short_qty) else f"{int(short_qty)}"
+                    print(f"    ⚠️ You have a SHORT position ({short_display} shares). Covering it first...")
                     close_result = alpaca.close_position(ticker)
                     if close_result.success:
                         print(f"      ↳ Covered SHORT position: {close_result.message}")

@@ -863,9 +863,15 @@ def get_alpaca_service() -> AlpacaService:
 def execute_trade(
     symbol: str,
     action: str,
-    quantity: int
+    quantity: float
 ) -> TradeResult:
-    """Execute a trade using the default Alpaca service"""
+    """Execute a trade using the default Alpaca service.
+    
+    Args:
+        symbol: Stock symbol
+        action: Trade action (buy, sell, short, cover)
+        quantity: Number of shares (supports fractional)
+    """
     service = get_alpaca_service()
     return service.execute_decision(symbol, action, quantity)
 
