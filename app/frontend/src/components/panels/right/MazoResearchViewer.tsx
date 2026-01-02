@@ -99,18 +99,40 @@ export function MazoResearchViewer({ className }: MazoResearchViewerProps) {
             <span>Sources ({research.sources.length})</span>
           </div>
           <div className="space-y-1 max-h-24 overflow-y-auto">
-            {research.sources.map((source, i) => (
-              <a
-                key={i}
-                href={source}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 truncate"
-              >
-                <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                <span className="truncate">{source}</span>
-              </a>
-            ))}
+            {research.sources.map((source, i) => {
+              // Handle both string URLs and {type, title} objects
+              const isObject = typeof source === 'object' && source !== null;
+              const displayText = isObject 
+                ? (source as { type?: string; title?: string }).title || (source as { type?: string; title?: string }).type || 'Source'
+                : String(source);
+              const href = isObject ? undefined : String(source);
+              
+              return (
+                <div
+                  key={i}
+                  className="flex items-center gap-1.5 text-xs text-cyan-400 truncate"
+                >
+                  <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                  {href ? (
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-cyan-300 truncate"
+                    >
+                      {displayText}
+                    </a>
+                  ) : (
+                    <span className="truncate">
+                      {isObject && (source as { type?: string }).type && (
+                        <span className="text-muted-foreground mr-1">[{(source as { type?: string }).type}]</span>
+                      )}
+                      {displayText}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
