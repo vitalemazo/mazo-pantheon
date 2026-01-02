@@ -1191,7 +1191,8 @@ async def get_live_activity(limit: int = Query(50, ge=1, le=200)):
                 step_name,
                 status,
                 ticker,
-                duration_ms
+                duration_ms,
+                workflow_id
             FROM workflow_events
             WHERE timestamp > NOW() - INTERVAL '1 hour'
             ORDER BY timestamp DESC
@@ -1250,14 +1251,22 @@ async def get_live_activity(limit: int = Query(50, ge=1, le=200)):
             try:
                 result = conn.execute(text(workflow_query), {"limit": limit})
                 for row in result.fetchall():
+                    workflow_id_str = str(row[7]) if row[7] else None
                     activities.append({
-                        "id": f"wf_{row[1].isoformat() if row[1] else 'unknown'}",
+                        "id": f"wf_{row[1].isoformat() if row[1] else 'unknown'}_{row[3]}",
                         "type": "workflow",
                         "timestamp": row[1].isoformat() if row[1] else None,
                         "message": f"{row[2]}: {row[3]} - {row[4]}",
                         "ticker": row[5],
                         "status": "complete" if row[4] == "completed" else "running" if row[4] == "started" else "error",
-                        "details": {"workflow_type": row[2], "step": row[3], "duration_ms": row[6]},
+                        "workflow_id": workflow_id_str,
+                        "details": {
+                            "workflow_type": row[2],
+                            "step_name": row[3],
+                            "status": row[4],
+                            "duration_ms": row[6],
+                            "workflow_id": workflow_id_str,
+                        },
                     })
             except Exception as e:
                 logger.debug(f"No workflow events table: {e}")

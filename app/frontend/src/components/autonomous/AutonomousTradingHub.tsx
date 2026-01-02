@@ -218,6 +218,7 @@ export function AutonomousTradingHub() {
                 message: activity.message,
                 ticker: activity.ticker,
                 status: activity.status as AIActivity['status'],
+                workflow_id: activity.workflow_id,
                 details: activity.details,
               });
             }
@@ -783,55 +784,206 @@ export function AutonomousTradingHub() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3 max-h-[400px] overflow-y-auto">
-                {activities.length === 0 ? (
-                  <div className="text-center py-8 text-slate-400">
-                    <Activity className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                    <p>No activity yet</p>
-                    <p className="text-sm mt-1">Enable autonomous mode or run a cycle</p>
-                  </div>
-                ) : (
-                  activities.map((activity) => (
-                    <div 
-                      key={activity.id}
-                      className={`p-3 rounded-lg border ${
-                        activity.status === 'running'
-                          ? 'bg-blue-500/10 border-blue-500/30'
-                          : activity.status === 'error'
-                          ? 'bg-red-500/10 border-red-500/30'
-                          : 'bg-slate-700/30 border-slate-600/50'
-                      }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className={`mt-0.5 ${
-                          activity.status === 'running' ? 'text-blue-400' :
-                          activity.status === 'error' ? 'text-red-400' :
-                          'text-emerald-400'
-                        }`}>
-                          {activity.status === 'running' ? (
-                            <RefreshCw className="w-4 h-4 animate-spin" />
-                          ) : activity.status === 'error' ? (
-                            <AlertCircle className="w-4 h-4" />
-                          ) : (
-                            <CheckCircle className="w-4 h-4" />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            {activity.ticker && (
-                              <Badge variant="outline" className="text-xs border-slate-500">
-                                {activity.ticker}
-                              </Badge>
-                            )}
-                            <span className="text-sm text-white">{activity.message}</span>
-                          </div>
-                          <div className="text-xs text-slate-500 mt-1">
-                            {new Date(activity.timestamp).toLocaleTimeString()}
-                          </div>
-                        </div>
+                {(() => {
+                  // Separate workflow events from other activities
+                  const workflowActivities = activities.filter(a => a.type === 'workflow' && a.workflow_id);
+                  const otherActivities = activities.filter(a => a.type !== 'workflow' || !a.workflow_id);
+                  
+                  // Group workflows by workflow_id
+                  const workflowGroups = new Map<string, typeof activities>();
+                  workflowActivities.forEach(activity => {
+                    const wfId = activity.workflow_id!;
+                    if (!workflowGroups.has(wfId)) {
+                      workflowGroups.set(wfId, []);
+                    }
+                    workflowGroups.get(wfId)!.push(activity);
+                  });
+                  
+                  // Convert to array and take most recent 5 workflows
+                  const groupedWorkflows = Array.from(workflowGroups.entries())
+                    .map(([wfId, events]) => {
+                      // Sort events by timestamp (newest first)
+                      const sorted = [...events].sort((a, b) => 
+                        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+                      );
+                      const latest = sorted[0];
+                      const hasError = events.some(e => e.status === 'error');
+                      const hasRunning = events.some(e => e.status === 'running');
+                      const isComplete = sorted.some(e => 
+                        e.details?.step_name === 'workflow_complete' || 
+                        e.details?.status === 'completed'
+                      );
+                      
+                      return {
+                        workflowId: wfId,
+                        ticker: events.find(e => e.ticker)?.ticker,
+                        workflowType: latest.details?.workflow_type || 'unified_analysis',
+                        latestStep: latest.details?.step_name || 'unknown',
+                        latestMessage: latest.message,
+                        timestamp: latest.timestamp,
+                        status: hasError ? 'error' : (isComplete ? 'complete' : (hasRunning ? 'running' : 'complete')),
+                        eventCount: events.length,
+                      };
+                    })
+                    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+                    .slice(0, 5);
+                  
+                  // Take recent non-workflow activities
+                  const recentOther = otherActivities
+                    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+                    .slice(0, 10);
+                  
+                  const hasAnyActivity = groupedWorkflows.length > 0 || recentOther.length > 0;
+                  
+                  if (!hasAnyActivity) {
+                    return (
+                      <div className="text-center py-8 text-slate-400">
+                        <Activity className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                        <p>No activity yet</p>
+                        <p className="text-sm mt-1">Run an AI cycle to see activity here</p>
+                        <Button
+                          onClick={runManualCycle}
+                          disabled={isStarting || automatedStatus?.is_running || automatedStatus?.success === false}
+                          size="sm"
+                          className="mt-3 bg-indigo-600 hover:bg-indigo-700"
+                        >
+                          <Play className="w-3 h-3 mr-2" />
+                          Run AI Cycle
+                        </Button>
                       </div>
-                    </div>
-                  ))
-                )}
+                    );
+                  }
+                  
+                  return (
+                    <>
+                      {/* Grouped Workflow Cards */}
+                      {groupedWorkflows.length > 0 && (
+                        <div className="space-y-2 mb-4">
+                          <div className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+                            Workflows
+                          </div>
+                          {groupedWorkflows.map((wf) => (
+                            <div 
+                              key={wf.workflowId}
+                              className={`p-3 rounded-lg border ${
+                                wf.status === 'running'
+                                  ? 'bg-blue-500/10 border-blue-500/30'
+                                  : wf.status === 'error'
+                                  ? 'bg-red-500/10 border-red-500/30'
+                                  : 'bg-emerald-500/10 border-emerald-500/30'
+                              }`}
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className={`mt-0.5 ${
+                                  wf.status === 'running' ? 'text-blue-400' :
+                                  wf.status === 'error' ? 'text-red-400' :
+                                  'text-emerald-400'
+                                }`}>
+                                  {wf.status === 'running' ? (
+                                    <RefreshCw className="w-4 h-4 animate-spin" />
+                                  ) : wf.status === 'error' ? (
+                                    <AlertCircle className="w-4 h-4" />
+                                  ) : (
+                                    <CheckCircle className="w-4 h-4" />
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    {wf.ticker && (
+                                      <Badge variant="outline" className="text-xs border-cyan-500 text-cyan-400">
+                                        {wf.ticker}
+                                      </Badge>
+                                    )}
+                                    <Badge 
+                                      variant="outline" 
+                                      className={`text-xs ${
+                                        wf.status === 'running' 
+                                          ? 'border-blue-500 text-blue-400' 
+                                          : wf.status === 'error'
+                                          ? 'border-red-500 text-red-400'
+                                          : 'border-emerald-500 text-emerald-400'
+                                      }`}
+                                    >
+                                      {wf.status === 'running' ? 'Running' : wf.status === 'error' ? 'Error' : 'Completed'}
+                                    </Badge>
+                                    <span className="text-xs text-slate-500">
+                                      {wf.eventCount} step{wf.eventCount !== 1 ? 's' : ''}
+                                    </span>
+                                  </div>
+                                  <div className="text-sm text-white mt-1">
+                                    {wf.latestStep === 'workflow_start' ? 'Starting workflow...' :
+                                     wf.latestStep === 'workflow_complete' ? 'Workflow complete' :
+                                     wf.latestStep === 'workflow_error' ? 'Workflow failed' :
+                                     `Step: ${wf.latestStep}`}
+                                  </div>
+                                  <div className="text-xs text-slate-500 mt-1">
+                                    {new Date(wf.timestamp).toLocaleTimeString()}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      
+                      {/* Non-workflow activities (PM decisions, trades, signals) */}
+                      {recentOther.length > 0 && (
+                        <div className="space-y-2">
+                          {groupedWorkflows.length > 0 && (
+                            <div className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+                              Actions & Signals
+                            </div>
+                          )}
+                          {recentOther.map((activity) => (
+                            <div 
+                              key={activity.id}
+                              className={`p-3 rounded-lg border ${
+                                activity.status === 'running'
+                                  ? 'bg-blue-500/10 border-blue-500/30'
+                                  : activity.status === 'error'
+                                  ? 'bg-red-500/10 border-red-500/30'
+                                  : activity.type === 'decision' || activity.type === 'execute'
+                                  ? 'bg-purple-500/10 border-purple-500/30'
+                                  : 'bg-slate-700/30 border-slate-600/50'
+                              }`}
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className={`mt-0.5 ${
+                                  activity.status === 'running' ? 'text-blue-400' :
+                                  activity.status === 'error' ? 'text-red-400' :
+                                  activity.type === 'decision' ? 'text-purple-400' :
+                                  activity.type === 'execute' ? 'text-yellow-400' :
+                                  'text-emerald-400'
+                                }`}>
+                                  {activity.status === 'running' ? (
+                                    <RefreshCw className="w-4 h-4 animate-spin" />
+                                  ) : activity.status === 'error' ? (
+                                    <AlertCircle className="w-4 h-4" />
+                                  ) : (
+                                    <CheckCircle className="w-4 h-4" />
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    {activity.ticker && (
+                                      <Badge variant="outline" className="text-xs border-slate-500">
+                                        {activity.ticker}
+                                      </Badge>
+                                    )}
+                                    <span className="text-sm text-white">{activity.message}</span>
+                                  </div>
+                                  <div className="text-xs text-slate-500 mt-1">
+                                    {new Date(activity.timestamp).toLocaleTimeString()}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             </CardContent>
           </Card>

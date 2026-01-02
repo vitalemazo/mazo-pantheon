@@ -166,12 +166,25 @@ export interface WorkflowResult {
 
 export interface AIActivity {
   id: string;
-  type: 'scan' | 'research' | 'analyze' | 'decide' | 'execute' | 'monitor';
+  type: 'scan' | 'research' | 'analyze' | 'decide' | 'execute' | 'monitor' | 'workflow' | 'decision';
   message: string;
   timestamp: Date | string;
   ticker?: string;
   status: 'pending' | 'running' | 'complete' | 'error';
-  details?: any;
+  workflow_id?: string;
+  details?: {
+    workflow_type?: string;
+    step_name?: string;
+    status?: string;
+    duration_ms?: number;
+    workflow_id?: string;
+    action?: string;
+    confidence?: number;
+    reasoning?: string;
+    agent?: string;
+    signal?: string;
+    [key: string]: any;
+  };
 }
 
 export interface QuickAnalysisResult {
