@@ -11,14 +11,16 @@
  * 4. Research - Embedded Mazo research chat
  */
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useTradingDashboard } from '@/contexts/trading-dashboard-context';
+import { useHydratedData, dataHydrationService } from '@/services/data-hydration-service';
 import { usePortfolioHealth } from '@/contexts/portfolio-health-context';
+import { API_BASE_URL } from '@/lib/api-config';
+import { toast } from 'sonner';
 import { 
   RefreshCw, 
   TrendingUp, 
@@ -94,24 +96,16 @@ function extractRiskLevel(analysis: string): string {
 }
 
 export function TradingWorkspace() {
-  // Trading Dashboard context
+  // Use global hydrated data store (same as Control Tower)
   const {
     performance,
     metrics,
     scheduler,
-    watchlist,
     automatedStatus,
-    loading,
-    aiLoading,
-    error: tradingError,
-    lastRefresh,
-    fetchData,
-    toggleScheduler,
-    addDefaultSchedule,
-    runAiTradingCycle,
-  } = useTradingDashboard();
+    isRefreshing,
+  } = useHydratedData();
 
-  // Portfolio Health context
+  // Portfolio Health context (still separate - expensive Mazo call)
   const { 
     healthData, 
     loading: healthLoading, 
@@ -121,6 +115,61 @@ export function TradingWorkspace() {
   } = usePortfolioHealth();
 
   const [showMergeNotice, setShowMergeNotice] = useState(true);
+  const [aiLoading, setAiLoading] = useState(false);
+
+  // Fetch watchlist separately 
+  const watchlist = automatedStatus?.watchlist || [];
+
+  // Run AI trading cycle
+  const runAiTradingCycle = useCallback(async (dryRun: boolean) => {
+    setAiLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/trading/automated/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          execute_trades: !dryRun,
+          dry_run: dryRun,
+        }),
+      });
+      const result = await response.json();
+      if (result.success !== false) {
+        toast.success(
+          dryRun 
+            ? `Dry run complete: ${result.result?.signals_found || 0} signals found`
+            : `Cycle complete: ${result.result?.trades_executed || 0} trades executed`
+        );
+        await dataHydrationService.backgroundRefresh();
+      } else {
+        throw new Error(result.error || 'Cycle failed');
+      }
+    } catch (error: any) {
+      toast.error(`Cycle failed: ${error.message}`);
+    } finally {
+      setAiLoading(false);
+    }
+  }, []);
+
+  // Toggle scheduler
+  const toggleScheduler = useCallback(async () => {
+    try {
+      const isRunning = scheduler?.is_running;
+      const response = await fetch(`${API_BASE_URL}/trading/scheduler/${isRunning ? 'stop' : 'start'}`, {
+        method: 'POST',
+      });
+      if (response.ok) {
+        toast.success(isRunning ? 'Scheduler stopped' : 'Scheduler started');
+        await dataHydrationService.backgroundRefresh();
+      }
+    } catch (error) {
+      toast.error('Failed to toggle scheduler');
+    }
+  }, [scheduler?.is_running]);
+
+  // Refresh data
+  const fetchData = useCallback(async () => {
+    await dataHydrationService.backgroundRefresh();
+  }, []);
   
   const grade = healthData ? extractGrade(healthData.analysis) : '?';
   const riskLevel = healthData ? extractRiskLevel(healthData.analysis) : 'UNKNOWN';
@@ -184,12 +233,12 @@ export function TradingWorkspace() {
             )}
             <Button 
               onClick={fetchData} 
-              disabled={loading}
+              disabled={isRefreshing}
               variant="outline"
               size="sm"
               className="border-slate-600"
             >
-              <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
               Refresh
             </Button>
           </div>
@@ -274,13 +323,13 @@ export function TradingWorkspace() {
           </Card>
         </div>
 
-        {/* Error Display */}
-        {tradingError && (
+        {/* Error Display - only show health errors since we use global store */}
+        {healthError && (
           <Card className="border-red-500/50 bg-red-500/10">
             <CardContent className="pt-6">
               <div className="flex items-center gap-3 text-red-400">
                 <XCircle className="w-5 h-5" />
-                <span>{tradingError}</span>
+                <span>{healthError}</span>
               </div>
             </CardContent>
           </Card>
@@ -325,7 +374,7 @@ export function TradingWorkspace() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {loading && !performance ? (
+                  {isRefreshing && !performance ? (
                     <div className="space-y-3">
                       {[1, 2, 3].map((i) => (
                         <Skeleton key={i} className="h-16 w-full" />
