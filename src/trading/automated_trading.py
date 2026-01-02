@@ -828,22 +828,29 @@ class AutomatedTradingService:
         return tickers[:25]  # Limit to 25 tickers per cycle for efficiency
     
     async def _run_strategy_screening(
-        self, 
-        tickers: List[str], 
+        self,
+        tickers: List[str],
         min_confidence: float
     ) -> List[TradingSignal]:
-        """Run strategy engine screening on tickers."""
-        all_signals = []
+        """Run strategy engine screening on tickers.
         
+        Signals include fractionable status from Alpaca asset info.
+        """
+        all_signals = []
+
         for ticker in tickers:
             try:
-                signals = self.strategy_engine.analyze_ticker(ticker)
+                # Pass alpaca service to get fractionable status
+                signals = self.strategy_engine.analyze_ticker(
+                    ticker, 
+                    alpaca_service=self.alpaca
+                )
                 for signal in signals:
                     if signal.confidence >= min_confidence:
                         all_signals.append(signal)
             except Exception as e:
                 logger.warning(f"Screening failed for {ticker}: {e}")
-        
+
         # Sort by confidence
         all_signals.sort(key=lambda x: x.confidence, reverse=True)
         return all_signals
@@ -1163,42 +1170,54 @@ class AutomatedTradingService:
             )
     
     def _calculate_position_size(
-        self, 
-        signal: TradingSignal, 
+        self,
+        signal: TradingSignal,
         portfolio: PortfolioContext
     ) -> float:
         """
         Calculate position size based on signal and portfolio.
+
+        Supports fractional shares when:
+        - ALLOW_FRACTIONAL=true (global setting)
+        - AND signal.fractionable=True (asset-specific)
         
-        Supports fractional shares when ALLOW_FRACTIONAL=true.
         Returns float with up to 4 decimal places for Alpaca compatibility.
         """
         from src.trading.config import get_fractional_config
-        
+
         fractional_config = get_fractional_config()
         
+        # Determine if fractional trading is allowed for this specific asset
+        use_fractional = (
+            fractional_config.allow_fractional and 
+            getattr(signal, 'fractionable', True)  # Default True for backwards compat
+        )
+
         # Use signal's suggested size or default to 5%
         position_pct = signal.position_size_pct or 0.05
-        
+
         # Calculate dollar amount
         available = min(portfolio.cash, portfolio.buying_power)
         position_value = available * position_pct
-        
+
         # Convert to shares
         if signal.entry_price and signal.entry_price > 0:
             shares = position_value / signal.entry_price
-            
-            if fractional_config.allow_fractional:
+
+            if use_fractional:
                 # Round to configured precision (default 4 decimal places)
                 shares = round(shares, fractional_config.fractional_precision)
                 # Ensure minimum quantity
                 return max(fractional_config.min_fractional_qty, shares)
             else:
-                # Whole shares only
-                return max(1, int(shares))
-        
+                # Whole shares only - log if we're rounding due to non-fractionable asset
+                whole_shares = max(1, int(shares))
+                if fractional_config.allow_fractional and not getattr(signal, 'fractionable', True):
+                    logger.info(f"[{signal.ticker}] Asset not fractionable, using whole shares: {shares:.4f} → {whole_shares}")
+                return whole_shares
+
         # Fallback: return minimum
-        return fractional_config.min_fractional_qty if fractional_config.allow_fractional else 1
+        return fractional_config.min_fractional_qty if use_fractional else 1
     
     async def _execute_trade(
         self,

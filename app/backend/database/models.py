@@ -161,6 +161,7 @@ class TradeHistory(Base):
     # Trade details
     action = Column(String(20), nullable=False)  # buy, sell, short, cover
     quantity = Column(Float, nullable=False)
+    fractionable = Column(Boolean, nullable=True, default=True)  # Whether asset supports fractional
     entry_price = Column(Float, nullable=True)
     exit_price = Column(Float, nullable=True)
     

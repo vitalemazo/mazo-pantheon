@@ -50,6 +50,7 @@ class TradingSignal:
     position_size_pct: float  # Suggested % of portfolio
     reasoning: str
     timestamp: datetime = None
+    fractionable: bool = True  # Whether the asset supports fractional trading
     
     def __post_init__(self):
         if self.timestamp is None:
@@ -68,6 +69,7 @@ class TradingSignal:
             "position_size_pct": self.position_size_pct,
             "reasoning": self.reasoning,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "fractionable": self.fractionable,
         }
 
 
@@ -626,7 +628,8 @@ class StrategyEngine:
     def analyze_ticker(
         self, 
         ticker: str, 
-        strategies: Optional[List[str]] = None
+        strategies: Optional[List[str]] = None,
+        alpaca_service = None
     ) -> List[TradingSignal]:
         """
         Analyze a ticker with specified strategies.
@@ -634,11 +637,20 @@ class StrategyEngine:
         Args:
             ticker: Stock ticker to analyze
             strategies: List of strategy names (None = all)
+            alpaca_service: Optional AlpacaService to check fractionable status
             
         Returns:
             List of trading signals from all strategies
         """
         signals = []
+        
+        # Check if asset is fractionable
+        fractionable = True  # Default to True
+        if alpaca_service:
+            try:
+                fractionable = alpaca_service.is_fractionable(ticker)
+            except Exception as e:
+                logger.warning(f"Could not determine fractionable status for {ticker}: {e}")
         
         strats_to_run = strategies or list(self.strategies.keys())
         
@@ -650,6 +662,8 @@ class StrategyEngine:
             try:
                 signal = strategy.analyze(ticker)
                 if signal:
+                    # Set fractionable status on signal
+                    signal.fractionable = fractionable
                     signals.append(signal)
             except Exception as e:
                 logger.error(f"Strategy {strat_name} failed for {ticker}: {e}")
@@ -660,7 +674,8 @@ class StrategyEngine:
         self,
         tickers: List[str],
         strategies: Optional[List[str]] = None,
-        min_confidence: float = 60
+        min_confidence: float = 60,
+        alpaca_service = None
     ) -> Dict[str, List[TradingSignal]]:
         """
         Scan a list of tickers with strategies.
@@ -669,6 +684,7 @@ class StrategyEngine:
             tickers: List of tickers to scan
             strategies: List of strategy names (None = all)
             min_confidence: Minimum confidence to include
+            alpaca_service: Optional AlpacaService to check fractionable status
             
         Returns:
             Dict of ticker -> signals
@@ -676,7 +692,7 @@ class StrategyEngine:
         results = {}
         
         for ticker in tickers:
-            signals = self.analyze_ticker(ticker, strategies)
+            signals = self.analyze_ticker(ticker, strategies, alpaca_service=alpaca_service)
             
             # Filter by confidence
             signals = [s for s in signals if s.confidence >= min_confidence]

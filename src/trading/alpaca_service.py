@@ -209,6 +209,44 @@ class TradeResult:
     message: str = ""
 
 
+@dataclass
+class AssetInfo:
+    """Asset information from Alpaca including fractionable status"""
+    symbol: str
+    name: str
+    exchange: str
+    asset_class: str
+    tradable: bool
+    fractionable: bool
+    marginable: bool
+    shortable: bool
+    easy_to_borrow: bool
+    min_order_size: float = 1.0
+    min_trade_increment: float = 1.0
+    price_increment: float = 0.01
+    
+    @classmethod
+    def from_api_response(cls, data: Dict) -> "AssetInfo":
+        return cls(
+            symbol=data.get("symbol", ""),
+            name=data.get("name", ""),
+            exchange=data.get("exchange", ""),
+            asset_class=data.get("class", "us_equity"),
+            tradable=data.get("tradable", False),
+            fractionable=data.get("fractionable", False),
+            marginable=data.get("marginable", False),
+            shortable=data.get("shortable", False),
+            easy_to_borrow=data.get("easy_to_borrow", False),
+            min_order_size=float(data.get("min_order_size", 1)),
+            min_trade_increment=float(data.get("min_trade_increment", 1)),
+            price_increment=float(data.get("price_increment", 0.01)),
+        )
+
+
+# Asset cache for fractionable lookups (in-memory, cleared on restart)
+_asset_cache: Dict[str, AssetInfo] = {}
+
+
 class AlpacaService:
     """
     Service for interacting with Alpaca Trading API.
@@ -384,6 +422,61 @@ class AlpacaService:
         account = self.get_account()
         return account.portfolio_value
 
+    # ==================== Assets ====================
+
+    def get_asset(self, symbol: str, use_cache: bool = True) -> Optional[AssetInfo]:
+        """
+        Get asset information including fractionable status.
+        
+        Args:
+            symbol: Stock symbol
+            use_cache: If True, use cached asset info if available
+            
+        Returns:
+            AssetInfo with tradable, fractionable, etc. flags
+        """
+        symbol = symbol.upper()
+        
+        # Check cache first
+        if use_cache and symbol in _asset_cache:
+            return _asset_cache[symbol]
+        
+        try:
+            data = self._request("GET", f"assets/{symbol}")
+            asset = AssetInfo.from_api_response(data)
+            
+            # Cache for future lookups
+            _asset_cache[symbol] = asset
+            
+            return asset
+        except Exception as e:
+            if "404" in str(e) or "not found" in str(e).lower():
+                return None
+            print(f"[Alpaca] ⚠️ Error fetching asset info for {symbol}: {e}")
+            return None
+
+    def is_fractionable(self, symbol: str) -> bool:
+        """
+        Check if a symbol supports fractional trading.
+        
+        Args:
+            symbol: Stock symbol
+            
+        Returns:
+            True if fractional trading is supported, False otherwise
+        """
+        asset = self.get_asset(symbol)
+        if asset is None:
+            # Unknown asset - assume not fractionable for safety
+            print(f"[Alpaca] ⚠️ Could not determine if {symbol} is fractionable, assuming no")
+            return False
+        return asset.fractionable
+
+    def clear_asset_cache(self):
+        """Clear the asset info cache."""
+        global _asset_cache
+        _asset_cache.clear()
+
     # ==================== Positions ====================
 
     def get_positions(self) -> List[AlpacaPosition]:
@@ -507,6 +600,7 @@ class AlpacaService:
             from src.trading.config import get_fractional_config
             
             fractional_config = get_fractional_config()
+            symbol = symbol.upper()
             
             # Round quantity to Alpaca's precision (4 decimal places)
             qty = round(float(qty), fractional_config.fractional_precision)
@@ -516,12 +610,22 @@ class AlpacaService:
             original_qty = qty
             
             if is_fractional and not fractional_config.allow_fractional:
-                # Fractional disabled - round to whole shares
+                # Fractional disabled globally - round to whole shares
                 qty = max(1, int(qty))
                 print(f"[Alpaca] ⚠️ Fractional trading disabled. Rounded {original_qty:.4f} → {qty} shares for {symbol}")
+                is_fractional = False
+            
+            # Check if asset is fractionable before attempting fractional order
+            if is_fractional and fractional_config.allow_fractional:
+                asset_fractionable = self.is_fractionable(symbol)
+                if not asset_fractionable:
+                    # Asset doesn't support fractional - round to whole shares
+                    qty = max(1, int(qty))
+                    print(f"[Alpaca] ⚠️ Asset {symbol} not fractionable. Rounded {original_qty:.4f} → {qty} shares")
+                    is_fractional = False
             
             # For fractional orders, Alpaca requires market orders with DAY time in force
-            if is_fractional and fractional_config.allow_fractional:
+            if is_fractional:
                 if order_type != OrderType.MARKET:
                     print(f"[Alpaca] ⚠️ Fractional orders require market order type. Converting from {order_type.value}")
                     order_type = OrderType.MARKET

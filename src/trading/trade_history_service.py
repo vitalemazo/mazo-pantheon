@@ -32,6 +32,7 @@ class TradeRecord:
     quantity: float  # Supports fractional shares
     entry_price: Optional[float] = None
     order_id: Optional[str] = None
+    fractionable: bool = True  # Whether the asset supports fractional trading
     
     # Trigger info
     trigger_source: str = "manual"  # manual, scheduler, automated
