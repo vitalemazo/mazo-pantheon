@@ -20,8 +20,46 @@ router = APIRouter(prefix="/transparency", tags=["Transparency"])
 # PYDANTIC MODELS
 # =============================================================================
 
+class GuardRailCheck(BaseModel):
+    """Individual guard rail check result"""
+    name: str
+    status: str  # pass, fail, skip
+    value: Optional[Any] = None
+    threshold: Optional[Any] = None
+    message: Optional[str] = None
+
+
+class UniverseRiskStage(BaseModel):
+    """Stage 1: Universe construction and risk preparation"""
+    # Universe
+    universe_size: int = 0
+    universe_tickers: List[str] = []
+    watchlist_count: int = 0
+    watchlist_tickers: List[str] = []
+    
+    # Account status
+    portfolio_value: Optional[float] = None
+    buying_power: Optional[float] = None
+    cash_available: Optional[float] = None
+    day_trades_remaining: Optional[int] = None
+    pdt_status: Optional[str] = None  # clear, warning, restricted
+    
+    # Guard rails
+    auto_trading_enabled: bool = False
+    market_hours: bool = False
+    
+    # Risk checks
+    guard_rails: List[GuardRailCheck] = []
+    concentration_check: Optional[str] = None  # pass, fail
+    cooldown_tickers: List[str] = []
+    blocked_tickers: List[str] = []
+    
+    timestamp: Optional[str] = None
+    status: str = "pending"  # pending, pass, fail
+
+
 class StrategyStage(BaseModel):
-    """Strategy Engine screening results"""
+    """Stage 2: Strategy Engine screening results"""
     tickers_scanned: int = 0
     signals_found: int = 0
     signals: List[Dict[str, Any]] = []
@@ -150,6 +188,44 @@ class PostTradeStage(BaseModel):
     notes: Optional[str] = None
 
 
+class AgentAccuracyUpdate(BaseModel):
+    """Agent accuracy change from this trade"""
+    agent_id: str
+    signal_was_correct: Optional[bool] = None
+    previous_accuracy: Optional[float] = None
+    new_accuracy: Optional[float] = None
+
+
+class FeedbackLoopStage(BaseModel):
+    """Stage 8: Feedback loop - trade results and accuracy updates"""
+    # Trade outcome
+    trade_recorded: bool = False
+    trade_id: Optional[int] = None
+    order_id: Optional[str] = None
+    
+    # P&L
+    realized_pnl: Optional[float] = None
+    return_pct: Optional[float] = None
+    was_profitable: Optional[bool] = None
+    
+    # Agent accuracy adjustments
+    agents_updated: int = 0
+    accuracy_updates: List[AgentAccuracyUpdate] = []
+    
+    # System updates
+    cooldown_set: bool = False
+    cooldown_until: Optional[str] = None
+    position_added: bool = False
+    
+    # Performance tracking
+    session_pnl: Optional[float] = None
+    session_trades: int = 0
+    session_win_rate: Optional[float] = None
+    
+    timestamp: Optional[str] = None
+    status: str = "pending"  # pending, updated, skipped
+
+
 class ConsensusMeter(BaseModel):
     """AI Consensus summary"""
     total_agents: int = 0
@@ -163,7 +239,7 @@ class ConsensusMeter(BaseModel):
 
 
 class RoundTableResponse(BaseModel):
-    """Complete Round Table transparency view"""
+    """Complete Round Table transparency view - 8 stages"""
     workflow_id: Optional[str] = None
     workflow_type: Optional[str] = None
     ticker: Optional[str] = None
@@ -172,13 +248,15 @@ class RoundTableResponse(BaseModel):
     total_duration_ms: Optional[int] = None
     status: str = "unknown"  # running, completed, failed, dry_run
     
-    # Pipeline stages
-    strategy: StrategyStage = StrategyStage()
-    mazo: MazoStage = MazoStage()
-    agents: AgentsStage = AgentsStage()
-    portfolio_manager: PortfolioManagerStage = PortfolioManagerStage()
-    execution: ExecutionStage = ExecutionStage()
-    post_trade: PostTradeStage = PostTradeStage()
+    # All 8 Pipeline stages
+    universe_risk: UniverseRiskStage = UniverseRiskStage()  # Stage 1
+    strategy: StrategyStage = StrategyStage()               # Stage 2
+    mazo: MazoStage = MazoStage()                           # Stage 3
+    agents: AgentsStage = AgentsStage()                     # Stage 4
+    portfolio_manager: PortfolioManagerStage = PortfolioManagerStage()  # Stage 5
+    execution: ExecutionStage = ExecutionStage()            # Stage 6
+    post_trade: PostTradeStage = PostTradeStage()           # Stage 7
+    feedback_loop: FeedbackLoopStage = FeedbackLoopStage()  # Stage 8
     
     # Summary
     consensus: ConsensusMeter = ConsensusMeter()
@@ -321,7 +399,88 @@ async def get_round_table(
                 end = datetime.fromisoformat(response.completed_at.replace('Z', '+00:00'))
                 response.total_duration_ms = int((end - start).total_seconds() * 1000)
             
-            # 2. Get Strategy Stage from workflow events
+            # =================================================================
+            # STAGE 1: Universe & Risk Preparation
+            # =================================================================
+            universe_query = """
+                SELECT step_name, status, payload, timestamp
+                FROM workflow_events
+                WHERE workflow_id = :workflow_id
+                  AND step_name IN ('trading_cycle_start', 'capital_rotation', 'risk_check')
+                ORDER BY timestamp ASC
+            """
+            result = conn.execute(text(universe_query), {"workflow_id": wf_id})
+            
+            guard_rails = []
+            for row in result.fetchall():
+                payload = row[2] if isinstance(row[2], dict) else {}
+                
+                if row[0] == 'trading_cycle_start':
+                    response.universe_risk.timestamp = row[3].isoformat() if row[3] else None
+                    response.universe_risk.auto_trading_enabled = payload.get("auto_trading_enabled", False)
+                    response.universe_risk.market_hours = payload.get("market_hours", False)
+                    
+                    # Parse tickers
+                    tickers = payload.get("tickers", [])
+                    if isinstance(tickers, list):
+                        response.universe_risk.universe_tickers = tickers[:20]  # Limit
+                        response.universe_risk.universe_size = len(tickers)
+                
+                if row[0] == 'capital_rotation':
+                    response.universe_risk.portfolio_value = payload.get("portfolio_value")
+                    response.universe_risk.buying_power = payload.get("buying_power")
+                    response.universe_risk.cash_available = payload.get("cash_available")
+                    response.universe_risk.day_trades_remaining = payload.get("day_trades_remaining")
+                    
+                    # PDT check
+                    if response.universe_risk.day_trades_remaining is not None:
+                        if response.universe_risk.day_trades_remaining <= 0:
+                            response.universe_risk.pdt_status = "restricted"
+                        elif response.universe_risk.day_trades_remaining <= 1:
+                            response.universe_risk.pdt_status = "warning"
+                        else:
+                            response.universe_risk.pdt_status = "clear"
+                    
+                    # Cooldown tickers
+                    response.universe_risk.cooldown_tickers = payload.get("cooldown_tickers", [])
+                    response.universe_risk.blocked_tickers = payload.get("blocked_tickers", [])
+                    response.universe_risk.concentration_check = payload.get("concentration_check", "pass")
+            
+            # Add guard rail checks
+            guard_rails.append(GuardRailCheck(
+                name="AUTO_TRADING_ENABLED",
+                status="pass" if response.universe_risk.auto_trading_enabled else "fail",
+                value=response.universe_risk.auto_trading_enabled,
+                message="Automated trading is enabled" if response.universe_risk.auto_trading_enabled else "Auto-trading disabled"
+            ))
+            guard_rails.append(GuardRailCheck(
+                name="Market Hours",
+                status="pass" if response.universe_risk.market_hours else "skip",
+                value=response.universe_risk.market_hours,
+                message="Market is open" if response.universe_risk.market_hours else "Outside market hours"
+            ))
+            if response.universe_risk.pdt_status:
+                guard_rails.append(GuardRailCheck(
+                    name="PDT Status",
+                    status="pass" if response.universe_risk.pdt_status == "clear" else ("fail" if response.universe_risk.pdt_status == "restricted" else "skip"),
+                    value=response.universe_risk.day_trades_remaining,
+                    threshold=3,
+                    message=f"{response.universe_risk.day_trades_remaining} day trades remaining"
+                ))
+            if response.universe_risk.cooldown_tickers:
+                guard_rails.append(GuardRailCheck(
+                    name="Cooldown Check",
+                    status="skip",
+                    value=response.universe_risk.cooldown_tickers,
+                    message=f"{len(response.universe_risk.cooldown_tickers)} tickers on cooldown"
+                ))
+            
+            response.universe_risk.guard_rails = guard_rails
+            response.universe_risk.status = "pass" if response.universe_risk.auto_trading_enabled else "fail"
+            
+            # =================================================================
+            # STAGE 2: Strategy Engine
+            # =================================================================
             strategy_query = """
                 SELECT step_name, status, payload, duration_ms, timestamp
                 FROM workflow_events
@@ -542,6 +701,78 @@ async def get_round_table(
                     )
             except Exception as e:
                 logger.debug(f"Post-trade query failed: {e}")
+            
+            # =================================================================
+            # STAGE 8: Feedback Loop
+            # =================================================================
+            try:
+                # Get trade outcome from trade_history + trade_decision_context
+                feedback_query = """
+                    SELECT 
+                        th.id, th.order_id, th.realized_pnl, th.return_pct,
+                        th.status, tdc.was_profitable
+                    FROM trade_history th
+                    JOIN trade_decision_context tdc ON th.id = tdc.trade_id
+                    WHERE tdc.workflow_id = :workflow_id
+                    ORDER BY th.created_at DESC
+                    LIMIT 1
+                """
+                result = conn.execute(text(feedback_query), {"workflow_id": wf_id})
+                fb_row = result.fetchone()
+                
+                if fb_row:
+                    response.feedback_loop.trade_recorded = True
+                    response.feedback_loop.trade_id = fb_row[0]
+                    response.feedback_loop.order_id = fb_row[1]
+                    response.feedback_loop.realized_pnl = fb_row[2]
+                    response.feedback_loop.return_pct = fb_row[3]
+                    response.feedback_loop.was_profitable = fb_row[5]
+                    response.feedback_loop.status = "updated" if fb_row[4] == "closed" else "pending"
+                    
+                    # Get agent accuracy updates for this trade
+                    accuracy_query = """
+                        SELECT agent_id, was_correct
+                        FROM agent_signals
+                        WHERE workflow_id = :workflow_id AND was_correct IS NOT NULL
+                    """
+                    result = conn.execute(text(accuracy_query), {"workflow_id": wf_id})
+                    accuracy_updates = []
+                    for row in result.fetchall():
+                        accuracy_updates.append(AgentAccuracyUpdate(
+                            agent_id=row[0],
+                            signal_was_correct=row[1],
+                        ))
+                    response.feedback_loop.accuracy_updates = accuracy_updates
+                    response.feedback_loop.agents_updated = len(accuracy_updates)
+                    
+                    # Cooldown tracking
+                    if response.feedback_loop.trade_recorded:
+                        response.feedback_loop.cooldown_set = True
+                        response.feedback_loop.position_added = True
+                else:
+                    response.feedback_loop.status = "skipped"
+                
+                # Get session performance
+                session_query = """
+                    SELECT 
+                        COUNT(*) as trade_count,
+                        SUM(realized_pnl) as total_pnl,
+                        AVG(CASE WHEN realized_pnl > 0 THEN 1.0 ELSE 0.0 END) as win_rate
+                    FROM trade_history
+                    WHERE DATE(created_at) = CURRENT_DATE
+                      AND status = 'closed'
+                """
+                result = conn.execute(text(session_query))
+                session_row = result.fetchone()
+                if session_row:
+                    response.feedback_loop.session_trades = session_row[0] or 0
+                    response.feedback_loop.session_pnl = session_row[1]
+                    response.feedback_loop.session_win_rate = session_row[2]
+                    
+                response.feedback_loop.timestamp = response.completed_at
+                
+            except Exception as e:
+                logger.debug(f"Feedback loop query failed: {e}")
         
         return response
         

@@ -53,6 +53,8 @@ import {
   DollarSign,
   Loader2,
   HelpCircle,
+  RotateCcw,
+  Eye,
 } from 'lucide-react';
 import { API_BASE_URL } from '@/lib/api-config';
 import { InfoTooltip } from '@/components/ui/info-tooltip';
@@ -60,6 +62,14 @@ import { InfoTooltip } from '@/components/ui/info-tooltip';
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 // Types
+interface GuardRailCheck {
+  name: string;
+  status: string;
+  value: any;
+  threshold?: any;
+  message?: string;
+}
+
 interface AgentSignal {
   agent_id: string;
   agent_type: string | null;
@@ -67,6 +77,11 @@ interface AgentSignal {
   confidence: number | null;
   reasoning: string | null;
   accuracy_rate: number | null;
+}
+
+interface AgentAccuracyUpdate {
+  agent_id: string;
+  signal_was_correct: boolean | null;
 }
 
 interface RoundTableData {
@@ -77,12 +92,33 @@ interface RoundTableData {
   completed_at: string | null;
   total_duration_ms: number | null;
   status: string;
+  // Stage 1: Universe & Risk
+  universe_risk: {
+    universe_size: number;
+    universe_tickers: string[];
+    watchlist_count: number;
+    watchlist_tickers: string[];
+    portfolio_value: number | null;
+    buying_power: number | null;
+    cash_available: number | null;
+    day_trades_remaining: number | null;
+    pdt_status: string | null;
+    auto_trading_enabled: boolean;
+    market_hours: boolean;
+    guard_rails: GuardRailCheck[];
+    concentration_check: string | null;
+    cooldown_tickers: string[];
+    blocked_tickers: string[];
+    status: string;
+  };
+  // Stage 2: Strategy
   strategy: {
     tickers_scanned: number;
     signals_found: number;
     signals: any[];
     duration_ms: number | null;
   };
+  // Stage 3: Mazo
   mazo: {
     ticker: string | null;
     summary: string | null;
@@ -93,6 +129,7 @@ interface RoundTableData {
     success: boolean;
     duration_ms: number | null;
   };
+  // Stage 4: Agents
   agents: {
     agents: AgentSignal[];
     bullish_count: number;
@@ -122,11 +159,30 @@ interface RoundTableData {
     filled_avg_price: number | null;
     error: string | null;
   };
+  // Stage 7: Post-Trade
   post_trade: {
     trade_id: number | null;
     status: string | null;
     realized_pnl: number | null;
     return_pct: number | null;
+  };
+  // Stage 8: Feedback Loop
+  feedback_loop: {
+    trade_recorded: boolean;
+    trade_id: number | null;
+    order_id: string | null;
+    realized_pnl: number | null;
+    return_pct: number | null;
+    was_profitable: boolean | null;
+    agents_updated: number;
+    accuracy_updates: AgentAccuracyUpdate[];
+    cooldown_set: boolean;
+    cooldown_until: string | null;
+    position_added: boolean;
+    session_pnl: number | null;
+    session_trades: number;
+    session_win_rate: number | null;
+    status: string;
   };
   consensus: {
     total_agents: number;
@@ -561,8 +617,109 @@ export function RoundTable() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Accordion type="multiple" defaultValue={['Strategy Engine', 'AI Agents', 'Portfolio Manager']}>
-                  {/* Stage 1: Strategy Engine */}
+                <Accordion type="multiple" defaultValue={['Universe & Risk Prep', 'Strategy Engine', 'AI Agents', 'Portfolio Manager']}>
+                  {/* Stage 1: Universe & Risk Prep */}
+                  <PipelineStage
+                    icon={Shield}
+                    title="Universe & Risk Prep"
+                    status={roundTable.universe_risk?.status === 'pass' ? 'completed' : roundTable.universe_risk?.status === 'fail' ? 'failed' : 'pending'}
+                  >
+                    <div className="pl-12 space-y-3">
+                      {/* Guard Rails */}
+                      <div className="space-y-2">
+                        <div className="text-xs text-slate-500 font-medium">Guard Rails</div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {roundTable.universe_risk?.guard_rails?.map((rail, idx) => (
+                            <div key={idx} className="flex items-center gap-2 bg-slate-900/50 p-2 rounded-lg">
+                              {rail.status === 'pass' ? (
+                                <CheckCircle className="h-4 w-4 text-emerald-400" />
+                              ) : rail.status === 'fail' ? (
+                                <XCircle className="h-4 w-4 text-red-400" />
+                              ) : (
+                                <AlertCircle className="h-4 w-4 text-amber-400" />
+                              )}
+                              <div className="flex-1">
+                                <div className="text-xs font-medium">{rail.name}</div>
+                                <div className="text-xs text-slate-500">{rail.message}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      {/* Account & Risk */}
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="bg-slate-900/50 p-3 rounded-lg">
+                          <div className="text-xs text-slate-500">Portfolio Value</div>
+                          <div className="text-lg font-mono">
+                            {roundTable.universe_risk?.portfolio_value 
+                              ? `$${roundTable.universe_risk.portfolio_value.toLocaleString()}`
+                              : '—'}
+                          </div>
+                        </div>
+                        <div className="bg-slate-900/50 p-3 rounded-lg">
+                          <div className="text-xs text-slate-500">Buying Power</div>
+                          <div className="text-lg font-mono text-cyan-400">
+                            {roundTable.universe_risk?.buying_power 
+                              ? `$${roundTable.universe_risk.buying_power.toLocaleString()}`
+                              : '—'}
+                          </div>
+                        </div>
+                        <div className="bg-slate-900/50 p-3 rounded-lg">
+                          <div className="text-xs text-slate-500">Day Trades Left</div>
+                          <div className={`text-lg font-mono ${
+                            (roundTable.universe_risk?.day_trades_remaining || 0) <= 1 
+                              ? 'text-red-400' 
+                              : 'text-emerald-400'
+                          }`}>
+                            {roundTable.universe_risk?.day_trades_remaining ?? '—'}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Universe */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-slate-900/50 p-3 rounded-lg">
+                          <div className="text-xs text-slate-500">Universe Size</div>
+                          <div className="text-xl font-bold">{roundTable.universe_risk?.universe_size || 0}</div>
+                          {roundTable.universe_risk?.universe_tickers?.length > 0 && (
+                            <div className="text-xs text-slate-400 mt-1 truncate">
+                              {roundTable.universe_risk.universe_tickers.slice(0, 5).join(', ')}
+                              {roundTable.universe_risk.universe_tickers.length > 5 && '...'}
+                            </div>
+                          )}
+                        </div>
+                        <div className="bg-slate-900/50 p-3 rounded-lg">
+                          <div className="text-xs text-slate-500">Watchlist</div>
+                          <div className="text-xl font-bold">{roundTable.universe_risk?.watchlist_count || 0}</div>
+                          {roundTable.universe_risk?.watchlist_tickers?.length > 0 && (
+                            <div className="text-xs text-slate-400 mt-1 truncate">
+                              {roundTable.universe_risk.watchlist_tickers.slice(0, 5).join(', ')}
+                              {roundTable.universe_risk.watchlist_tickers.length > 5 && '...'}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Blocked/Cooldown */}
+                      {(roundTable.universe_risk?.cooldown_tickers?.length > 0 || roundTable.universe_risk?.blocked_tickers?.length > 0) && (
+                        <div className="bg-amber-900/20 border border-amber-700 p-3 rounded-lg text-sm">
+                          {roundTable.universe_risk?.cooldown_tickers?.length > 0 && (
+                            <div className="text-amber-400">
+                              <span className="font-medium">Cooldown:</span> {roundTable.universe_risk.cooldown_tickers.join(', ')}
+                            </div>
+                          )}
+                          {roundTable.universe_risk?.blocked_tickers?.length > 0 && (
+                            <div className="text-red-400 mt-1">
+                              <span className="font-medium">Blocked:</span> {roundTable.universe_risk.blocked_tickers.join(', ')}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </PipelineStage>
+
+                  {/* Stage 2: Strategy Engine */}
                   <PipelineStage
                     icon={Search}
                     title="Strategy Engine"
@@ -796,9 +953,9 @@ export function RoundTable() {
                     </div>
                   </PipelineStage>
 
-                  {/* Stage 6: Post-Trade */}
+                  {/* Stage 7: Post-Trade Monitoring */}
                   <PipelineStage
-                    icon={Shield}
+                    icon={Eye}
                     title="Post-Trade Monitoring"
                     status={getStageStatus(!!roundTable.post_trade.trade_id, roundTable.status)}
                   >
@@ -849,6 +1006,141 @@ export function RoundTable() {
                       ) : (
                         <p className="text-sm text-slate-500">
                           Position monitoring active — no closed trade yet
+                        </p>
+                      )}
+                    </div>
+                  </PipelineStage>
+
+                  {/* Stage 8: Feedback Loop */}
+                  <PipelineStage
+                    icon={RotateCcw}
+                    title="Feedback Loop"
+                    status={
+                      roundTable.feedback_loop?.status === 'updated' 
+                        ? 'completed' 
+                        : roundTable.feedback_loop?.status === 'skipped' 
+                        ? 'skipped' 
+                        : 'pending'
+                    }
+                  >
+                    <div className="pl-12 space-y-3">
+                      {roundTable.feedback_loop?.trade_recorded ? (
+                        <>
+                          {/* Trade Outcome */}
+                          <div className="grid grid-cols-3 gap-3">
+                            <div className="bg-slate-900/50 p-3 rounded-lg">
+                              <div className="text-xs text-slate-500">Trade Recorded</div>
+                              <div className="flex items-center gap-2">
+                                <CheckCircle className="h-4 w-4 text-emerald-400" />
+                                <span className="font-mono">#{roundTable.feedback_loop.trade_id}</span>
+                              </div>
+                            </div>
+                            <div className="bg-slate-900/50 p-3 rounded-lg">
+                              <div className="text-xs text-slate-500">Realized P&L</div>
+                              <div className={`text-lg font-mono ${
+                                (roundTable.feedback_loop.realized_pnl || 0) >= 0 
+                                  ? 'text-emerald-400' 
+                                  : 'text-red-400'
+                              }`}>
+                                {(roundTable.feedback_loop.realized_pnl || 0) >= 0 ? '+' : ''}
+                                ${(roundTable.feedback_loop.realized_pnl || 0).toFixed(2)}
+                              </div>
+                            </div>
+                            <div className="bg-slate-900/50 p-3 rounded-lg">
+                              <div className="text-xs text-slate-500">Result</div>
+                              <Badge className={
+                                roundTable.feedback_loop.was_profitable 
+                                  ? 'bg-emerald-500' 
+                                  : roundTable.feedback_loop.was_profitable === false 
+                                  ? 'bg-red-500' 
+                                  : 'bg-slate-500'
+                              }>
+                                {roundTable.feedback_loop.was_profitable 
+                                  ? '✓ WIN' 
+                                  : roundTable.feedback_loop.was_profitable === false 
+                                  ? '✗ LOSS' 
+                                  : 'PENDING'}
+                              </Badge>
+                            </div>
+                          </div>
+
+                          {/* Agent Accuracy Updates */}
+                          {roundTable.feedback_loop.agents_updated > 0 && (
+                            <div className="bg-cyan-900/20 border border-cyan-700 p-3 rounded-lg">
+                              <div className="text-xs text-cyan-400 font-medium mb-2">
+                                Agent Accuracy Updates ({roundTable.feedback_loop.agents_updated} agents)
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {roundTable.feedback_loop.accuracy_updates?.slice(0, 10).map((update, idx) => (
+                                  <Badge 
+                                    key={idx} 
+                                    variant="outline"
+                                    className={
+                                      update.signal_was_correct 
+                                        ? 'border-emerald-500 text-emerald-400' 
+                                        : 'border-red-500 text-red-400'
+                                    }
+                                  >
+                                    {update.agent_id.replace(/_/g, ' ')} {update.signal_was_correct ? '✓' : '✗'}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* System Updates */}
+                          <div className="flex items-center gap-4 text-sm text-slate-400">
+                            {roundTable.feedback_loop.cooldown_set && (
+                              <div className="flex items-center gap-1">
+                                <Clock className="h-4 w-4" />
+                                Cooldown activated
+                              </div>
+                            )}
+                            {roundTable.feedback_loop.position_added && (
+                              <div className="flex items-center gap-1">
+                                <CheckCircle className="h-4 w-4 text-emerald-400" />
+                                Position tracked
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Session Performance */}
+                          {roundTable.feedback_loop.session_trades > 0 && (
+                            <div className="bg-slate-900/50 p-3 rounded-lg">
+                              <div className="text-xs text-slate-500 mb-2">Today's Session</div>
+                              <div className="grid grid-cols-3 gap-4">
+                                <div>
+                                  <div className="text-lg font-mono">{roundTable.feedback_loop.session_trades}</div>
+                                  <div className="text-xs text-slate-500">Trades</div>
+                                </div>
+                                <div>
+                                  <div className={`text-lg font-mono ${
+                                    (roundTable.feedback_loop.session_pnl || 0) >= 0 
+                                      ? 'text-emerald-400' 
+                                      : 'text-red-400'
+                                  }`}>
+                                    {(roundTable.feedback_loop.session_pnl || 0) >= 0 ? '+' : ''}
+                                    ${(roundTable.feedback_loop.session_pnl || 0).toFixed(2)}
+                                  </div>
+                                  <div className="text-xs text-slate-500">P&L</div>
+                                </div>
+                                <div>
+                                  <div className={`text-lg font-mono ${
+                                    (roundTable.feedback_loop.session_win_rate || 0) >= 0.5 
+                                      ? 'text-emerald-400' 
+                                      : 'text-amber-400'
+                                  }`}>
+                                    {((roundTable.feedback_loop.session_win_rate || 0) * 100).toFixed(0)}%
+                                  </div>
+                                  <div className="text-xs text-slate-500">Win Rate</div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-sm text-slate-500">
+                          No trade executed — feedback loop skipped
                         </p>
                       )}
                     </div>
