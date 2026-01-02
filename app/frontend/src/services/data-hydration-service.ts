@@ -1,13 +1,20 @@
 /**
- * Unified Data Hydration Service
+ * Unified Data Hydration Service v2
  * 
- * This service implements a Stale-While-Revalidate (SWR) pattern with persistence:
- * 1. On app startup, load from localStorage first (instant)
- * 2. Then fetch fresh data from API in background
- * 3. All components share the same global state
- * 4. Tab switches NEVER reset state - it's all persisted
+ * Implements a slice-based architecture where each UI experience has its own
+ * data slice and hydration function. This allows:
+ * - Independent refresh cycles per view
+ * - Only hydrating what's needed
+ * - Clear data ownership
  * 
- * The user should NEVER see loading spinners for cached data.
+ * Slices:
+ * - controlTower: Autopilot, mission console, budget, cycle history
+ * - workspace: Positions, trades, performance metrics, scheduler
+ * - monitoring: Services, rate limits (uses SWR directly, minimal store)
+ * - roundTable: Workflow history, pipeline events (uses SWR directly)
+ * - intelligence: Agent activity, logs, live workflow progress
+ * 
+ * The store uses Stale-While-Revalidate (SWR) pattern with localStorage persistence.
  */
 
 import { create } from 'zustand';
@@ -19,7 +26,7 @@ import type {
   ConsoleLogEntry,
 } from '@/types/ai-transparency';
 
-// ==================== TYPES ====================
+// ==================== SHARED TYPES ====================
 
 export interface Position {
   ticker: string;
@@ -112,13 +119,13 @@ export interface AutomatedTradingStatus {
   last_run: string | null;
   total_runs: number;
   last_result: any | null;
-  // Error state fields (when success=false)
   error?: string;
   message?: string;
   requires_setup?: {
     alpaca?: boolean;
     missing_keys?: string[];
   };
+  watchlist?: WatchlistItem[];
 }
 
 export interface PortfolioHealthData {
@@ -132,9 +139,14 @@ export interface PortfolioHealthData {
 
 export interface WorkflowResult {
   id: string;
+  workflow_id?: string;
   timestamp: Date | string;
+  started_at?: string;
   tickers: string[];
   mode: string;
+  status?: string;
+  workflow_type?: string;
+  trades_executed?: number;
   agent_signals?: Array<{
     agent: string;
     signal: string;
@@ -172,19 +184,7 @@ export interface AIActivity {
   ticker?: string;
   status: 'pending' | 'running' | 'complete' | 'error';
   workflow_id?: string;
-  details?: {
-    workflow_type?: string;
-    step_name?: string;
-    status?: string;
-    duration_ms?: number;
-    workflow_id?: string;
-    action?: string;
-    confidence?: number;
-    reasoning?: string;
-    agent?: string;
-    signal?: string;
-    [key: string]: any;
-  };
+  details?: Record<string, any>;
 }
 
 export interface QuickAnalysisResult {
@@ -200,84 +200,86 @@ export interface QuickAnalysisResult {
   timestamp: string;
 }
 
-// ==================== STORE ====================
+export interface TradingConfig {
+  budgetPercent: number;
+  riskLevel: 'conservative' | 'balanced' | 'aggressive';
+  maxPositions: number;
+  stopLossPercent: number;
+  takeProfitPercent: number;
+}
 
-interface DataStore {
-  // Core Data
-  performance: PerformanceData | null;
-  scheduler: SchedulerStatus | null;
-  trades: TradeHistoryItem[];
-  agents: AgentPerformance[];
-  metrics: PerformanceMetrics | null;
-  watchlist: WatchlistItem[];
-  automatedStatus: AutomatedTradingStatus | null;
-  portfolioHealth: PortfolioHealthData | null;
-  
-  // Workflow Data
-  latestWorkflow: WorkflowResult | null;
-  recentWorkflows: WorkflowResult[];
-  
-  // AI Hedge Fund State (persisted)
+// ==================== SLICE INTERFACES ====================
+
+/** Control Tower slice - Autopilot, mission console, budget, AI team */
+export interface ControlTowerSlice {
   isAutonomousEnabled: boolean;
+  automatedStatus: AutomatedTradingStatus | null;
+  tradingConfig: TradingConfig;
+  recentWorkflows: WorkflowResult[];
   aiActivities: AIActivity[];
-  tradingConfig: {
-    budgetPercent: number;
-    riskLevel: 'conservative' | 'balanced' | 'aggressive';
-    maxPositions: number;
-    stopLossPercent: number;
-    takeProfitPercent: number;
-  };
   quickAnalysisResult: QuickAnalysisResult | null;
   quickAnalysisTicker: string;
+}
 
-  // Metadata
-  lastUpdated: Record<string, number>; // timestamp in ms
+/** Trading Workspace slice - Positions, performance, scheduler */
+export interface WorkspaceSlice {
+  performance: PerformanceData | null;
+  scheduler: SchedulerStatus | null;
+  metrics: PerformanceMetrics | null;
+  trades: TradeHistoryItem[];
+  agents: AgentPerformance[];
+  watchlist: WatchlistItem[];
+  portfolioHealth: PortfolioHealthData | null;
+}
+
+/** Intelligence Panel slice - Activity log, console, workflow progress */
+export interface IntelligenceSlice {
+  agentActivityLog: AgentActivityEntry[];
+  consoleLogs: ConsoleLogEntry[];
+  agentStatuses: Record<string, 'pending' | 'running' | 'complete' | 'error'>;
+  selectedAgentId: string | null;
+  liveWorkflowProgress: WorkflowProgress | null;
+}
+
+/** Global metadata slice */
+export interface MetadataSlice {
+  lastUpdated: Record<string, number>;
   isInitialized: boolean;
   isRefreshing: boolean;
   errors: Record<string, string | null>;
-  
-  // Global loading states - visible across all tabs
   activeOperations: Record<string, {
     type: string;
     message: string;
     progress?: number;
     startedAt: number;
   }>;
+}
 
-  // AI Transparency State (for sidebars)
-  agentActivityLog: AgentActivityEntry[];
-  consoleLogs: ConsoleLogEntry[];
-  agentStatuses: Record<string, 'pending' | 'running' | 'complete' | 'error'>;
-  selectedAgentId: string | null;
-  liveWorkflowProgress: WorkflowProgress | null;
+// ==================== STORE INTERFACE ====================
 
-  // Actions
+interface DataStore extends ControlTowerSlice, WorkspaceSlice, IntelligenceSlice, MetadataSlice {
+  // Legacy compat: latestWorkflow derived from recentWorkflows[0]
+  latestWorkflow: WorkflowResult | null;
+
+  // ========== Workspace Actions ==========
   setPerformance: (data: PerformanceData) => void;
   setScheduler: (data: SchedulerStatus) => void;
   setTrades: (data: TradeHistoryItem[]) => void;
   setAgents: (data: AgentPerformance[]) => void;
   setMetrics: (data: PerformanceMetrics) => void;
   setWatchlist: (data: WatchlistItem[]) => void;
-  setAutomatedStatus: (data: AutomatedTradingStatus) => void;
   setPortfolioHealth: (data: PortfolioHealthData) => void;
-  setLatestWorkflow: (data: WorkflowResult) => void;
-  setError: (key: string, error: string | null) => void;
-  setRefreshing: (value: boolean) => void;
-  setInitialized: (value: boolean) => void;
-  
-  // AI Hedge Fund Actions
+
+  // ========== Control Tower Actions ==========
   setAutonomousEnabled: (enabled: boolean) => void;
+  setAutomatedStatus: (data: AutomatedTradingStatus) => void;
+  setTradingConfig: (config: Partial<TradingConfig>) => void;
+  setLatestWorkflow: (data: WorkflowResult) => void;
   addAIActivity: (activity: Omit<AIActivity, 'id' | 'timestamp'>) => void;
-  setTradingConfig: (config: Partial<DataStore['tradingConfig']>) => void;
   setQuickAnalysisResult: (result: QuickAnalysisResult | null) => void;
   setQuickAnalysisTicker: (ticker: string) => void;
-  
-  // Operation tracking
-  startOperation: (id: string, type: string, message: string) => void;
-  updateOperation: (id: string, updates: { message?: string; progress?: number }) => void;
-  endOperation: (id: string) => void;
-  
-  // AI Transparency Actions
+
+  // ========== Intelligence Actions ==========
   addAgentActivity: (entry: Omit<AgentActivityEntry, 'id'>) => void;
   clearAgentActivityLog: () => void;
   togglePinActivity: (id: string) => void;
@@ -288,26 +290,24 @@ interface DataStore {
   setSelectedAgentId: (id: string | null) => void;
   setLiveWorkflowProgress: (progress: WorkflowProgress | null) => void;
   updateWorkflowProgress: (updates: Partial<WorkflowProgress>) => void;
+
+  // ========== Metadata Actions ==========
+  setError: (key: string, error: string | null) => void;
+  setRefreshing: (value: boolean) => void;
+  setInitialized: (value: boolean) => void;
+  startOperation: (id: string, type: string, message: string) => void;
+  updateOperation: (id: string, updates: { message?: string; progress?: number }) => void;
+  endOperation: (id: string) => void;
 }
+
+// ==================== STORE IMPLEMENTATION ====================
 
 export const useDataStore = create<DataStore>()(
   persist(
     (set, get) => ({
-      // Initial empty state
-      performance: null,
-      scheduler: null,
-      trades: [],
-      agents: [],
-      metrics: null,
-      watchlist: [],
-      automatedStatus: null,
-      portfolioHealth: null,
-      latestWorkflow: null,
-      recentWorkflows: [],
-      
-      // AI Hedge Fund defaults
+      // ========== Control Tower Initial State ==========
       isAutonomousEnabled: false,
-      aiActivities: [],
+      automatedStatus: null,
       tradingConfig: {
         budgetPercent: 25,
         riskLevel: 'balanced',
@@ -315,96 +315,173 @@ export const useDataStore = create<DataStore>()(
         stopLossPercent: 5,
         takeProfitPercent: 10,
       },
+      recentWorkflows: [],
+      aiActivities: [],
       quickAnalysisResult: null,
       quickAnalysisTicker: '',
 
-      lastUpdated: {},
-      isInitialized: false,
-      isRefreshing: false,
-      errors: {},
-      activeOperations: {},
-      
-      // AI Transparency initial state
+      // ========== Workspace Initial State ==========
+      performance: null,
+      scheduler: null,
+      metrics: null,
+      trades: [],
+      agents: [],
+      watchlist: [],
+      portfolioHealth: null,
+
+      // ========== Intelligence Initial State ==========
       agentActivityLog: [],
       consoleLogs: [],
       agentStatuses: {},
       selectedAgentId: null,
       liveWorkflowProgress: null,
 
-      // Setters that update lastUpdated timestamp
+      // ========== Metadata Initial State ==========
+      lastUpdated: {},
+      isInitialized: false,
+      isRefreshing: false,
+      errors: {},
+      activeOperations: {},
+
+      // Legacy compat
+      get latestWorkflow() {
+        return get().recentWorkflows[0] || null;
+      },
+
+      // ========== Workspace Actions ==========
       setPerformance: (data) => set((state) => ({
         performance: data,
         lastUpdated: { ...state.lastUpdated, performance: Date.now() }
       })),
+
       setScheduler: (data) => set((state) => ({
         scheduler: data,
         lastUpdated: { ...state.lastUpdated, scheduler: Date.now() }
       })),
+
       setTrades: (data) => set((state) => ({
         trades: data,
         lastUpdated: { ...state.lastUpdated, trades: Date.now() }
       })),
+
       setAgents: (data) => set((state) => ({
         agents: data,
         lastUpdated: { ...state.lastUpdated, agents: Date.now() }
       })),
+
       setMetrics: (data) => set((state) => ({
         metrics: data,
         lastUpdated: { ...state.lastUpdated, metrics: Date.now() }
       })),
+
       setWatchlist: (data) => set((state) => ({
         watchlist: data,
         lastUpdated: { ...state.lastUpdated, watchlist: Date.now() }
       })),
-      setAutomatedStatus: (data) => set((state) => ({
-        automatedStatus: data,
-        lastUpdated: { ...state.lastUpdated, automatedStatus: Date.now() }
-      })),
+
       setPortfolioHealth: (data) => set((state) => ({
         portfolioHealth: data,
         lastUpdated: { ...state.lastUpdated, portfolioHealth: Date.now() }
       })),
-      setLatestWorkflow: (data) => set((state) => ({
-        latestWorkflow: data,
-        recentWorkflows: [data, ...state.recentWorkflows.slice(0, 9)],
-        lastUpdated: { ...state.lastUpdated, latestWorkflow: Date.now() }
-      })),
-      setError: (key, error) => set((state) => ({
-        errors: { ...state.errors, [key]: error }
-      })),
-      setRefreshing: (value) => set({ isRefreshing: value }),
-      setInitialized: (value) => set({ isInitialized: value }),
-      
-      // AI Hedge Fund Actions
+
+      // ========== Control Tower Actions ==========
       setAutonomousEnabled: (enabled) => set({ isAutonomousEnabled: enabled }),
-      
+
+      setAutomatedStatus: (data) => set((state) => ({
+        automatedStatus: data,
+        lastUpdated: { ...state.lastUpdated, automatedStatus: Date.now() }
+      })),
+
+      setTradingConfig: (config) => set((state) => ({
+        tradingConfig: { ...state.tradingConfig, ...config },
+      })),
+
+      setLatestWorkflow: (data) => set((state) => ({
+        recentWorkflows: [data, ...state.recentWorkflows.slice(0, 9)],
+        lastUpdated: { ...state.lastUpdated, recentWorkflows: Date.now() }
+      })),
+
       addAIActivity: (activity) => set((state) => {
         const newActivity: AIActivity = {
           ...activity,
           id: `activity_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           timestamp: new Date().toISOString(),
         };
-        // Keep last 50 activities
         return {
           aiActivities: [newActivity, ...state.aiActivities.slice(0, 49)],
         };
       }),
-      
-      setTradingConfig: (config) => set((state) => ({
-        tradingConfig: { ...state.tradingConfig, ...config },
-      })),
-      
+
       setQuickAnalysisResult: (result) => set({ quickAnalysisResult: result }),
       setQuickAnalysisTicker: (ticker) => set({ quickAnalysisTicker: ticker }),
-      
-      // Operation tracking for global loading states
+
+      // ========== Intelligence Actions ==========
+      addAgentActivity: (entry) => set((state) => {
+        const newEntry: AgentActivityEntry = {
+          ...entry,
+          id: `activity_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        };
+        return {
+          agentActivityLog: [newEntry, ...state.agentActivityLog.slice(0, 199)],
+        };
+      }),
+
+      clearAgentActivityLog: () => set({ agentActivityLog: [] }),
+
+      togglePinActivity: (id) => set((state) => ({
+        agentActivityLog: state.agentActivityLog.map((a) =>
+          a.id === id ? { ...a, isPinned: !a.isPinned } : a
+        ),
+      })),
+
+      addConsoleLog: (entry) => set((state) => {
+        const newEntry: ConsoleLogEntry = {
+          ...entry,
+          id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        };
+        return {
+          consoleLogs: [...state.consoleLogs.slice(-499), newEntry],
+        };
+      }),
+
+      clearConsoleLogs: () => set({ consoleLogs: [] }),
+
+      setAgentStatus: (agentId, status) => set((state) => ({
+        agentStatuses: { ...state.agentStatuses, [agentId]: status },
+      })),
+
+      resetAgentStatuses: () => set({ agentStatuses: {} }),
+      setSelectedAgentId: (id) => set({ selectedAgentId: id }),
+      setLiveWorkflowProgress: (progress) => set({ liveWorkflowProgress: progress }),
+
+      updateWorkflowProgress: (updates) => set((state) => {
+        if (!state.liveWorkflowProgress) return { liveWorkflowProgress: null };
+        const current = state.liveWorkflowProgress;
+        return {
+          liveWorkflowProgress: {
+            ...current,
+            ...updates,
+            signals: { ...(current.signals || {}), ...(updates.signals || {}) },
+            agentStatuses: { ...(current.agentStatuses || {}), ...(updates.agentStatuses || {}) },
+          },
+        };
+      }),
+
+      // ========== Metadata Actions ==========
+      setError: (key, error) => set((state) => ({
+        errors: { ...state.errors, [key]: error }
+      })),
+
+      setRefreshing: (value) => set({ isRefreshing: value }),
+      setInitialized: (value) => set({ isInitialized: value }),
+
       startOperation: (id, type, message) => set((state) => ({
         activeOperations: {
           ...state.activeOperations,
           [id]: { type, message, startedAt: Date.now() },
         },
       })),
-      
+
       updateOperation: (id, updates) => set((state) => {
         const op = state.activeOperations[id];
         if (!op) return state;
@@ -415,102 +492,38 @@ export const useDataStore = create<DataStore>()(
           },
         };
       }),
-      
+
       endOperation: (id) => set((state) => {
         const { [id]: removed, ...rest } = state.activeOperations;
         return { activeOperations: rest };
       }),
-      
-      // AI Transparency Actions
-      addAgentActivity: (entry) => set((state) => {
-        const newEntry: AgentActivityEntry = {
-          ...entry,
-          id: `activity_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        };
-        // Keep last 200 activities
-        return {
-          agentActivityLog: [newEntry, ...state.agentActivityLog.slice(0, 199)],
-        };
-      }),
-      
-      clearAgentActivityLog: () => set({ agentActivityLog: [] }),
-      
-      togglePinActivity: (id) => set((state) => ({
-        agentActivityLog: state.agentActivityLog.map((a) =>
-          a.id === id ? { ...a, isPinned: !a.isPinned } : a
-        ),
-      })),
-      
-      addConsoleLog: (entry) => set((state) => {
-        const newEntry: ConsoleLogEntry = {
-          ...entry,
-          id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        };
-        // Keep last 500 logs
-        return {
-          consoleLogs: [...state.consoleLogs.slice(-499), newEntry],
-        };
-      }),
-      
-      clearConsoleLogs: () => set({ consoleLogs: [] }),
-      
-      setAgentStatus: (agentId, status) => set((state) => ({
-        agentStatuses: { ...state.agentStatuses, [agentId]: status },
-      })),
-      
-      resetAgentStatuses: () => set({ agentStatuses: {} }),
-      
-      setSelectedAgentId: (id) => set({ selectedAgentId: id }),
-      
-      setLiveWorkflowProgress: (progress) => set({ liveWorkflowProgress: progress }),
-      
-      updateWorkflowProgress: (updates) => set((state) => {
-        if (!state.liveWorkflowProgress) return { liveWorkflowProgress: null };
-        
-        // Deep merge for nested objects like signals and agentStatuses
-        const current = state.liveWorkflowProgress;
-        return {
-          liveWorkflowProgress: {
-            ...current,
-            ...updates,
-            // Merge signals object instead of replacing
-            signals: {
-              ...(current.signals || {}),
-              ...(updates.signals || {}),
-            },
-            // Merge agentStatuses object instead of replacing
-            agentStatuses: {
-              ...(current.agentStatuses || {}),
-              ...(updates.agentStatuses || {}),
-            },
-          },
-        };
-      }),
     }),
     {
-      name: 'mazo-data-store', // localStorage key
+      name: 'mazo-data-store-v2',
       storage: createJSONStorage(() => localStorage),
-      // Only persist these fields
       partialize: (state) => ({
+        // Control Tower (persist)
         isAutonomousEnabled: state.isAutonomousEnabled,
-        aiActivities: state.aiActivities.slice(0, 20), // Keep last 20 in storage
         tradingConfig: state.tradingConfig,
+        aiActivities: state.aiActivities.slice(0, 20),
         quickAnalysisResult: state.quickAnalysisResult,
         quickAnalysisTicker: state.quickAnalysisTicker,
+        // Workspace (persist for instant load)
         performance: state.performance,
         scheduler: state.scheduler,
+        metrics: state.metrics,
         trades: state.trades.slice(0, 20),
         agents: state.agents,
-        metrics: state.metrics,
+        // Metadata
         lastUpdated: state.lastUpdated,
-        // AI Transparency (persist last 50 activities)
+        // Intelligence (persist recent activity)
         agentActivityLog: state.agentActivityLog.slice(0, 50),
       }),
     }
   )
 );
 
-// ==================== FETCH FUNCTIONS ====================
+// ==================== FETCH UTILITIES ====================
 
 async function fetchWithTimeout(url: string, timeout = 10000): Promise<Response> {
   const controller = new AbortController();
@@ -543,13 +556,56 @@ class DataHydrationService {
   private lastHydrationTime = 0;
 
   /**
-   * Initial hydration - fetch ALL data on app startup
-   * Skips if data was fetched recently (within 30 seconds)
+   * Hydrate Control Tower slice
+   * - Autopilot status, scheduler status (for is_running), automated trading status
+   */
+  async hydrateControlTower(): Promise<void> {
+    const store = useDataStore.getState();
+    console.log('[DataHydration] Hydrating Control Tower slice...');
+
+    const [schedulerData, automatedData] = await Promise.all([
+      safeFetch<any>('/trading/scheduler/status', null),
+      safeFetch<any>('/trading/automated/status', null),
+    ]);
+
+    if (schedulerData) {
+      store.setScheduler(schedulerData);
+      if (schedulerData.is_running !== undefined) {
+        store.setAutonomousEnabled(schedulerData.is_running);
+      }
+    }
+    if (automatedData) store.setAutomatedStatus(automatedData);
+  }
+
+  /**
+   * Hydrate Workspace slice
+   * - Performance, metrics, trades, agents, watchlist
+   */
+  async hydrateWorkspace(): Promise<void> {
+    const store = useDataStore.getState();
+    console.log('[DataHydration] Hydrating Workspace slice...');
+
+    const [perfData, metricsData, tradesData, agentsData, watchlistData] = await Promise.all([
+      safeFetch<any>('/trading/performance', null),
+      safeFetch<any>('/history/performance', { summary: null }),
+      safeFetch<any>('/history/trades?limit=50', { trades: [] }),
+      safeFetch<any>('/history/agents', { agents: [] }),
+      safeFetch<any>('/trading/watchlist', { items: [] }),
+    ]);
+
+    if (perfData) store.setPerformance(perfData);
+    if (metricsData?.summary) store.setMetrics(metricsData.summary);
+    if (tradesData?.trades) store.setTrades(tradesData.trades);
+    if (agentsData?.agents) store.setAgents(agentsData.agents);
+    if (watchlistData?.items) store.setWatchlist(watchlistData.items);
+  }
+
+  /**
+   * Hydrate both Control Tower and Workspace (full app hydration)
    */
   async hydrateAll(force = false): Promise<void> {
     if (this.isHydrating) return;
-    
-    // Skip if recently hydrated (unless forced)
+
     const now = Date.now();
     if (!force && now - this.lastHydrationTime < 30000) {
       console.log('[DataHydration] Skipping - recently hydrated');
@@ -562,46 +618,16 @@ class DataHydrationService {
     const store = useDataStore.getState();
     store.setRefreshing(true);
 
-    console.log('[DataHydration] Starting hydration...');
+    console.log('[DataHydration] Starting full hydration...');
 
     try {
-      // Fetch all data in parallel for speed
-      const [
-        perfData,
-        schedulerData,
-        tradesData,
-        agentsData,
-        metricsData,
-        watchlistData,
-        automatedData,
-      ] = await Promise.all([
-        safeFetch<any>('/trading/performance', null),
-        safeFetch<any>('/trading/scheduler/status', null),
-        safeFetch<any>('/history/trades?limit=50', { trades: [] }),
-        safeFetch<any>('/history/agents', { agents: [] }),
-        safeFetch<any>('/history/performance', { summary: null }),
-        safeFetch<any>('/trading/watchlist', { items: [] }),
-        safeFetch<any>('/trading/automated/status', null),
+      await Promise.all([
+        this.hydrateControlTower(),
+        this.hydrateWorkspace(),
       ]);
 
-      // Update store with fetched data
-      if (perfData) store.setPerformance(perfData);
-      if (schedulerData) {
-        store.setScheduler(schedulerData);
-        // Sync autonomous state from backend
-        if (schedulerData.is_running !== undefined) {
-          store.setAutonomousEnabled(schedulerData.is_running);
-        }
-      }
-      if (tradesData?.trades) store.setTrades(tradesData.trades);
-      if (agentsData?.agents) store.setAgents(agentsData.agents);
-      if (metricsData?.summary) store.setMetrics(metricsData.summary);
-      if (watchlistData?.items) store.setWatchlist(watchlistData.items);
-      if (automatedData) store.setAutomatedStatus(automatedData);
-
       store.setInitialized(true);
-      console.log('[DataHydration] Hydration complete');
-
+      console.log('[DataHydration] Full hydration complete');
     } catch (error) {
       console.error('[DataHydration] Hydration failed:', error);
     } finally {
@@ -611,8 +637,7 @@ class DataHydrationService {
   }
 
   /**
-   * Background refresh - updates data without showing loading states
-   * Silent failure - never disrupts the UI
+   * Background refresh - lightweight, silent updates
    */
   async backgroundRefresh(): Promise<void> {
     const store = useDataStore.getState();
@@ -624,7 +649,6 @@ class DataHydrationService {
         safeFetch<any>('/trading/automated/status', null),
       ]);
 
-      // Only update if we got data - never clear existing data
       if (perfData) store.setPerformance(perfData);
       if (schedulerData) {
         store.setScheduler(schedulerData);
@@ -633,9 +657,7 @@ class DataHydrationService {
         }
       }
       if (automatedData) store.setAutomatedStatus(automatedData);
-
     } catch (error) {
-      // Silent fail for background refresh
       console.warn('[DataHydration] Background refresh failed:', error);
     }
   }
@@ -672,24 +694,26 @@ class DataHydrationService {
     }
   }
 
+  async refreshMetrics(): Promise<void> {
+    const store = useDataStore.getState();
+    const data = await safeFetch<any>('/history/performance', null);
+    if (data?.summary) store.setMetrics(data.summary);
+  }
+
   /**
    * Record a completed workflow result
    */
   async recordWorkflowComplete(result: WorkflowResult): Promise<void> {
     const store = useDataStore.getState();
     
-    // Store the workflow result
     store.setLatestWorkflow(result);
-    
-    // Add activity
     store.addAIActivity({
       type: 'analyze',
       message: `Analysis complete for ${result.tickers?.join(', ') || 'unknown'}`,
       status: 'complete',
       details: result,
     });
-    
-    // If a trade was executed, refresh positions and trade history
+
     if (result.tradeExecuted) {
       console.log('[DataHydration] Trade executed, refreshing...');
       await Promise.all([
@@ -706,7 +730,7 @@ class DataHydrationService {
   startBackgroundRefresh(intervalMs = 15000): void {
     if (this.refreshInterval) return;
     
-    console.log(`[DataHydration] Starting background refresh every ${intervalMs/1000}s`);
+    console.log(`[DataHydration] Starting background refresh every ${intervalMs / 1000}s`);
     
     this.refreshInterval = setInterval(() => {
       this.backgroundRefresh();
@@ -727,17 +751,122 @@ class DataHydrationService {
 // Singleton instance
 export const dataHydrationService = new DataHydrationService();
 
-// ==================== REACT HOOKS ====================
+// ==================== SLICE SELECTOR HOOKS ====================
 
 /**
- * Hook to get data with automatic initialization
- * Always returns cached data - never shows loading for cached data
+ * Control Tower slice data
+ */
+export function useControlTowerData() {
+  const store = useDataStore();
+  return {
+    // State
+    isAutonomousEnabled: store.isAutonomousEnabled,
+    automatedStatus: store.automatedStatus,
+    tradingConfig: store.tradingConfig,
+    recentWorkflows: store.recentWorkflows,
+    latestWorkflow: store.recentWorkflows[0] || null,
+    aiActivities: store.aiActivities,
+    quickAnalysisResult: store.quickAnalysisResult,
+    quickAnalysisTicker: store.quickAnalysisTicker,
+    // Shared data needed by Control Tower
+    performance: store.performance,
+    scheduler: store.scheduler,
+    metrics: store.metrics,
+    trades: store.trades,
+    // Status
+    isRefreshing: store.isRefreshing,
+    // Actions
+    setAutonomousEnabled: store.setAutonomousEnabled,
+    setTradingConfig: store.setTradingConfig,
+    setQuickAnalysisResult: store.setQuickAnalysisResult,
+    setQuickAnalysisTicker: store.setQuickAnalysisTicker,
+    addAIActivity: store.addAIActivity,
+    // Hydration
+    refresh: () => dataHydrationService.hydrateControlTower(),
+    refreshAll: () => dataHydrationService.backgroundRefresh(),
+  };
+}
+
+/**
+ * Trading Workspace slice data
+ */
+export function useWorkspaceData() {
+  const store = useDataStore();
+  return {
+    // State
+    performance: store.performance,
+    scheduler: store.scheduler,
+    metrics: store.metrics,
+    trades: store.trades,
+    agents: store.agents,
+    watchlist: store.watchlist,
+    portfolioHealth: store.portfolioHealth,
+    automatedStatus: store.automatedStatus,
+    recentWorkflows: store.recentWorkflows,
+    // Status
+    isRefreshing: store.isRefreshing,
+    // Actions
+    setPortfolioHealth: store.setPortfolioHealth,
+    // Hydration
+    refresh: () => dataHydrationService.hydrateWorkspace(),
+    refreshAll: () => dataHydrationService.backgroundRefresh(),
+    refreshTrades: () => dataHydrationService.refreshTrades(),
+    refreshAgents: () => dataHydrationService.refreshAgents(),
+    refreshPortfolioHealth: () => dataHydrationService.refreshPortfolioHealth(),
+    refreshMetrics: () => dataHydrationService.refreshMetrics(),
+  };
+}
+
+/**
+ * Intelligence Panel slice data (sidebar)
+ */
+export function useIntelligenceData() {
+  const store = useDataStore();
+  return {
+    // State
+    agentActivityLog: store.agentActivityLog,
+    consoleLogs: store.consoleLogs,
+    agentStatuses: store.agentStatuses,
+    selectedAgentId: store.selectedAgentId,
+    liveWorkflowProgress: store.liveWorkflowProgress,
+    // Actions
+    addAgentActivity: store.addAgentActivity,
+    clearAgentActivityLog: store.clearAgentActivityLog,
+    togglePinActivity: store.togglePinActivity,
+    addConsoleLog: store.addConsoleLog,
+    clearConsoleLogs: store.clearConsoleLogs,
+    setAgentStatus: store.setAgentStatus,
+    resetAgentStatuses: store.resetAgentStatuses,
+    setSelectedAgentId: store.setSelectedAgentId,
+    setLiveWorkflowProgress: store.setLiveWorkflowProgress,
+    updateWorkflowProgress: store.updateWorkflowProgress,
+  };
+}
+
+/**
+ * Global operations tracking (loading states visible across all tabs)
+ */
+export function useOperations() {
+  const store = useDataStore();
+  return {
+    activeOperations: store.activeOperations,
+    startOperation: store.startOperation,
+    updateOperation: store.updateOperation,
+    endOperation: store.endOperation,
+  };
+}
+
+// ==================== LEGACY COMPAT HOOK ====================
+
+/**
+ * Legacy hook for backward compatibility
+ * @deprecated Use slice-specific hooks instead: useControlTowerData, useWorkspaceData, useIntelligenceData
  */
 export function useHydratedData() {
   const store = useDataStore();
 
   return {
-    // Core Data
+    // Core Data (Workspace)
     performance: store.performance,
     scheduler: store.scheduler,
     trades: store.trades,
@@ -746,17 +875,17 @@ export function useHydratedData() {
     watchlist: store.watchlist,
     automatedStatus: store.automatedStatus,
     portfolioHealth: store.portfolioHealth,
-    latestWorkflow: store.latestWorkflow,
+    latestWorkflow: store.recentWorkflows[0] || null,
     recentWorkflows: store.recentWorkflows,
     
-    // AI Hedge Fund State
+    // Control Tower State
     isAutonomousEnabled: store.isAutonomousEnabled,
     aiActivities: store.aiActivities,
     tradingConfig: store.tradingConfig,
     quickAnalysisResult: store.quickAnalysisResult,
     quickAnalysisTicker: store.quickAnalysisTicker,
     
-    // Active operations (loading states)
+    // Active operations
     activeOperations: store.activeOperations,
 
     // Status
@@ -771,7 +900,7 @@ export function useHydratedData() {
     refreshAll: () => dataHydrationService.backgroundRefresh(),
     recordWorkflowComplete: (result: WorkflowResult) => dataHydrationService.recordWorkflowComplete(result),
     
-    // AI Hedge Fund Actions
+    // Control Tower Actions
     setAutonomousEnabled: store.setAutonomousEnabled,
     addAIActivity: store.addAIActivity,
     setTradingConfig: store.setTradingConfig,
@@ -783,7 +912,7 @@ export function useHydratedData() {
     updateOperation: store.updateOperation,
     endOperation: store.endOperation,
     
-    // AI Transparency State & Actions
+    // Intelligence State & Actions
     agentActivityLog: store.agentActivityLog,
     consoleLogs: store.consoleLogs,
     agentStatuses: store.agentStatuses,
@@ -806,12 +935,8 @@ export function useHydratedData() {
 
 /**
  * Initialize data hydration on app startup
- * Call this once in your app entry point
  */
 export async function initializeDataHydration() {
-  // Start background refresh
   dataHydrationService.startBackgroundRefresh(15000);
-  
-  // Hydrate all data
   await dataHydrationService.hydrateAll();
 }

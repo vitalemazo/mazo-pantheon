@@ -21,7 +21,8 @@ import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
-  useHydratedData, 
+  useControlTowerData,
+  useIntelligenceData,
   dataHydrationService,
   type Position,
 } from '@/services/data-hydration-service';
@@ -100,7 +101,7 @@ function formatPercent(value: number): string {
 export function ControlTower() {
   const { openTab } = useTabsContext();
   
-  // Use hydrated data from shared store
+  // Use Control Tower slice data
   const { 
     performance, 
     scheduler, 
@@ -112,12 +113,16 @@ export function ControlTower() {
     tradingConfig,
     setAutonomousEnabled,
     setTradingConfig,
+    addAIActivity,
+    isRefreshing,
+  } = useControlTowerData();
+
+  // Intelligence panel actions for workflow progress
+  const {
     addAgentActivity,
-    addConsoleLog,
     setLiveWorkflowProgress,
     updateWorkflowProgress,
-    isRefreshing,
-  } = useHydratedData();
+  } = useIntelligenceData();
 
   // Fetch trading guardrails status
   const { data: guardrailsData } = useSWR(

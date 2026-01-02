@@ -17,7 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useHydratedData, dataHydrationService } from '@/services/data-hydration-service';
+import { useWorkspaceData, dataHydrationService } from '@/services/data-hydration-service';
 import { usePortfolioHealth } from '@/contexts/portfolio-health-context';
 import { API_BASE_URL } from '@/lib/api-config';
 import { toast } from 'sonner';
@@ -101,7 +101,7 @@ function extractRiskLevel(analysis: string): string {
 export function TradingWorkspace() {
   const { openTab } = useTabsContext();
 
-  // Use global hydrated data store (same as Control Tower)
+  // Use Workspace slice data
   const {
     performance,
     metrics,
@@ -109,7 +109,8 @@ export function TradingWorkspace() {
     automatedStatus,
     recentWorkflows,
     isRefreshing,
-  } = useHydratedData();
+    refresh,
+  } = useWorkspaceData();
 
   // Open Round Table (optionally with a specific workflow ID)
   const openRoundTable = (workflowId?: string) => {
