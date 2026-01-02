@@ -6,7 +6,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings, Bot, Activity, BarChart3, Crosshair, Sparkles, Gauge } from 'lucide-react';
+import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings, Bot, Activity, BarChart3, Crosshair, Sparkles, Gauge, Users } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { KeyboardShortcutsDialog } from './keyboard-shortcuts-dialog';
 import { API_BASE_URL } from '@/lib/api-config';
@@ -24,6 +24,7 @@ interface TopBarProps {
   onTradingClick: () => void;
   onCommandCenterClick: () => void;
   onMonitoringClick: () => void;
+  onRoundTableClick: () => void;
 }
 
 export function TopBar({
@@ -39,6 +40,7 @@ export function TopBar({
   onTradingClick,
   onCommandCenterClick,
   onMonitoringClick,
+  onRoundTableClick,
 }: TopBarProps) {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [isAutonomousActive, setIsAutonomousActive] = useState(false);
@@ -258,6 +260,25 @@ export function TopBar({
           <TooltipContent side="bottom" className="flex flex-col gap-0.5">
             <span className="font-medium">Monitoring</span>
             <span className="text-xs text-muted-foreground">System health • Alerts • Performance metrics</span>
+          </TooltipContent>
+        </Tooltip>
+
+        {/* Round Table */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onRoundTableClick}
+              className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-ramp-grey-700 transition-colors"
+              aria-label="Open Round Table"
+            >
+              <Users size={16} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="flex flex-col gap-0.5">
+            <span className="font-medium">Round Table</span>
+            <span className="text-xs text-muted-foreground">Full AI decision transparency • Audit pipeline</span>
           </TooltipContent>
         </Tooltip>
 

@@ -17,6 +17,7 @@ from app.backend.routes.trading import router as trading_router
 from app.backend.routes.history import router as history_router
 from app.backend.routes.monitoring import router as monitoring_router
 from app.backend.routes.system_config import router as system_config_router
+from app.backend.routes.transparency import router as transparency_router
 
 # Main API router
 api_router = APIRouter()
@@ -39,3 +40,4 @@ api_router.include_router(trading_router, tags=["trading"])
 api_router.include_router(history_router, tags=["history"])
 api_router.include_router(monitoring_router, tags=["monitoring"])
 api_router.include_router(system_config_router, tags=["system-config"])
+api_router.include_router(transparency_router, tags=["transparency"])

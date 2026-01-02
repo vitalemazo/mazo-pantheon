@@ -5,11 +5,12 @@ import { PortfolioHealthView } from '@/components/portfolio/PortfolioHealthView'
 import { TradingDashboard } from '@/components/trading/TradingDashboard';
 import { CommandCenter } from '@/components/command-center/CommandCenter';
 import { MonitoringDashboard } from '@/components/monitoring';
+import { RoundTable } from '@/components/round-table';
 import { Flow } from '@/types/flow';
 import { ReactNode, createElement } from 'react';
 
 export interface TabData {
-  type: 'flow' | 'settings' | 'unified-workflow' | 'portfolio' | 'trading' | 'command-center' | 'monitoring';
+  type: 'flow' | 'settings' | 'unified-workflow' | 'portfolio' | 'trading' | 'command-center' | 'monitoring' | 'round-table';
   title: string;
   flow?: Flow;
   metadata?: Record<string, any>;
@@ -41,6 +42,9 @@ export class TabService {
       
       case 'monitoring':
         return createElement(MonitoringDashboard);
+      
+      case 'round-table':
+        return createElement(RoundTable);
       
       default:
         throw new Error(`Unsupported tab type: ${tabData.type}`);
@@ -104,6 +108,14 @@ export class TabService {
     };
   }
 
+  static createRoundTableTab(): TabData & { content: ReactNode } {
+    return {
+      type: 'round-table',
+      title: 'Round Table',
+      content: TabService.createTabContent({ type: 'round-table', title: 'Round Table' }),
+    };
+  }
+
   // Restore tab content for persisted tabs (used when loading from localStorage)
   static restoreTabContent(tabData: TabData): ReactNode {
     return TabService.createTabContent(tabData);
@@ -135,6 +147,9 @@ export class TabService {
       
       case 'monitoring':
         return TabService.createMonitoringTab();
+      
+      case 'round-table':
+        return TabService.createRoundTableTab();
       
       default:
         throw new Error(`Cannot restore unsupported tab type: ${savedTab.type}`);
