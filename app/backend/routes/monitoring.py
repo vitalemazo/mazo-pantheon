@@ -616,6 +616,137 @@ async def test_rate_limit_call(
 
 
 # =============================================================================
+# TRADING GUARDRAILS STATUS
+# =============================================================================
+
+@router.get("/trading/guardrails")
+async def get_trading_guardrails():
+    """
+    Get current trading guardrails status including PDT, risk limits, and quote health.
+    
+    Returns:
+        - pdt_status: Pattern Day Trader protection status
+        - risk_limits: Current position/concentration limits status
+        - quote_health: Real-time quote API health
+        - config: Current guardrail configuration
+    """
+    try:
+        import os
+        from src.trading.alpaca_service import get_alpaca_service
+        from src.trading.config import get_risk_config, get_fractional_config, get_intraday_config
+        
+        result = {
+            "pdt_status": None,
+            "risk_limits": None,
+            "quote_health": None,
+            "config": {},
+            "success": True,
+        }
+        
+        # Get PDT status from Alpaca
+        try:
+            alpaca = get_alpaca_service()
+            pdt = alpaca.check_pdt_status()
+            result["pdt_status"] = {
+                "is_pdt": pdt.get("is_pdt", False),
+                "daytrade_count": pdt.get("daytrade_count", 0),
+                "equity": pdt.get("equity", 0),
+                "can_day_trade": pdt.get("can_day_trade", True),
+                "warning": pdt.get("warning"),
+                "pdt_threshold": pdt.get("pdt_threshold", 25000),
+            }
+            
+            # Check quote health with a test quote
+            try:
+                quote = alpaca.get_quote("SPY")
+                if quote and quote.get("bid") and quote.get("ask"):
+                    result["quote_health"] = {
+                        "status": "healthy",
+                        "last_check": datetime.now(timezone.utc).isoformat(),
+                        "sample_quote": {
+                            "symbol": "SPY",
+                            "bid": quote.get("bid"),
+                            "ask": quote.get("ask"),
+                        }
+                    }
+                else:
+                    result["quote_health"] = {
+                        "status": "degraded",
+                        "message": "Quote returned incomplete data",
+                    }
+            except Exception as qe:
+                result["quote_health"] = {
+                    "status": "error",
+                    "message": str(qe),
+                }
+            
+            # Get current positions for risk limit status
+            try:
+                positions = alpaca.get_positions()
+                account = alpaca.get_account()
+                risk_config = get_risk_config()
+                
+                # Calculate position concentration
+                position_details = []
+                max_concentration = 0
+                for pos in positions:
+                    pct = abs(float(pos.market_value)) / account.portfolio_value * 100 if account.portfolio_value > 0 else 0
+                    max_concentration = max(max_concentration, pct)
+                    position_details.append({
+                        "symbol": pos.symbol,
+                        "market_value": float(pos.market_value),
+                        "concentration_pct": round(pct, 2),
+                    })
+                
+                result["risk_limits"] = {
+                    "position_count": len(positions),
+                    "max_positions": risk_config.max_total_positions,
+                    "positions_available": max(0, risk_config.max_total_positions - len(positions)),
+                    "max_concentration_pct": round(max_concentration, 2),
+                    "max_position_pct": round(risk_config.max_position_pct * 100, 1),
+                    "status": "healthy" if len(positions) < risk_config.max_total_positions else "at_limit",
+                }
+            except Exception as re:
+                result["risk_limits"] = {"status": "error", "message": str(re)}
+                
+        except Exception as ae:
+            result["pdt_status"] = {"status": "unavailable", "message": str(ae)}
+        
+        # Get configuration
+        try:
+            risk_config = get_risk_config()
+            fractional_config = get_fractional_config()
+            intraday_config = get_intraday_config()
+            
+            result["config"] = {
+                "enforce_pdt": os.getenv("ENFORCE_PDT", "true").lower() == "true",
+                "pdt_equity_threshold": float(os.getenv("PDT_EQUITY_THRESHOLD", "25000")),
+                "use_intraday_data": intraday_config.use_intraday_data,
+                "quote_cache_seconds": intraday_config.quote_cache_seconds,
+                "allow_fractional": fractional_config.allow_fractional,
+                "max_position_pct": risk_config.max_position_pct,
+                "max_sector_pct": risk_config.max_sector_pct,
+                "max_total_positions": risk_config.max_total_positions,
+                "max_hold_hours": risk_config.max_hold_hours,
+            }
+        except Exception as ce:
+            result["config"] = {"error": str(ce)}
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Failed to get trading guardrails: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "pdt_status": None,
+            "risk_limits": None,
+            "quote_health": None,
+            "config": {},
+        }
+
+
+# =============================================================================
 # PERFORMANCE METRICS ENDPOINTS
 # =============================================================================
 

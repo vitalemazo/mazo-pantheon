@@ -585,8 +585,31 @@ TRADE_COOLDOWN_ENABLED=true  # Enable/disable cooldown checks
 TRADE_CONCENTRATION_CHECK_ENABLED=true  # Enable/disable concentration checks
 
 # ===========================================
-# CACHE TTL (Optional - in seconds)
+# REAL-TIME QUOTES & PDT PROTECTION
 # ===========================================
+USE_INTRADAY_DATA=true       # Use live quotes for strategy signals
+QUOTE_CACHE_SECONDS=30       # How long to cache quotes
+ENFORCE_PDT=true             # Pattern Day Trader protection (recommended)
+PDT_EQUITY_THRESHOLD=25000   # PDT equity threshold ($25k default)
+
+# ===========================================
+# FRACTIONAL SHARES
+# ===========================================
+ALLOW_FRACTIONAL=true        # Enable fractional share trading
+MIN_FRACTIONAL_QTY=0.001     # Minimum fractional quantity
+FRACTIONAL_PRECISION=4       # Decimal places for fractional trades
+
+# ===========================================
+# RISK LIMITS
+# ===========================================
+TRADING_RISK_MAX_POSITION_PCT=0.20  # Max 20% per position
+TRADING_RISK_MAX_SECTOR_PCT=0.30    # Max 30% per sector
+TRADING_RISK_MAX_POSITIONS=20       # Max open positions
+TRADING_RISK_MAX_HOLD_HOURS=120     # Max hold time (5 days)
+
+# ===========================================
+# CACHE TTL (Optional - in seconds)
+# =========================================== 
 CACHE_TTL_QUOTES=60          # Real-time quotes (1 min)
 CACHE_TTL_PRICES_INTRADAY=300 # Intraday bars (5 min)
 CACHE_TTL_PRICES=3600        # Daily prices (1 hour)
@@ -756,6 +779,92 @@ mazo-pantheon/
 └── docs/
     └── screenshots/           # 📸 UI screenshots
 ```
+
+---
+
+## 🛡️ Trading Guardrails & Safety
+
+The autonomous trading system includes multiple safety layers to protect your capital:
+
+### Pattern Day Trader (PDT) Protection
+
+If your account equity is below $25,000, FINRA's PDT rule limits you to 3 day trades per rolling 5 business days.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `ENFORCE_PDT` | `true` | Enable PDT protection |
+| `PDT_EQUITY_THRESHOLD` | `25000` | PDT threshold (USD) |
+
+**How it works:**
+1. Before each trading cycle, the system checks your account equity and day trade count
+2. If equity < $25k AND day trades ≥ 3, the cycle is **blocked**
+3. A warning is logged and surfaced in the Monitoring dashboard
+4. With equity ≥ $25k, there are no day trading restrictions
+
+> 📚 See [Alpaca PDT Documentation](https://alpaca.markets/docs/trading/pattern-day-trader/) for details.
+
+### Real-Time Quotes
+
+The strategy engine can use live intraday prices instead of stale daily closes:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `USE_INTRADAY_DATA` | `true` | Fetch live quotes for signals |
+| `QUOTE_CACHE_SECONDS` | `30` | Quote cache TTL |
+
+**Quote fallback chain:**
+```
+Live Trade Price → Quote Midpoint → Position Current Price → Last Close
+```
+
+### Position Risk Limits
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `TRADING_RISK_MAX_POSITION_PCT` | `0.20` | Max 20% per position |
+| `TRADING_RISK_MAX_SECTOR_PCT` | `0.30` | Max 30% per sector |
+| `TRADING_RISK_MAX_POSITIONS` | `20` | Max open positions |
+| `TRADING_RISK_MAX_HOLD_HOURS` | `120` | Max hold time (5 days) |
+
+### PM Stop-Loss & Take-Profit Enforcement
+
+When the Portfolio Manager specifies `stop_loss_pct` or `take_profit_pct` in a trade decision:
+
+1. These values are automatically applied to the **Position Monitor**
+2. The Position Monitor checks positions every 5 minutes
+3. If a position hits the PM's thresholds, it's closed automatically
+
+```
+PM Decision: "Buy AAPL with 5% stop-loss, 12% take-profit"
+     ↓
+Position Monitor: Applies custom rules (not defaults)
+     ↓
+Auto-exit when thresholds hit
+```
+
+### Fractional Shares
+
+Trade fractional shares on supported assets:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `ALLOW_FRACTIONAL` | `true` | Enable fractional trading |
+| `MIN_FRACTIONAL_QTY` | `0.001` | Minimum quantity |
+| `FRACTIONAL_PRECISION` | `4` | Decimal places |
+
+**Fractionable detection:** The system checks each asset via Alpaca's `/assets` endpoint to determine if it supports fractional trading. Non-fractionable assets (like BRK.A) are automatically rounded to whole shares.
+
+> 📚 See [Alpaca Fractional Shares](https://alpaca.markets/docs/trading/fractional-trading/) for details.
+
+### Trade Cooldowns
+
+Prevent rapid-fire trading on the same ticker:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `TRADE_COOLDOWN_ENABLED` | `true` | Enable cooldown checks |
+| `TRADE_COOLDOWN_MINUTES` | `30` | Min time between trades |
+| `MAX_POSITION_PCT_PER_TICKER` | `0.15` | Max concentration per ticker |
 
 ---
 

@@ -22,10 +22,22 @@ import {
   Zap,
   CheckCircle,
   XCircle,
-  BarChart3
+  BarChart3,
+  AlertTriangle,
+  Shield
 } from 'lucide-react';
 import { InfoTooltip, TOOLTIP_CONTENT, WithTooltip, getScheduleDescription } from '@/components/ui/info-tooltip';
 import { formatQuantity, formatShares } from '@/lib/utils';
+import useSWR from 'swr';
+import { API_BASE_URL } from '@/lib/api-config';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+
+const fetcher = (url: string) => fetch(url).then(res => res.json());
 
 function formatCurrency(value: number): string {
   const sign = value >= 0 ? '' : '-';
@@ -51,6 +63,13 @@ export function CommandCenter() {
     recentWorkflows,
   } = useHydratedData();
   
+  // Fetch trading guardrails status
+  const { data: guardrailsData } = useSWR(
+    `${API_BASE_URL}/monitoring/trading/guardrails`,
+    fetcher,
+    { refreshInterval: 30000 }
+  );
+  
   const [selectedTrade, setSelectedTrade] = useState<any>(null);
   const [isManualRefresh, setIsManualRefresh] = useState(false);
 
@@ -70,9 +89,68 @@ export function CommandCenter() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 bg-clip-text text-transparent">
-              Command Center
-            </h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 bg-clip-text text-transparent">
+                Command Center
+              </h1>
+              {/* Guardrails Status Badges */}
+              <TooltipProvider>
+                {guardrailsData?.pdt_status && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+                        guardrailsData.pdt_status.can_day_trade 
+                          ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                          : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                      }`}>
+                        {guardrailsData.pdt_status.can_day_trade ? (
+                          <Shield className="w-3 h-3" />
+                        ) : (
+                          <AlertTriangle className="w-3 h-3" />
+                        )}
+                        PDT {guardrailsData.pdt_status.daytrade_count}/3
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      <p className="font-medium">Pattern Day Trader Status</p>
+                      <p className="text-xs mt-1">
+                        Equity: ${guardrailsData.pdt_status.equity?.toLocaleString() || 0}
+                      </p>
+                      <p className="text-xs">
+                        {guardrailsData.pdt_status.can_day_trade 
+                          ? 'Day trading allowed' 
+                          : 'Day trading restricted'}
+                      </p>
+                      {guardrailsData.pdt_status.warning && (
+                        <p className="text-xs text-amber-400 mt-1">{guardrailsData.pdt_status.warning}</p>
+                      )}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {guardrailsData?.quote_health && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+                        guardrailsData.quote_health.status === 'healthy'
+                          ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                          : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                      }`}>
+                        <Activity className="w-3 h-3" />
+                        Quotes: {guardrailsData.quote_health.status}
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="font-medium">Real-Time Quote API</p>
+                      <p className="text-xs mt-1">
+                        {guardrailsData.quote_health.status === 'healthy' 
+                          ? 'Live quotes available for intraday signals'
+                          : guardrailsData.quote_health.message || 'Quote API may be degraded'}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </TooltipProvider>
+            </div>
             <p className="text-slate-400 mt-1">
               Unified view • Trade history • Agent performance • Real-time status
             </p>

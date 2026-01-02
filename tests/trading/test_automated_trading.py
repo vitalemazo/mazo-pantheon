@@ -639,3 +639,224 @@ class TestExecuteTrade:
         assert len(service.trade_history.records) == 1
         recorded = service.trade_history.records[0]
         assert recorded.entry_price == quote_price
+
+
+# ============================================================================
+# PDT Protection Tests
+# ============================================================================
+
+class TestPDTProtection:
+    """Tests for Pattern Day Trader protection."""
+    
+    @pytest.fixture
+    def service(self):
+        """Create a service instance for testing."""
+        from src.trading.automated_trading import AutomatedTradingService
+        
+        svc = AutomatedTradingService.__new__(AutomatedTradingService)
+        svc.cooldown_config = MockCooldownConfig()
+        svc.is_running = False
+        svc.last_run = None
+        svc.last_result = None
+        svc.run_history = []
+        svc.trade_history = None
+        svc.alpaca = MockAlpaca()
+        return svc
+    
+    def test_pdt_check_allows_high_equity(self, service):
+        """PDT check should allow trading with high equity."""
+        # Mock alpaca to return high equity PDT status
+        service.alpaca.check_pdt_status = lambda: {
+            "is_pdt": False,
+            "daytrade_count": 2,
+            "equity": 50000.0,
+            "can_day_trade": True,
+            "warning": None,
+        }
+        
+        result = service._check_pdt_limits()
+        
+        assert result.get("blocked") is False
+    
+    def test_pdt_check_blocks_at_limit(self, service):
+        """PDT check should block when at day trade limit with low equity."""
+        # Mock alpaca to return PDT blocked status
+        service.alpaca.check_pdt_status = lambda: {
+            "is_pdt": False,
+            "daytrade_count": 3,
+            "equity": 5000.0,
+            "can_day_trade": False,
+            "warning": "At 3/3 day trades in 5 days. One more would trigger PDT flag.",
+        }
+        
+        with patch.dict('os.environ', {'ENFORCE_PDT': 'true'}):
+            result = service._check_pdt_limits()
+        
+        assert result.get("blocked") is True
+        assert "reason" in result
+    
+    def test_pdt_check_respects_disabled_flag(self, service):
+        """PDT check should skip when ENFORCE_PDT=false."""
+        # Mock alpaca to return blocked status
+        service.alpaca.check_pdt_status = lambda: {
+            "is_pdt": False,
+            "daytrade_count": 5,
+            "equity": 1000.0,
+            "can_day_trade": False,
+            "warning": "PDT limit exceeded",
+        }
+        
+        with patch.dict('os.environ', {'ENFORCE_PDT': 'false'}):
+            result = service._check_pdt_limits()
+        
+        # Should NOT be blocked because enforcement is disabled
+        assert result.get("blocked") is False
+
+
+# ============================================================================
+# Risk Limits Tests
+# ============================================================================
+
+class TestRiskLimits:
+    """Tests for portfolio-wide risk limits."""
+    
+    @pytest.fixture
+    def service(self):
+        """Create a service instance for testing."""
+        from src.trading.automated_trading import AutomatedTradingService
+        
+        svc = AutomatedTradingService.__new__(AutomatedTradingService)
+        svc.cooldown_config = MockCooldownConfig()
+        svc.is_running = False
+        svc.alpaca = MockAlpaca()
+        return svc
+    
+    def test_risk_check_under_limits(self, service):
+        """Risk check should pass when under all limits."""
+        # Mock 5 positions, well under limit
+        service.alpaca = MockAlpaca(
+            positions=[
+                MockPosition(symbol="AAPL", market_value=5000),
+                MockPosition(symbol="MSFT", market_value=5000),
+            ],
+            account=MockAccount(portfolio_value=100000, equity=100000)
+        )
+        
+        result = service._check_risk_limits()
+        
+        assert result.get("can_add_position") is True
+        assert len(result.get("violations", [])) == 0
+    
+    def test_risk_check_max_positions_reached(self, service):
+        """Risk check should flag when max positions reached."""
+        # Create many positions
+        positions = [MockPosition(symbol=f"SYM{i}", market_value=2000) for i in range(20)]
+        service.alpaca = MockAlpaca(
+            positions=positions,
+            account=MockAccount(portfolio_value=100000, equity=100000)
+        )
+        
+        result = service._check_risk_limits()
+        
+        assert result.get("can_add_position") is False
+        assert any("positions" in v.lower() for v in result.get("violations", []))
+    
+    def test_risk_check_concentration_violation(self, service):
+        """Risk check should flag position concentration violations."""
+        # One position at 30% (above 20% limit)
+        service.alpaca = MockAlpaca(
+            positions=[
+                MockPosition(symbol="AAPL", market_value=30000),  # 30%
+                MockPosition(symbol="MSFT", market_value=5000),   # 5%
+            ],
+            account=MockAccount(portfolio_value=100000, equity=100000)
+        )
+        
+        result = service._check_risk_limits()
+        
+        violations = result.get("violations", [])
+        assert any("AAPL" in v and "exceeds" in v.lower() for v in violations)
+
+
+# ============================================================================
+# Position Sizing with Fractional Tests
+# ============================================================================
+
+class TestPositionSizingFractional:
+    """Tests for position sizing with fractional share support."""
+    
+    @pytest.fixture
+    def service(self):
+        """Create a service instance for testing."""
+        from src.trading.automated_trading import AutomatedTradingService
+        
+        svc = AutomatedTradingService.__new__(AutomatedTradingService)
+        svc.cooldown_config = MockCooldownConfig()
+        svc.is_running = False
+        svc.alpaca = MockAlpaca(account=MockAccount(
+            portfolio_value=10000,
+            buying_power=5000,
+            equity=10000,
+            cash=5000
+        ))
+        return svc
+    
+    def test_position_size_fractional_enabled(self, service):
+        """Position size should return fractional for fractionable asset."""
+        from src.trading.strategy_engine import TradingSignal, SignalDirection, SignalStrength
+        
+        signal = TradingSignal(
+            ticker="AAPL",
+            strategy="test",
+            direction=SignalDirection.LONG,
+            strength=SignalStrength.STRONG,
+            confidence=80,
+            entry_price=150.0,
+            stop_loss=145.0,
+            take_profit=165.0,
+            position_size_pct=0.05,
+            reasoning="Test",
+            fractionable=True
+        )
+        
+        with patch.dict('os.environ', {'ALLOW_FRACTIONAL': 'true'}):
+            size = service._calculate_position_size(signal, MockAccount(
+                portfolio_value=10000,
+                buying_power=10000,
+                equity=10000,
+                cash=10000
+            ))
+        
+        # 5% of $10k = $500, at $150/share = 3.33 shares
+        assert size > 0
+        # Should have fractional component
+        assert isinstance(size, float)
+    
+    def test_position_size_non_fractionable_rounds(self, service):
+        """Position size should round to whole shares for non-fractionable asset."""
+        from src.trading.strategy_engine import TradingSignal, SignalDirection, SignalStrength
+        
+        signal = TradingSignal(
+            ticker="BRK.A",
+            strategy="test",
+            direction=SignalDirection.LONG,
+            strength=SignalStrength.STRONG,
+            confidence=80,
+            entry_price=500000.0,  # Very expensive
+            stop_loss=490000.0,
+            take_profit=520000.0,
+            position_size_pct=0.05,
+            reasoning="Test",
+            fractionable=False  # Not fractionable
+        )
+        
+        with patch.dict('os.environ', {'ALLOW_FRACTIONAL': 'true'}):
+            size = service._calculate_position_size(signal, MockAccount(
+                portfolio_value=100000,
+                buying_power=100000,
+                equity=100000,
+                cash=100000
+            ))
+        
+        # Should be rounded to whole number (or 0 if can't afford)
+        assert size == int(size) or size == 0

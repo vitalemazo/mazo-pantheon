@@ -56,6 +56,37 @@ interface CallActivityData {
   }>;
 }
 
+// Trading guardrails data types
+interface GuardrailsData {
+  success: boolean;
+  pdt_status?: {
+    is_pdt: boolean;
+    daytrade_count: number;
+    equity: number;
+    can_day_trade: boolean;
+    warning?: string;
+    pdt_threshold: number;
+  };
+  risk_limits?: {
+    position_count: number;
+    max_positions: number;
+    positions_available: number;
+    max_concentration_pct: number;
+    max_position_pct: number;
+    status: string;
+  };
+  quote_health?: {
+    status: string;
+    message?: string;
+    last_check?: string;
+  };
+  config?: {
+    enforce_pdt: boolean;
+    use_intraday_data: boolean;
+    allow_fractional: boolean;
+  };
+}
+
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
 interface ServiceStatus {
@@ -306,6 +337,13 @@ export function SystemStatusPanel() {
     { refreshInterval: 15000 }
   );
   
+  // Fetch trading guardrails status
+  const { data: guardrailsData } = useSWR<GuardrailsData>(
+    `${API_BASE_URL}/monitoring/trading/guardrails`,
+    fetcher,
+    { refreshInterval: 30000 }
+  );
+  
   if (isLoading) {
     return (
       <Card>
@@ -442,6 +480,150 @@ export function SystemStatusPanel() {
             </div>
           </div>
         </div>
+        
+        {/* Trading Guardrails */}
+        {guardrailsData?.success && (
+          <div>
+            <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+              <AlertCircle className="h-4 w-4" />
+              Trading Guardrails
+              <InfoTooltip content="Real-time protection status: PDT limits, quote health, and risk controls" />
+            </h4>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {/* PDT Status */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className={`p-3 rounded-lg ${
+                    guardrailsData.pdt_status?.can_day_trade 
+                      ? 'bg-muted/50' 
+                      : 'bg-amber-50 border border-amber-200'
+                  }`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      {guardrailsData.pdt_status?.can_day_trade ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4 text-amber-500" />
+                      )}
+                      <span className="text-xs font-medium">PDT Status</span>
+                    </div>
+                    <div className="text-lg font-bold">
+                      {guardrailsData.pdt_status?.daytrade_count || 0}/3
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      day trades
+                    </div>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p className="font-medium">Pattern Day Trader Protection</p>
+                  <p className="text-xs mt-1">
+                    Equity: ${guardrailsData.pdt_status?.equity?.toLocaleString() || 0}
+                    {guardrailsData.pdt_status?.equity && guardrailsData.pdt_status.equity < 25000 && 
+                      " (< $25k threshold)"}
+                  </p>
+                  {guardrailsData.pdt_status?.warning && (
+                    <p className="text-xs text-amber-500 mt-1">{guardrailsData.pdt_status.warning}</p>
+                  )}
+                </TooltipContent>
+              </Tooltip>
+
+              {/* Quote Health */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className={`p-3 rounded-lg ${
+                    guardrailsData.quote_health?.status === 'healthy'
+                      ? 'bg-muted/50'
+                      : 'bg-amber-50 border border-amber-200'
+                  }`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      {guardrailsData.quote_health?.status === 'healthy' ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <AlertCircle className="h-4 w-4 text-amber-500" />
+                      )}
+                      <span className="text-xs font-medium">Quotes</span>
+                    </div>
+                    <div className="text-lg font-bold capitalize">
+                      {guardrailsData.quote_health?.status || 'Unknown'}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {guardrailsData.config?.use_intraday_data ? 'Live data' : 'Daily only'}
+                    </div>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="font-medium">Real-Time Quote API</p>
+                  <p className="text-xs mt-1">
+                    {guardrailsData.quote_health?.status === 'healthy' 
+                      ? 'Live quotes from Alpaca data API'
+                      : guardrailsData.quote_health?.message || 'Quote API may be unavailable'}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* Position Limit */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className={`p-3 rounded-lg ${
+                    guardrailsData.risk_limits?.status === 'healthy'
+                      ? 'bg-muted/50'
+                      : 'bg-amber-50 border border-amber-200'
+                  }`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      {guardrailsData.risk_limits?.status === 'healthy' ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <AlertCircle className="h-4 w-4 text-amber-500" />
+                      )}
+                      <span className="text-xs font-medium">Positions</span>
+                    </div>
+                    <div className="text-lg font-bold">
+                      {guardrailsData.risk_limits?.position_count || 0}/{guardrailsData.risk_limits?.max_positions || 20}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {guardrailsData.risk_limits?.positions_available || 0} slots free
+                    </div>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="font-medium">Position Limits</p>
+                  <p className="text-xs mt-1">
+                    Max {guardrailsData.risk_limits?.max_position_pct}% per position
+                  </p>
+                  <p className="text-xs">
+                    Highest concentration: {guardrailsData.risk_limits?.max_concentration_pct?.toFixed(1)}%
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* Fractional Status */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="p-3 rounded-lg bg-muted/50">
+                    <div className="flex items-center gap-2 mb-1">
+                      <CheckCircle2 className={`h-4 w-4 ${guardrailsData.config?.allow_fractional ? 'text-green-500' : 'text-muted-foreground'}`} />
+                      <span className="text-xs font-medium">Fractional</span>
+                    </div>
+                    <div className="text-lg font-bold">
+                      {guardrailsData.config?.allow_fractional ? 'On' : 'Off'}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      share trading
+                    </div>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="font-medium">Fractional Share Trading</p>
+                  <p className="text-xs mt-1">
+                    {guardrailsData.config?.allow_fractional 
+                      ? 'Enabled for supported assets'
+                      : 'Disabled - whole shares only'}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          </div>
+        )}
         
         {/* Rate Limits */}
         <div>
