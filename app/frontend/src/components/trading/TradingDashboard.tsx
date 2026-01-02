@@ -23,6 +23,7 @@ import {
   AlertCircle,
   Settings
 } from 'lucide-react';
+import { InfoTooltip, TOOLTIP_CONTENT } from '@/components/ui/info-tooltip';
 
 function formatCurrency(value: number): string {
   const sign = value >= 0 ? '' : '-';
@@ -128,6 +129,7 @@ export function TradingDashboard() {
                   <TrendingDown className="w-4 h-4 text-red-400" />
                 )}
                 Unrealized P&L
+                <InfoTooltip content={TOOLTIP_CONTENT.unrealizedPnL} />
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -152,6 +154,7 @@ export function TradingDashboard() {
               <CardDescription className="flex items-center gap-2 text-slate-400">
                 <Award className="w-4 h-4" />
                 Win Rate
+                <InfoTooltip content={TOOLTIP_CONTENT.winRate} />
               </CardDescription>
             </CardHeader>
             <CardContent>

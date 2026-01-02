@@ -31,6 +31,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { InfoTooltip, TOOLTIP_CONTENT } from '@/components/ui/info-tooltip';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
@@ -374,6 +375,7 @@ export function SystemStatusPanel() {
           <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
             <Gauge className="h-4 w-4" />
             Rate Limits
+            <InfoTooltip content={TOOLTIP_CONTENT.rateLimit} />
           </h4>
           <div className="space-y-3">
             {systemStatus?.rate_limits && Object.entries(systemStatus.rate_limits).map(([name, data]: [string, RateLimitData]) => (

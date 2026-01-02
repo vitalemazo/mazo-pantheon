@@ -48,8 +48,10 @@ import {
   Lock,
   Search,
   Telescope,
-  Settings
+  Settings,
+  HelpCircle
 } from 'lucide-react';
+import { InfoTooltip, TOOLTIP_CONTENT } from '@/components/ui/info-tooltip';
 
 // Map API agent names to roster IDs
 function normalizeAgentId(apiName: string): string {
@@ -471,8 +473,9 @@ export function AutonomousTradingHub() {
                       className="scale-150"
                     />
                     <div className="text-left">
-                      <div className="text-white font-semibold">
+                      <div className="text-white font-semibold flex items-center gap-2">
                         {isAutonomousEnabled ? 'Autonomous Mode ON' : 'Autonomous Mode OFF'}
+                        <InfoTooltip content={TOOLTIP_CONTENT.autonomousMode} side="bottom" />
                       </div>
                       <div className="text-sm text-slate-400">
                         {isAutonomousEnabled ? 'AI team is actively trading' : 'Click to enable'}
@@ -512,7 +515,10 @@ export function AutonomousTradingHub() {
                   </div>
                 </div>
                 <div>
-                  <div className="text-sm text-slate-400">Today's P&L</div>
+                  <div className="text-sm text-slate-400 flex items-center gap-1">
+                    Today's P&L
+                    <InfoTooltip content={TOOLTIP_CONTENT.unrealizedPnL} />
+                  </div>
                   <div className={`text-lg font-semibold ${(performance?.total_unrealized_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                     {formatCurrency(performance?.total_unrealized_pnl || 0)}
                   </div>
@@ -534,6 +540,7 @@ export function AutonomousTradingHub() {
               <CardTitle className="flex items-center gap-2 text-white">
                 <Target className="w-5 h-5 text-purple-400" />
                 AI Trading Budget
+                <InfoTooltip content={TOOLTIP_CONTENT.budgetAllocation} />
               </CardTitle>
               <CardDescription>
                 How much can the AI team use for trades?
@@ -711,7 +718,10 @@ export function AutonomousTradingHub() {
               
               {/* Pipeline Status */}
               <div className="p-4 rounded-lg bg-slate-700/30 border border-slate-600/50">
-                <div className="text-sm font-medium text-white mb-3">Trading Pipeline</div>
+                <div className="text-sm font-medium text-white mb-3 flex items-center gap-2">
+                  Trading Pipeline
+                  <InfoTooltip content={TOOLTIP_CONTENT.tradingPipeline} />
+                </div>
                 <div className="flex items-center justify-between text-xs">
                   {['Scan', 'Research', 'Analyze', 'Decide', 'Execute'].map((step, i) => (
                     <div key={step} className="flex items-center">
@@ -777,6 +787,7 @@ export function AutonomousTradingHub() {
               <CardTitle className="flex items-center gap-2 text-white">
                 <Activity className="w-5 h-5 text-yellow-400" />
                 Live Activity
+                <InfoTooltip content={TOOLTIP_CONTENT.liveActivity} />
               </CardTitle>
               <CardDescription>
                 Real-time AI team actions

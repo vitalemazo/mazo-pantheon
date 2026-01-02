@@ -31,6 +31,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { InfoTooltip, TOOLTIP_CONTENT } from '@/components/ui/info-tooltip';
 import useSWR from 'swr';
 import { API_BASE_URL } from '@/lib/api-config';
 
@@ -209,13 +210,29 @@ export function AgentPerformanceTable() {
                   <SortHeader column="total_signals" label="Signals" />
                 </TableHead>
                 <TableHead className="text-right">
-                  <SortHeader column="accuracy" label="Accuracy" />
+                  <div className="flex items-center justify-end gap-1">
+                    <SortHeader column="accuracy" label="Accuracy" />
+                    <InfoTooltip content={TOOLTIP_CONTENT.agentAccuracy} />
+                  </div>
                 </TableHead>
                 <TableHead className="text-right">
-                  <SortHeader column="avg_confidence" label="Confidence" />
+                  <div className="flex items-center justify-end gap-1">
+                    <SortHeader column="avg_confidence" label="Confidence" />
+                    <InfoTooltip content={TOOLTIP_CONTENT.agentConfidence} />
+                  </div>
                 </TableHead>
-                <TableHead className="text-center">Bias</TableHead>
-                <TableHead className="text-center">Last Signal</TableHead>
+                <TableHead className="text-center">
+                  <div className="flex items-center justify-center gap-1">
+                    Bias
+                    <InfoTooltip content="Agent's tendency toward bullish or bearish signals" />
+                  </div>
+                </TableHead>
+                <TableHead className="text-center">
+                  <div className="flex items-center justify-center gap-1">
+                    Last Signal
+                    <InfoTooltip content={TOOLTIP_CONTENT.staleData} />
+                  </div>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

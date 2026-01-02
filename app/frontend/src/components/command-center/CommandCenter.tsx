@@ -24,6 +24,7 @@ import {
   XCircle,
   BarChart3
 } from 'lucide-react';
+import { InfoTooltip, TOOLTIP_CONTENT } from '@/components/ui/info-tooltip';
 
 function formatCurrency(value: number): string {
   const sign = value >= 0 ? '' : '-';
@@ -596,7 +597,10 @@ export function CommandCenter() {
                           </div>
                           <div className="flex items-center gap-4">
                             <div className="text-right">
-                              <div className="text-sm text-slate-400">Accuracy</div>
+                              <div className="text-sm text-slate-400 flex items-center gap-1 justify-end">
+                                Accuracy
+                                <InfoTooltip content={TOOLTIP_CONTENT.agentAccuracy} />
+                              </div>
                               <div className={`text-lg font-bold ${
                                 (agent.accuracy_rate || 0) >= 60 ? 'text-emerald-400' :
                                 (agent.accuracy_rate || 0) >= 40 ? 'text-yellow-400' :

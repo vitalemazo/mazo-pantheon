@@ -18,6 +18,7 @@ import {
   Target,
   Zap
 } from 'lucide-react';
+import { InfoTooltip } from '@/components/ui/info-tooltip';
 
 function getGradeColor(grade: string): string {
   if (grade.startsWith('A')) return 'text-emerald-400';
@@ -373,6 +374,18 @@ export function PortfolioHealthView() {
                 <CardTitle className="flex items-center gap-2 text-white">
                   <CheckCircle className="w-5 h-5 text-purple-400" />
                   Mazo AI Analysis & Recommendations
+                  <InfoTooltip content={
+                    <div className="space-y-2">
+                      <p className="font-semibold">AI Portfolio Analysis</p>
+                      <p>Mazo analyzes your portfolio for:</p>
+                      <ul className="list-disc list-inside space-y-1 text-xs">
+                        <li>Diversification across sectors</li>
+                        <li>Risk concentration warnings</li>
+                        <li>Position sizing recommendations</li>
+                        <li>Correlation between holdings</li>
+                      </ul>
+                    </div>
+                  } />
                 </CardTitle>
                 <CardDescription>
                   Comprehensive portfolio health analysis with actionable recommendations
