@@ -226,11 +226,6 @@ export function TradingWorkspace() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            {lastRefresh && (
-              <span className="text-xs text-slate-500">
-                Updated: {lastRefresh.toLocaleTimeString()}
-              </span>
-            )}
             <Button 
               onClick={fetchData} 
               disabled={isRefreshing}
