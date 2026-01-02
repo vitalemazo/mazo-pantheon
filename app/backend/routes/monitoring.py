@@ -540,6 +540,43 @@ async def get_rate_limits():
         raise HTTPException(500, str(e))
 
 
+@router.get("/rate-limits/activity")
+async def get_rate_limit_activity(
+    window_minutes: int = Query(60, ge=1, le=1440, description="Time window in minutes"),
+    limit: int = Query(20, ge=1, le=100, description="Max recent events to return"),
+):
+    """
+    Get API call activity summary.
+    
+    Returns per-provider breakdown of call counts by type and recent events.
+    Useful for understanding API usage patterns and debugging surges.
+    
+    Response includes:
+    - Total calls in window
+    - Per-provider breakdown with call types
+    - Display strings like "Alpaca Trading – 62 calls (orders 40, account 12)"
+    - Recent call events for audit trail
+    """
+    try:
+        from src.monitoring import get_rate_limit_monitor
+        
+        monitor = get_rate_limit_monitor()
+        activity = monitor.get_call_activity(window_minutes=window_minutes)
+        
+        # Limit recent events if requested
+        if len(activity.get("recent_events", [])) > limit:
+            activity["recent_events"] = activity["recent_events"][:limit]
+        
+        return {
+            "success": True,
+            **activity,
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get rate limit activity: {e}")
+        raise HTTPException(500, str(e))
+
+
 # =============================================================================
 # PERFORMANCE METRICS ENDPOINTS
 # =============================================================================

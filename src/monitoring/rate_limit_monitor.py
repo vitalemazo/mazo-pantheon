@@ -9,20 +9,36 @@ Features:
 - Calculate utilization percentage
 - Alert when approaching limits
 - Persist tracking data to TimescaleDB
+- Track call activity by type with ring buffer history
 """
 
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from collections import deque, defaultdict
+from datetime import datetime, timezone, timedelta
 from threading import Lock
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List, Deque, Tuple
 from dataclasses import dataclass, field
 
 from .event_logger import get_event_logger
 from .alerting import get_alert_manager, AlertPriority, AlertCategory
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# CALL ACTIVITY TRACKING
+# =============================================================================
+
+@dataclass
+class CallEvent:
+    """A single API call event for activity tracking."""
+    api_name: str
+    call_type: str
+    timestamp: datetime
+    success: bool = True
+    latency_ms: Optional[int] = None
 
 
 @dataclass
@@ -61,9 +77,10 @@ class RateLimitMonitor:
             # Make call
             response = api.call()
             
-            # After API call
+            # After API call - now with call_type for activity tracking
             monitor.record_call(
                 "openai",
+                call_type="chat_completion",  # NEW: specific call type
                 success=True,
                 rate_limit_remaining=response.headers.get("x-ratelimit-remaining")
             )
@@ -80,12 +97,26 @@ class RateLimitMonitor:
         "alpaca_data": 200,  # Market Data API (separate endpoint)
     }
     
+    # Max events to keep in ring buffer (bounded memory)
+    MAX_CALL_HISTORY = 1000
+    
+    # Default activity window in minutes
+    DEFAULT_ACTIVITY_WINDOW_MINUTES = 60
+    
     def __init__(self):
         self.event_logger = get_event_logger()
         self.alert_manager = get_alert_manager()
         
         self._quotas: Dict[str, APIQuotaStatus] = {}
         self._lock = Lock()
+        
+        # Ring buffer for call events (bounded memory)
+        self._call_history: Deque[CallEvent] = deque(maxlen=self.MAX_CALL_HISTORY)
+        
+        # Precomputed counts per (api_name, call_type) for fast lookups
+        # These are rolling counts that get recalculated periodically
+        self._activity_counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        self._last_activity_recount: Optional[datetime] = None
         
         # Initialize known APIs
         for api_name, limit in self.DEFAULT_LIMITS.items():
@@ -98,32 +129,35 @@ class RateLimitMonitor:
     def record_call(
         self,
         api_name: str,
+        call_type: str = "general",
         success: bool = True,
         rate_limit_remaining: int = None,
         rate_limit_reset: datetime = None,
         latency_ms: int = None,
     ):
         """
-        Record an API call.
+        Record an API call with call type tracking.
         
         Args:
-            api_name: Name of the API
+            api_name: Name of the API (e.g., "alpaca", "openai_proxy")
+            call_type: Type of call (e.g., "orders", "account", "chat_completion")
             success: Whether the call succeeded
             rate_limit_remaining: Remaining quota from response headers
             rate_limit_reset: When quota resets from response headers
             latency_ms: Call latency in milliseconds
         """
+        now = datetime.now(timezone.utc)
+        
         with self._lock:
             if api_name not in self._quotas:
                 self._quotas[api_name] = APIQuotaStatus(
                     api_name=api_name,
-                    window_start=datetime.now(timezone.utc),
+                    window_start=now,
                 )
             
             quota = self._quotas[api_name]
             
             # Auto-reset window after 1 minute
-            now = datetime.now(timezone.utc)
             if quota.window_start:
                 elapsed = (now - quota.window_start).total_seconds()
                 if elapsed >= 60:  # 1 minute window
@@ -145,7 +179,20 @@ class RateLimitMonitor:
                 quota.consecutive_errors = 0
             else:
                 quota.consecutive_errors += 1
-                quota.last_error_at = datetime.now(timezone.utc)
+                quota.last_error_at = now
+            
+            # --- NEW: Track call event in ring buffer ---
+            event = CallEvent(
+                api_name=api_name,
+                call_type=call_type,
+                timestamp=now,
+                success=success,
+                latency_ms=latency_ms,
+            )
+            self._call_history.append(event)
+            
+            # Increment precomputed count
+            self._activity_counts[api_name][call_type] += 1
             
             # Check for alerts
             utilization = quota.utilization_pct
@@ -266,6 +313,137 @@ class RateLimitMonitor:
                 quota.window_start = datetime.now(timezone.utc)
                 quota.consecutive_errors = 0
                 logger.info(f"Reset rate limit window for {api_name}")
+    
+    def get_call_activity(
+        self,
+        window_minutes: int = None,
+    ) -> Dict[str, Any]:
+        """
+        Get call activity summary for the specified time window.
+        
+        This is the main method for the /monitoring/rate-limits/activity endpoint.
+        Returns per-provider breakdown of call counts by type.
+        
+        Args:
+            window_minutes: Time window in minutes (default: 60)
+            
+        Returns:
+            {
+                "window_minutes": 60,
+                "total_calls": 150,
+                "providers": {
+                    "alpaca": {
+                        "total": 62,
+                        "by_type": {"orders": 40, "account": 12, "positions": 10},
+                        "display": "Alpaca Trading – 62 calls (orders 40, account 12, positions 10)"
+                    },
+                    ...
+                },
+                "recent_events": [
+                    {"api": "alpaca", "type": "orders", "time": "14:32:15", "success": true},
+                    ...
+                ]
+            }
+        """
+        if window_minutes is None:
+            window_minutes = self.DEFAULT_ACTIVITY_WINDOW_MINUTES
+            
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(minutes=window_minutes)
+        
+        with self._lock:
+            # Filter events within window
+            events_in_window: List[CallEvent] = [
+                e for e in self._call_history
+                if e.timestamp >= cutoff
+            ]
+            
+            # Aggregate by provider and call type
+            providers: Dict[str, Dict[str, Any]] = {}
+            
+            for event in events_in_window:
+                api = event.api_name
+                if api not in providers:
+                    providers[api] = {
+                        "total": 0,
+                        "by_type": defaultdict(int),
+                        "errors": 0,
+                    }
+                
+                providers[api]["total"] += 1
+                providers[api]["by_type"][event.call_type] += 1
+                if not event.success:
+                    providers[api]["errors"] += 1
+            
+            # Build display strings
+            for api, data in providers.items():
+                by_type_str = ", ".join(
+                    f"{t} {c}" for t, c in sorted(data["by_type"].items(), key=lambda x: -x[1])
+                )
+                display_name = self._get_display_name(api)
+                data["display"] = f"{display_name} – {data['total']} calls ({by_type_str})"
+                # Convert defaultdict to regular dict for JSON
+                data["by_type"] = dict(data["by_type"])
+            
+            # Get recent events (last 20)
+            recent = sorted(events_in_window, key=lambda e: e.timestamp, reverse=True)[:20]
+            recent_events = [
+                {
+                    "api": e.api_name,
+                    "type": e.call_type,
+                    "time": e.timestamp.strftime("%H:%M:%S"),
+                    "timestamp": e.timestamp.isoformat(),
+                    "success": e.success,
+                    "latency_ms": e.latency_ms,
+                }
+                for e in recent
+            ]
+            
+            return {
+                "window_minutes": window_minutes,
+                "total_calls": len(events_in_window),
+                "providers": providers,
+                "recent_events": recent_events,
+            }
+    
+    def get_recent_events(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """
+        Get the most recent call events.
+        
+        Args:
+            limit: Maximum number of events to return
+            
+        Returns:
+            List of event dicts with api, type, time, success
+        """
+        with self._lock:
+            recent = list(self._call_history)[-limit:]
+            recent.reverse()  # Most recent first
+            
+            return [
+                {
+                    "api": e.api_name,
+                    "type": e.call_type,
+                    "time": e.timestamp.strftime("%H:%M:%S"),
+                    "timestamp": e.timestamp.isoformat(),
+                    "success": e.success,
+                    "latency_ms": e.latency_ms,
+                }
+                for e in recent
+            ]
+    
+    def _get_display_name(self, api_name: str) -> str:
+        """Get friendly display name for an API."""
+        display_names = {
+            "fmp_data": "FMP Ultimate",
+            "openai_proxy": "OpenAI Proxy",
+            "openai": "OpenAI Direct",
+            "anthropic": "Anthropic",
+            "alpaca": "Alpaca Trading",
+            "alpaca_data": "Alpaca Market Data",
+            "financial_datasets": "Financial Datasets",
+        }
+        return display_names.get(api_name, api_name.replace("_", " ").title())
 
 
 # =============================================================================

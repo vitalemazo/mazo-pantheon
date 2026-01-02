@@ -21,7 +21,10 @@ import {
   Database, 
   Server, 
   Cpu,
-  Gauge
+  Gauge,
+  ChevronDown,
+  ChevronUp,
+  Activity
 } from 'lucide-react';
 import useSWR from 'swr';
 import { API_BASE_URL } from '@/lib/api-config';
@@ -32,6 +35,26 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { InfoTooltip, TOOLTIP_CONTENT } from '@/components/ui/info-tooltip';
+
+// Activity data types
+interface CallActivityData {
+  window_minutes: number;
+  total_calls: number;
+  providers: Record<string, {
+    total: number;
+    by_type: Record<string, number>;
+    errors: number;
+    display: string;
+  }>;
+  recent_events: Array<{
+    api: string;
+    type: string;
+    time: string;
+    timestamp: string;
+    success: boolean;
+    latency_ms?: number;
+  }>;
+}
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
@@ -150,12 +173,19 @@ function RateLimitGauge({
   remaining,
   lastCallAt,
   isStale,
+  activityData,
 }: {
   name: string;
   utilization: number;
   remaining?: number;
   lastCallAt?: string;
   isStale?: boolean;
+  activityData?: {
+    total: number;
+    by_type: Record<string, number>;
+    errors: number;
+    display: string;
+  };
 }) {
   const getColor = (pct: number) => {
     if (pct >= 90) return 'bg-red-500';
@@ -177,6 +207,19 @@ function RateLimitGauge({
     };
     return displayNames[apiName] || apiName.replace(/_/g, ' ');
   };
+
+  // Build breakdown string for tooltip
+  const getBreakdownString = () => {
+    if (!activityData?.by_type || Object.keys(activityData.by_type).length === 0) {
+      return null;
+    }
+    const sorted = Object.entries(activityData.by_type)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4); // Top 4 call types
+    return sorted.map(([type, count]) => `${type}: ${count}`).join(', ');
+  };
+
+  const breakdown = getBreakdownString();
 
   return (
     <div className="space-y-1">
@@ -205,16 +248,39 @@ function RateLimitGauge({
           style={{ width: `${Math.min(utilization, 100)}%` }}
         />
       </div>
-      {remaining !== undefined && remaining !== null && (
-        <p className="text-xs text-muted-foreground">
-          {remaining.toLocaleString()} calls remaining
-        </p>
-      )}
+      <div className="flex justify-between text-xs text-muted-foreground">
+        {remaining !== undefined && remaining !== null ? (
+          <span>{remaining.toLocaleString()} remaining</span>
+        ) : (
+          <span />
+        )}
+        {activityData && activityData.total > 0 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-cyan-500 cursor-help">
+                {activityData.total} calls/hr
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="left" className="max-w-xs">
+              <p className="font-medium">{getDisplayName(name)}</p>
+              <p className="text-xs">{activityData.total} calls in last hour</p>
+              {breakdown && (
+                <p className="text-xs text-slate-400 mt-1">{breakdown}</p>
+              )}
+              {activityData.errors > 0 && (
+                <p className="text-xs text-red-400 mt-1">{activityData.errors} errors</p>
+              )}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
     </div>
   );
 }
 
 export function SystemStatusPanel() {
+  const [showActivityLog, setShowActivityLog] = React.useState(false);
+  
   const { data: systemStatus, error, isLoading } = useSWR(
     `${API_BASE_URL}/monitoring/system/status`,
     fetcher,
@@ -231,6 +297,13 @@ export function SystemStatusPanel() {
     `${API_BASE_URL}/monitoring/metrics/freshness`,
     fetcher,
     { refreshInterval: 30000 }
+  );
+  
+  // Fetch call activity data for the Rate Limits section
+  const { data: activityData } = useSWR<CallActivityData>(
+    `${API_BASE_URL}/monitoring/rate-limits/activity?window_minutes=60&limit=15`,
+    fetcher,
+    { refreshInterval: 15000 }
   );
   
   if (isLoading) {
@@ -372,11 +445,18 @@ export function SystemStatusPanel() {
         
         {/* Rate Limits */}
         <div>
-          <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
-            <Gauge className="h-4 w-4" />
-            Rate Limits
-            <InfoTooltip content={TOOLTIP_CONTENT.rateLimit} />
-          </h4>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-sm font-medium flex items-center gap-2">
+              <Gauge className="h-4 w-4" />
+              Rate Limits
+              <InfoTooltip content={TOOLTIP_CONTENT.rateLimit} />
+            </h4>
+            {activityData && activityData.total_calls > 0 && (
+              <span className="text-xs text-cyan-500">
+                {activityData.total_calls} calls/hr
+              </span>
+            )}
+          </div>
           <div className="space-y-3">
             {systemStatus?.rate_limits && Object.entries(systemStatus.rate_limits).map(([name, data]: [string, RateLimitData]) => (
               <RateLimitGauge 
@@ -386,6 +466,7 @@ export function SystemStatusPanel() {
                 remaining={data.calls_remaining}
                 lastCallAt={data.last_call_at}
                 isStale={data.is_stale}
+                activityData={activityData?.providers?.[name]}
               />
             ))}
             {(!systemStatus?.rate_limits || Object.keys(systemStatus.rate_limits).length === 0) && (
@@ -394,6 +475,55 @@ export function SystemStatusPanel() {
               </p>
             )}
           </div>
+          
+          {/* Collapsible Activity Log */}
+          {activityData?.recent_events && activityData.recent_events.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-border/50">
+              <button
+                onClick={() => setShowActivityLog(!showActivityLog)}
+                className="flex items-center justify-between w-full text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <span className="flex items-center gap-1">
+                  <Activity className="h-3 w-3" />
+                  Recent API Activity ({activityData.recent_events.length} events)
+                </span>
+                {showActivityLog ? (
+                  <ChevronUp className="h-3 w-3" />
+                ) : (
+                  <ChevronDown className="h-3 w-3" />
+                )}
+              </button>
+              
+              {showActivityLog && (
+                <div className="mt-2 max-h-40 overflow-y-auto space-y-1">
+                  {activityData.recent_events.map((event, idx) => (
+                    <div 
+                      key={idx}
+                      className={`flex items-center justify-between text-xs py-1 px-2 rounded ${
+                        event.success ? 'bg-muted/30' : 'bg-red-500/10'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        {event.success ? (
+                          <CheckCircle2 className="h-3 w-3 text-green-500" />
+                        ) : (
+                          <XCircle className="h-3 w-3 text-red-500" />
+                        )}
+                        <span className="font-medium">{event.api}</span>
+                        <span className="text-muted-foreground">→ {event.type}</span>
+                      </span>
+                      <span className="text-muted-foreground flex items-center gap-2">
+                        {event.latency_ms && (
+                          <span className="text-[10px]">{event.latency_ms}ms</span>
+                        )}
+                        {event.time}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         
         {/* Health Check Details */}
