@@ -41,6 +41,8 @@ class TaskType(Enum):
     WATCHLIST_MONITOR = "watchlist_monitor"
     AUTOMATED_TRADING = "automated_trading"  # Full AI pipeline
     POSITION_MONITOR = "position_monitor"  # Active stop-loss/take-profit enforcement
+    ACCURACY_BACKFILL = "accuracy_backfill"  # Sync agent accuracy from closed trades
+    TRADE_SYNC = "trade_sync"  # Sync trade status from Alpaca
 
 
 @dataclass
@@ -114,6 +116,8 @@ class TradingScheduler:
             TaskType.WATCHLIST_MONITOR: self._run_watchlist_monitor,
             TaskType.AUTOMATED_TRADING: self._run_automated_trading,
             TaskType.POSITION_MONITOR: self._run_position_monitor,
+            TaskType.ACCURACY_BACKFILL: self._run_accuracy_backfill,
+            TaskType.TRADE_SYNC: self._run_trade_sync,
         }
     
     def start(self) -> bool:
@@ -242,6 +246,24 @@ class TradingScheduler:
             }
         )
         jobs_added["ai_trading"] = job_id
+        
+        # Sync trade status from Alpaca (every 15 minutes during market hours)
+        job_id = self.add_interval_task(
+            task_type=TaskType.TRADE_SYNC,
+            name="Trade Status Sync",
+            minutes=15,
+            parameters={"during_market_hours": True}
+        )
+        jobs_added["trade_sync"] = job_id
+        
+        # Daily accuracy backfill (5:00 PM ET, after market close)
+        job_id = self.add_cron_task(
+            task_type=TaskType.ACCURACY_BACKFILL,
+            name="Agent Accuracy Backfill",
+            hour=17, minute=0,
+            parameters={"days": 30}
+        )
+        jobs_added["accuracy_backfill"] = job_id
         
         logger.info(f"Added {len(jobs_added)} default scheduled tasks")
         return jobs_added
@@ -700,6 +722,117 @@ class TradingScheduler:
             
         except Exception as e:
             logger.error(f"Automated trading failed: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def _run_accuracy_backfill(self, params: Dict) -> Dict:
+        """
+        Run agent accuracy backfill from closed trades.
+        
+        This updates:
+        - pm_decisions.was_profitable (from realized P&L)
+        - agent_signals.was_correct (bullish/bearish vs trade outcome)
+        """
+        from src.monitoring.accuracy_backfill import get_accuracy_backfill_service
+        
+        try:
+            service = get_accuracy_backfill_service()
+            days = params.get("days", 30)
+            
+            result = await service.backfill_from_closed_trades(days=days)
+            
+            return {
+                "status": "completed" if not result.errors else "partial",
+                "trades_processed": result.trades_processed,
+                "pm_decisions_updated": result.pm_decisions_updated,
+                "agent_signals_updated": result.agent_signals_updated,
+                "errors": result.errors,
+            }
+            
+        except Exception as e:
+            logger.error(f"Accuracy backfill failed: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def _run_trade_sync(self, params: Dict) -> Dict:
+        """
+        Sync trade status from Alpaca.
+        
+        Finds trades in trade_history that are still pending but the position
+        has been closed on Alpaca, and marks them as closed with realized P&L.
+        """
+        try:
+            from src.trading.trade_history_service import get_trade_history_service
+            from sqlalchemy import text
+            
+            trade_history = get_trade_history_service()
+            
+            # Get pending trades
+            pending_trades = trade_history.get_trade_history(status="pending", limit=100)
+            
+            if not pending_trades:
+                return {"status": "completed", "trades_synced": 0, "message": "No pending trades"}
+            
+            # Get current positions from Alpaca
+            positions = self.alpaca.get_positions()
+            position_tickers = {p.symbol for p in positions} if positions else set()
+            
+            synced = 0
+            errors = []
+            
+            for trade in pending_trades:
+                ticker = trade.get("ticker")
+                trade_id = trade.get("id")
+                
+                if not ticker or not trade_id:
+                    continue
+                
+                # If we have a pending trade but no position, it may have been closed
+                if ticker not in position_tickers:
+                    # Try to get the last closed order for this ticker
+                    try:
+                        # Get the entry price from the trade or use a placeholder
+                        entry_price = trade.get("entry_price")
+                        
+                        # Try to get current price for exit
+                        try:
+                            quote = self.alpaca.get_quote(ticker)
+                            exit_price = float(quote.last_price) if quote and quote.last_price else None
+                            if not exit_price:
+                                exit_price = float(quote.bid_price) if quote and quote.bid_price else None
+                        except Exception:
+                            exit_price = None
+                        
+                        if exit_price:
+                            # Calculate realized P&L if we have entry price
+                            realized_pnl = None
+                            if entry_price:
+                                action = trade.get("action", "").lower()
+                                qty = trade.get("quantity", 0)
+                                if action in ["buy", "cover"]:
+                                    realized_pnl = (exit_price - entry_price) * qty
+                                else:
+                                    realized_pnl = (entry_price - exit_price) * qty
+                            
+                            trade_history.close_trade(
+                                trade_id=trade_id,
+                                exit_price=exit_price,
+                                realized_pnl=realized_pnl,
+                                notes="Auto-synced: position no longer held"
+                            )
+                            synced += 1
+                            logger.info(f"✓ Synced trade {trade_id} ({ticker}) as closed")
+                    except Exception as e:
+                        errors.append(f"{ticker}: {str(e)}")
+            
+            return {
+                "status": "completed" if not errors else "partial",
+                "pending_trades": len(pending_trades),
+                "trades_synced": synced,
+                "current_positions": len(position_tickers),
+                "errors": errors[:5],  # Limit error list
+            }
+            
+        except Exception as e:
+            logger.error(f"Trade sync failed: {e}")
             return {"status": "error", "error": str(e)}
 
 

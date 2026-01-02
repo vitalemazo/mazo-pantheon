@@ -256,6 +256,41 @@ class PositionMonitor:
                     logger.info(f"✓ Auto-exit logged to monitoring: {ticker}")
                 except Exception as log_err:
                     logger.warning(f"Failed to log auto-exit: {log_err}")
+                
+                # Close the trade in trade_history to enable accuracy tracking
+                try:
+                    from src.trading.trade_history_service import get_trade_history_service
+                    trade_history = get_trade_history_service()
+                    
+                    # Find the matching open trade for this ticker
+                    open_trades = trade_history.get_trade_history(
+                        ticker=ticker, 
+                        status="pending",
+                        limit=1
+                    )
+                    
+                    if open_trades:
+                        trade_id = open_trades[0].get("id")
+                        if trade_id:
+                            # Calculate realized P&L from current price vs entry
+                            entry_price = open_trades[0].get("entry_price")
+                            if entry_price:
+                                if action == "sell":
+                                    realized_pnl = (current_price - entry_price) * qty
+                                else:  # cover
+                                    realized_pnl = (entry_price - current_price) * qty
+                            else:
+                                realized_pnl = None
+                            
+                            trade_history.close_trade(
+                                trade_id=trade_id,
+                                exit_price=current_price,
+                                realized_pnl=realized_pnl,
+                                notes=f"Auto-exit: {exit_type}"
+                            )
+                            logger.info(f"✓ Trade {trade_id} marked as closed in trade_history")
+                except Exception as close_err:
+                    logger.warning(f"Failed to close trade in history: {close_err}")
             else:
                 action_taken = "failed"
                 details = f"Exit failed: {result.error}"
