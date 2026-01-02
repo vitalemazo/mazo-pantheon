@@ -240,41 +240,139 @@ async def get_performance_summary(
 async def get_agent_performance(
     db: Session = Depends(get_db)
 ):
-    """Get performance metrics for all AI agents from agent_signals table."""
+    """
+    Get performance metrics for all AI agents.
+    
+    Merges data from two sources:
+    - agent_signals: Real-time signal counts, confidence averages
+    - agent_performance: Accuracy metrics computed from closed trades (via accuracy backfill)
+    
+    Agents that only appear in agent_signals will have accuracy fields set to null.
+    """
     try:
         from sqlalchemy import text
         from app.backend.database.connection import engine
         
-        # Query aggregated data from agent_signals table
-        query = """
-            SELECT 
-                agent_id,
-                COUNT(*) as total_signals,
-                AVG(confidence) as avg_confidence,
-                COUNT(CASE WHEN signal = 'bullish' THEN 1 END) as bullish_count,
-                COUNT(CASE WHEN signal = 'bearish' THEN 1 END) as bearish_count,
-                COUNT(CASE WHEN signal = 'neutral' OR signal = 'hold' THEN 1 END) as neutral_count,
-                MAX(timestamp) as last_signal
-            FROM agent_signals
-            GROUP BY agent_id
-            ORDER BY total_signals DESC
-        """
+        agents_data = {}
         
         with engine.connect() as conn:
-            result = conn.execute(text(query))
-            rows = result.fetchall()
+            # Query 1: Aggregate signal data from agent_signals (all signals ever logged)
+            signals_query = """
+                SELECT 
+                    agent_id,
+                    COUNT(*) as total_signals,
+                    AVG(confidence) as avg_confidence,
+                    COUNT(CASE WHEN LOWER(signal) = 'bullish' THEN 1 END) as bullish_count,
+                    COUNT(CASE WHEN LOWER(signal) = 'bearish' THEN 1 END) as bearish_count,
+                    COUNT(CASE WHEN LOWER(signal) IN ('neutral', 'hold') THEN 1 END) as neutral_count,
+                    COUNT(CASE WHEN was_correct = true THEN 1 END) as correct_count,
+                    COUNT(CASE WHEN was_correct = false THEN 1 END) as incorrect_count,
+                    AVG(actual_return) FILTER (WHERE actual_return IS NOT NULL) as avg_return,
+                    MAX(timestamp) as last_signal
+                FROM agent_signals
+                GROUP BY agent_id
+                ORDER BY total_signals DESC
+            """
+            
+            result = conn.execute(text(signals_query))
+            for row in result.fetchall():
+                agent_id = row[0]
+                correct = row[6] or 0
+                incorrect = row[7] or 0
+                
+                # Calculate accuracy from was_correct if available
+                accuracy = None
+                if correct + incorrect > 0:
+                    accuracy = round((correct / (correct + incorrect)) * 100, 2)
+                
+                agents_data[agent_id] = {
+                    "name": agent_id,
+                    "type": _get_agent_type(agent_id),
+                    "total_signals": row[1] or 0,
+                    "avg_confidence": round(float(row[2]), 2) if row[2] else None,
+                    "bullish_signals": row[3] or 0,
+                    "bearish_signals": row[4] or 0,
+                    "neutral_signals": row[5] or 0,
+                    "correct_predictions": correct,
+                    "incorrect_predictions": incorrect,
+                    "accuracy_rate": accuracy,
+                    "avg_return_when_followed": round(float(row[8]), 2) if row[8] else None,
+                    "last_signal": row[9].isoformat() if row[9] else None,
+                    "best_call": None,
+                    "worst_call": None,
+                }
+            
+            # Query 2: Get pre-computed accuracy metrics from agent_performance (if any exist)
+            # This table is populated by the accuracy backfill service
+            perf_query = """
+                SELECT 
+                    agent_name,
+                    agent_type,
+                    accuracy_rate,
+                    correct_predictions,
+                    incorrect_predictions,
+                    avg_return_when_followed,
+                    total_pnl_when_followed,
+                    best_call_ticker,
+                    best_call_return,
+                    worst_call_ticker,
+                    worst_call_return,
+                    last_accuracy_update
+                FROM agent_performance
+            """
+            
+            try:
+                result = conn.execute(text(perf_query))
+                for row in result.fetchall():
+                    agent_name = row[0]
+                    
+                    if agent_name in agents_data:
+                        # Merge: prefer agent_performance accuracy if available
+                        if row[2] is not None:
+                            agents_data[agent_name]["accuracy_rate"] = round(float(row[2]), 2)
+                        if row[3] is not None:
+                            agents_data[agent_name]["correct_predictions"] = row[3]
+                        if row[4] is not None:
+                            agents_data[agent_name]["incorrect_predictions"] = row[4]
+                        if row[5] is not None:
+                            agents_data[agent_name]["avg_return_when_followed"] = round(float(row[5]), 2)
+                        
+                        # Best/worst calls only if both ticker and return present
+                        if row[7] and row[8] is not None:
+                            agents_data[agent_name]["best_call"] = {
+                                "ticker": row[7],
+                                "return": round(float(row[8]), 2)
+                            }
+                        if row[9] and row[10] is not None:
+                            agents_data[agent_name]["worst_call"] = {
+                                "ticker": row[9],
+                                "return": round(float(row[10]), 2)
+                            }
+                    else:
+                        # Agent exists in performance table but not in signals
+                        agents_data[agent_name] = {
+                            "name": agent_name,
+                            "type": row[1] or _get_agent_type(agent_name),
+                            "total_signals": 0,
+                            "avg_confidence": None,
+                            "bullish_signals": 0,
+                            "bearish_signals": 0,
+                            "neutral_signals": 0,
+                            "correct_predictions": row[3] or 0,
+                            "incorrect_predictions": row[4] or 0,
+                            "accuracy_rate": round(float(row[2]), 2) if row[2] else None,
+                            "avg_return_when_followed": round(float(row[5]), 2) if row[5] else None,
+                            "last_signal": None,
+                            "best_call": {"ticker": row[7], "return": round(float(row[8]), 2)} if row[7] and row[8] is not None else None,
+                            "worst_call": {"ticker": row[9], "return": round(float(row[10]), 2)} if row[9] and row[10] is not None else None,
+                        }
+            except Exception as e:
+                # agent_performance table might not exist or be empty - that's OK
+                import logging
+                logging.debug(f"No agent_performance data: {e}")
         
-        agents = []
-        for row in rows:
-            agents.append({
-                "name": row[0],
-                "total_signals": row[1],
-                "avg_confidence": round(float(row[2]), 2) if row[2] else None,
-                "bullish_signals": row[3] or 0,
-                "bearish_signals": row[4] or 0,
-                "neutral_signals": row[5] or 0,
-                "last_signal": row[6].isoformat() if row[6] else None,
-            })
+        # Sort by total_signals descending
+        agents = sorted(agents_data.values(), key=lambda x: x["total_signals"], reverse=True)
         
         return {
             "success": True,
@@ -284,6 +382,41 @@ async def get_agent_performance(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _get_agent_type(agent_id: str) -> str:
+    """Map agent ID to human-readable type/style."""
+    type_map = {
+        "warren_buffett": "Value Investing",
+        "ben_graham": "Deep Value",
+        "charlie_munger": "Quality/Moats",
+        "peter_lynch": "GARP",
+        "cathie_wood": "Disruptive Innovation",
+        "michael_burry": "Contrarian",
+        "bill_ackman": "Activist Value",
+        "stanley_druckenmiller": "Macro/Momentum",
+        "aswath_damodaran": "Valuation Expert",
+        "mohnish_pabrai": "Dhandho Value",
+        "phil_fisher": "Scuttlebutt",
+        "rakesh_jhunjhunwala": "Bull Momentum",
+        "fundamentals": "Financial Analysis",
+        "technicals": "Technical Analysis",
+        "valuation": "DCF/Relative",
+        "growth": "Growth Analysis",
+        "sentiment": "Market Sentiment",
+        "news_sentiment": "News Analysis",
+        "risk_manager": "Risk Management",
+        "portfolio_manager": "Portfolio Decisions",
+    }
+    
+    # Normalize agent_id by removing common suffixes
+    normalized = agent_id.lower().replace("_agent", "").replace("_analyst", "")
+    
+    for key, value in type_map.items():
+        if key in normalized or normalized in key:
+            return value
+    
+    return "AI Analyst"
 
 
 @router.get("/agents/{agent_name}")
