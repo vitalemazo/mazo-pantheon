@@ -722,31 +722,150 @@ export function AutonomousTradingHub() {
                   Trading Pipeline
                   <InfoTooltip content={TOOLTIP_CONTENT.tradingPipeline} />
                 </div>
-                <div className="flex items-center justify-between text-xs">
-                  {['Scan', 'Research', 'Analyze', 'Decide', 'Execute'].map((step, i) => (
-                    <div key={step} className="flex items-center">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                        automatedStatus?.is_running
-                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50'
-                          : 'bg-slate-600/50 text-slate-500 border border-slate-500/50'
-                      }`}>
-                        {i + 1}
+                {(() => {
+                  // Map step names to pipeline stages
+                  const stepMapping: Record<string, number> = {
+                    'trading_cycle_start': 0,
+                    'capital_rotation': 0,
+                    'strategy_screening': 1,
+                    'mazo_validation': 2,
+                    'ai_analyst_pipeline': 3,
+                    'pm_decision': 4,
+                    'trade_execution': 5,
+                    'trading_cycle_complete': 5,
+                  };
+                  
+                  // Find the current step from latest workflow activity
+                  let currentStep = -1;
+                  let isComplete = false;
+                  let hasError = false;
+                  
+                  // Check automatedStatus first
+                  if (automatedStatus?.is_running) {
+                    currentStep = 0; // At least started
+                  }
+                  
+                  // Check live activities for more detail
+                  const workflowEvents = activities.filter(a => a.type === 'workflow');
+                  if (workflowEvents.length > 0) {
+                    const latestWorkflow = workflowEvents[0];
+                    const stepName = latestWorkflow.details?.step_name || latestWorkflow.message?.split(':')[0]?.toLowerCase().replace(/ /g, '_');
+                    
+                    if (stepName && stepMapping[stepName] !== undefined) {
+                      currentStep = stepMapping[stepName];
+                    }
+                    
+                    if (stepName === 'trading_cycle_complete' || latestWorkflow.status === 'complete') {
+                      isComplete = true;
+                      currentStep = 5;
+                    }
+                    if (stepName === 'trading_cycle_error' || latestWorkflow.status === 'error') {
+                      hasError = true;
+                    }
+                  }
+                  
+                  // Also check last_result for historical data
+                  if (automatedStatus?.last_result && currentStep === -1) {
+                    if (automatedStatus.last_result.trades_executed > 0) {
+                      currentStep = 5;
+                      isComplete = true;
+                    } else if (automatedStatus.last_result.trades_analyzed > 0) {
+                      currentStep = 4;
+                      isComplete = true;
+                    } else if (automatedStatus.last_result.mazo_validated > 0) {
+                      currentStep = 3;
+                      isComplete = true;
+                    } else if (automatedStatus.last_result.signals_found > 0) {
+                      currentStep = 2;
+                      isComplete = true;
+                    } else if (automatedStatus.last_result.tickers_screened > 0) {
+                      currentStep = 1;
+                      isComplete = true;
+                    }
+                  }
+                  
+                  const steps = [
+                    { name: 'Scan', label: 'Market', icon: Search },
+                    { name: 'Research', label: 'Mazo', icon: Telescope },
+                    { name: 'Analyze', label: 'Agents', icon: Brain },
+                    { name: 'Decide', label: 'PM', icon: Target },
+                    { name: 'Execute', label: 'Alpaca', icon: Zap },
+                  ];
+                  
+                  return (
+                    <>
+                      <div className="flex items-center justify-between text-xs">
+                        {steps.map((step, i) => {
+                          const StepIcon = step.icon;
+                          const isCompleted = currentStep > i || (isComplete && currentStep >= i);
+                          const isCurrent = currentStep === i && !isComplete;
+                          const isPending = currentStep < i;
+                          const isErrorStep = hasError && currentStep === i;
+                          
+                          let bgClass = 'bg-slate-600/50 text-slate-500 border border-slate-500/50';
+                          if (isErrorStep) {
+                            bgClass = 'bg-red-500/20 text-red-400 border border-red-500/50';
+                          } else if (isCompleted) {
+                            bgClass = 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50';
+                          } else if (isCurrent) {
+                            bgClass = 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 animate-pulse';
+                          }
+                          
+                          let connectorClass = 'text-slate-600';
+                          if (isCompleted && currentStep > i) {
+                            connectorClass = 'text-emerald-400/50';
+                          } else if (isCurrent) {
+                            connectorClass = 'text-cyan-400/50';
+                          }
+                          
+                          return (
+                            <div key={step.name} className="flex items-center">
+                              <div className="flex flex-col items-center">
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${bgClass} transition-all duration-300`}>
+                                  {isCompleted ? (
+                                    <CheckCircle className="w-5 h-5" />
+                                  ) : isErrorStep ? (
+                                    <AlertCircle className="w-5 h-5" />
+                                  ) : (
+                                    <StepIcon className="w-4 h-4" />
+                                  )}
+                                </div>
+                                <span className={`text-[10px] mt-1 ${isCompleted ? 'text-emerald-400' : isCurrent ? 'text-cyan-400' : 'text-slate-500'}`}>
+                                  {step.label}
+                                </span>
+                              </div>
+                              {i < 4 && (
+                                <div className={`w-8 h-0.5 mx-1 ${isCompleted && currentStep > i ? 'bg-emerald-500/50' : 'bg-slate-600/50'}`} />
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                      {i < 4 && (
-                        <ChevronRight className={`w-4 h-4 mx-1 ${
-                          automatedStatus?.is_running ? 'text-emerald-400/50' : 'text-slate-600'
-                        }`} />
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1">
-                  <span>Market</span>
-                  <span>Mazo</span>
-                  <span>Agents</span>
-                  <span>PM</span>
-                  <span>Alpaca</span>
-                </div>
+                      
+                      {/* Status message */}
+                      <div className="mt-3 text-center">
+                        {currentStep === -1 && (
+                          <span className="text-xs text-slate-500">No recent activity — Click "Run Cycle Now" to start</span>
+                        )}
+                        {currentStep >= 0 && !isComplete && !hasError && (
+                          <span className="text-xs text-cyan-400">
+                            {currentStep === 0 && '🔄 Starting cycle...'}
+                            {currentStep === 1 && '📊 Scanning markets...'}
+                            {currentStep === 2 && '🔬 Mazo researching...'}
+                            {currentStep === 3 && '🤖 Agents analyzing...'}
+                            {currentStep === 4 && '🎯 PM deciding...'}
+                          </span>
+                        )}
+                        {isComplete && !hasError && (
+                          <span className="text-xs text-emerald-400">✅ Cycle complete</span>
+                        )}
+                        {hasError && (
+                          <span className="text-xs text-red-400">❌ Cycle encountered an error</span>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
               
               {/* Last Run Stats */}
