@@ -103,11 +103,12 @@ def _estimate_cost(provider: str, model: str, prompt_tokens: int, completion_tok
     
     return 0.0
 
-# Get rate limiter with configurable settings
-# Reduce concurrent calls to prevent 429 errors with multiple agents
+# Get rate limiter with conservative settings to prevent 429 errors
+# These defaults are very conservative; adjust via environment variables if needed
 _rate_limiter = get_rate_limiter(
-    max_concurrent=int(os.getenv("LLM_MAX_CONCURRENT", "2")),  # Reduced from 3 to 2
-    requests_per_minute=int(os.getenv("LLM_REQUESTS_PER_MINUTE", "30")),  # Reduced from 60 to 30
+    max_concurrent=int(os.getenv("LLM_MAX_CONCURRENT", "1")),  # Single request at a time
+    requests_per_minute=int(os.getenv("LLM_REQUESTS_PER_MINUTE", "15")),  # ~4 seconds between requests
+    min_request_interval=float(os.getenv("LLM_MIN_REQUEST_INTERVAL", "2.0")),  # Minimum 2s gap
 )
 
 
