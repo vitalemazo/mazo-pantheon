@@ -811,7 +811,9 @@ export function AutonomousTradingHub() {
                       const hasRunning = events.some(e => e.status === 'running');
                       const isComplete = sorted.some(e => 
                         e.details?.step_name === 'workflow_complete' || 
-                        e.details?.status === 'completed'
+                        e.details?.step_name === 'trading_cycle_complete' ||
+                        e.details?.status === 'completed' ||
+                        e.status === 'complete'
                       );
                       
                       return {

@@ -307,8 +307,10 @@ class AutomatedTradingService:
         Returns:
             AutomatedTradeResult with full cycle details
         """
+        import uuid as uuid_module
         start_time = datetime.now()
         self.is_running = True
+        workflow_id = uuid_module.uuid4()
         
         signal_config = get_signal_config()
         min_conf = min_confidence or signal_config.min_signal_confidence
@@ -324,6 +326,20 @@ class AutomatedTradingService:
             total_execution_time_ms=0,
         )
         
+        # Log workflow start event
+        try:
+            from src.monitoring import get_event_logger
+            event_logger = get_event_logger()
+            event_logger.log_workflow_event(
+                workflow_id=workflow_id,
+                workflow_type="automated_trading",
+                step_name="trading_cycle_start",
+                status="started",
+                payload={"dry_run": dry_run, "execute_trades": execute_trades_flag}
+            )
+        except Exception as e:
+            logger.debug(f"Failed to log workflow start: {e}")
+        
         try:
             # Get tickers to screen
             if not tickers:
@@ -332,23 +348,40 @@ class AutomatedTradingService:
             result.tickers_screened = len(tickers)
             logger.info(f"🔍 Starting trading cycle - Screening {len(tickers)} tickers")
             
+            # Helper to log step events
+            def log_step(step_name: str, status: str, ticker: str = None, payload: dict = None):
+                try:
+                    from src.monitoring import get_event_logger
+                    get_event_logger().log_workflow_event(
+                        workflow_id=workflow_id,
+                        workflow_type="automated_trading",
+                        step_name=step_name,
+                        status=status,
+                        ticker=ticker,
+                        payload=payload
+                    )
+                except Exception:
+                    pass
+            
             # =============================================
             # STEP 0: Capital Management & Position Rotation
             # =============================================
-            # Industry standard: Free up capital by closing weak positions
-            # before looking for new opportunities
+            log_step("capital_rotation", "started")
             await self._manage_capital_rotation(result, execute_trades_flag, dry_run)
+            log_step("capital_rotation", "completed")
             
             # =============================================
             # STEP 1: Strategy Engine Quick Screening
             # =============================================
             logger.info("📊 Step 1: Strategy Engine Screening...")
+            log_step("strategy_screening", "started", payload={"ticker_count": len(tickers)})
             signals = await self._run_strategy_screening(tickers, min_conf)
             result.signals_found = len(signals)
+            log_step("strategy_screening", "completed", payload={"signals_found": len(signals)})
             
             if not signals:
                 logger.info("No signals found above confidence threshold")
-                self._finalize_result(result, start_time)
+                self._finalize_result(result, start_time, workflow_id=workflow_id)
                 return result
             
             logger.info(f"Found {len(signals)} signals above {min_conf}% confidence")
@@ -360,12 +393,14 @@ class AutomatedTradingService:
             # STEP 2: Mazo Validation
             # =============================================
             logger.info("🔬 Step 2: Mazo Validation...")
+            log_step("mazo_validation", "started", payload={"signals_to_validate": len(top_signals)})
             validated_signals = await self._run_mazo_validation(top_signals)
             result.mazo_validated = len(validated_signals)
+            log_step("mazo_validation", "completed", payload={"validated_count": len(validated_signals)})
             
             if not validated_signals:
                 logger.info("No signals validated by Mazo")
-                self._finalize_result(result, start_time)
+                self._finalize_result(result, start_time, workflow_id=workflow_id)
                 return result
             
             logger.info(f"Mazo validated {len(validated_signals)} signals")
@@ -374,6 +409,7 @@ class AutomatedTradingService:
             # STEP 3: Full AI Analyst Pipeline
             # =============================================
             logger.info("🧠 Step 3: AI Analyst Deep Analysis...")
+            log_step("ai_analyst_pipeline", "started", payload={"tickers_to_analyze": len(validated_signals)})
             
             # Get portfolio context for PM
             portfolio_context = build_portfolio_context()
@@ -465,24 +501,29 @@ class AutomatedTradingService:
             error_msg = f"Trading cycle failed: {str(e)}"
             logger.error(error_msg)
             result.errors.append(error_msg)
+            self._finalize_result(result, start_time, workflow_id=workflow_id, error_message=error_msg)
+            self.is_running = False
+            return result
             
         finally:
-            self._finalize_result(result, start_time)
-            self.is_running = False
+            # Only finalize if not already done (no errors)
+            if self.is_running:
+                self._finalize_result(result, start_time, workflow_id=workflow_id)
+                self.is_running = False
             
         return result
     
-    def _finalize_result(self, result: AutomatedTradeResult, start_time: datetime):
+    def _finalize_result(self, result: AutomatedTradeResult, start_time: datetime, workflow_id=None, error_message=None):
         """Finalize the result with timing and store in history."""
         result.total_execution_time_ms = (datetime.now() - start_time).total_seconds() * 1000
         self.last_run = datetime.now()
         self.last_result = result
         self.run_history.append(result)
-        
+
         # Keep last 50 runs
         if len(self.run_history) > 50:
             self.run_history = self.run_history[-50:]
-        
+
         logger.info(
             f"✅ Trading cycle complete: "
             f"{result.signals_found} signals → "
@@ -490,6 +531,30 @@ class AutomatedTradingService:
             f"{result.trades_executed} executed "
             f"({result.total_execution_time_ms:.0f}ms)"
         )
+        
+        # Log workflow completion event
+        if workflow_id:
+            try:
+                from src.monitoring import get_event_logger
+                event_logger = get_event_logger()
+                
+                status = "completed" if not error_message else "error"
+                event_logger.log_workflow_event(
+                    workflow_id=workflow_id,
+                    workflow_type="automated_trading",
+                    step_name="trading_cycle_complete",
+                    status=status,
+                    duration_ms=int(result.total_execution_time_ms),
+                    error_message=error_message,
+                    payload={
+                        "tickers_screened": result.tickers_screened,
+                        "signals_found": result.signals_found,
+                        "mazo_validated": result.mazo_validated,
+                        "trades_executed": result.trades_executed,
+                    }
+                )
+            except Exception as e:
+                logger.debug(f"Failed to log workflow completion: {e}")
     
     async def _manage_capital_rotation(
         self, 
