@@ -20,6 +20,8 @@ export interface TabData {
   title: string;
   flow?: Flow;
   metadata?: Record<string, any>;
+  /** For Round Table: auto-select this workflow ID */
+  workflowId?: string;
 }
 
 export class TabService {
@@ -69,7 +71,7 @@ export class TabService {
         return createElement(MonitoringDashboard);
       
       case 'round-table':
-        return createElement(RoundTable);
+        return createElement(RoundTable, { workflowId: tabData.workflowId });
       
       case 'control-tower':
         return createElement(ControlTower);
@@ -136,11 +138,12 @@ export class TabService {
     };
   }
 
-  static createRoundTableTab(): TabData & { content: ReactNode } {
+  static createRoundTableTab(workflowId?: string): TabData & { content: ReactNode } {
     return {
       type: 'round-table',
       title: 'Round Table',
-      content: TabService.createTabContent({ type: 'round-table', title: 'Round Table' }),
+      workflowId,
+      content: TabService.createTabContent({ type: 'round-table', title: 'Round Table', workflowId }),
     };
   }
 

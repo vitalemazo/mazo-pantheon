@@ -53,6 +53,9 @@ import {
 import { InfoTooltip, TOOLTIP_CONTENT, WithTooltip, getScheduleDescription } from '@/components/ui/info-tooltip';
 import { formatShares } from '@/lib/utils';
 import { ResearchTab } from '@/components/panels/bottom/tabs/research-tab';
+import { useTabsContext } from '@/contexts/tabs-context';
+import { TabService } from '@/services/tab-service';
+import { ExternalLink, Layers, Users, ChevronRight } from 'lucide-react';
 
 function formatCurrency(value: number): string {
   const sign = value >= 0 ? '' : '-';
@@ -96,14 +99,26 @@ function extractRiskLevel(analysis: string): string {
 }
 
 export function TradingWorkspace() {
+  const { openTab } = useTabsContext();
+
   // Use global hydrated data store (same as Control Tower)
   const {
     performance,
     metrics,
     scheduler,
     automatedStatus,
+    recentWorkflows,
     isRefreshing,
   } = useHydratedData();
+
+  // Open Round Table (optionally with a specific workflow ID)
+  const openRoundTable = (workflowId?: string) => {
+    const tabData = TabService.createRoundTableTab(workflowId);
+    openTab(tabData);
+  };
+
+  // Get latest workflow ID for CTAs
+  const latestWorkflowId = recentWorkflows?.[0]?.workflow_id || recentWorkflows?.[0]?.id;
 
   // Portfolio Health context (still separate - expensive Mazo call)
   const { 
@@ -472,6 +487,15 @@ export function TradingWorkspace() {
                 </CardTitle>
                 <CardDescription className="text-slate-300">
                   Strategy Engine → Mazo Validation → AI Analysts → Portfolio Manager → Execution
+                  {latestWorkflowId && (
+                    <Button 
+                      variant="link" 
+                      className="text-indigo-400 p-0 h-auto ml-2"
+                      onClick={() => openRoundTable(latestWorkflowId)}
+                    >
+                      View latest cycle in Round Table →
+                    </Button>
+                  )}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -515,6 +539,16 @@ export function TradingWorkspace() {
                         <Eye className="w-4 h-4 mr-2" />
                         Dry Run
                       </Button>
+                      {latestWorkflowId && (
+                        <Button
+                          variant="outline"
+                          onClick={() => openRoundTable(latestWorkflowId)}
+                          className="border-indigo-500/50 text-indigo-400 hover:bg-indigo-500/10"
+                        >
+                          <Layers className="w-4 h-4 mr-2" />
+                          Round Table
+                        </Button>
+                      )}
                     </div>
                     <p className="text-xs text-slate-400">
                       Full cycle: Screen → Validate → Analyze → Decide → Execute

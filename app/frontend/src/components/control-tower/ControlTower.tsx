@@ -278,11 +278,14 @@ export function ControlTower() {
     await dataHydrationService.backgroundRefresh();
   };
 
-  // Open Round Table
-  const openRoundTable = () => {
-    const tabData = TabService.createRoundTableTab();
+  // Open Round Table (optionally with a specific workflow ID)
+  const openRoundTable = (workflowId?: string) => {
+    const tabData = TabService.createRoundTableTab(workflowId);
     openTab(tabData);
   };
+
+  // Get latest workflow ID for CTAs
+  const latestWorkflowId = recentWorkflows?.[0]?.workflow_id || recentWorkflows?.[0]?.id;
 
   // Positions from performance data
   const positions = performance?.positions || [];
@@ -393,7 +396,7 @@ export function ControlTower() {
                   Dry Run
                 </Button>
                 <Button
-                  onClick={openRoundTable}
+                  onClick={() => openRoundTable(latestWorkflowId)}
                   variant="outline"
                   className="border-indigo-500/50 text-indigo-400 hover:bg-indigo-500/10"
                 >
@@ -801,8 +804,8 @@ export function ControlTower() {
                       {recentWorkflows.slice(0, 10).map((workflow: any) => (
                         <div 
                           key={workflow.id}
-                          className="flex items-center justify-between p-3 rounded-lg bg-slate-900/50 hover:bg-slate-900/70 transition-colors cursor-pointer"
-                          onClick={openRoundTable}
+                          className="flex items-center justify-between p-3 rounded-lg bg-slate-900/50 hover:bg-slate-900/70 transition-colors cursor-pointer group"
+                          onClick={() => openRoundTable(workflow.workflow_id || workflow.id)}
                         >
                           <div className="flex items-center gap-3">
                             <div className={`w-2 h-2 rounded-full ${
@@ -826,7 +829,10 @@ export function ControlTower() {
                                 {workflow.trades_executed} trades
                               </Badge>
                             )}
-                            <ChevronRight className="w-4 h-4 text-slate-500" />
+                            <span className="text-xs text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                              View in Round Table
+                            </span>
+                            <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-indigo-400" />
                           </div>
                         </div>
                       ))}
@@ -897,13 +903,15 @@ export function ControlTower() {
                   </CardTitle>
                   <CardDescription>
                     18 specialized analysts working together.{' '}
-                    <Button 
-                      variant="link" 
-                      className="text-indigo-400 p-0 h-auto"
-                      onClick={openRoundTable}
-                    >
-                      View detailed analysis in Round Table →
-                    </Button>
+                    {latestWorkflowId && (
+                      <Button 
+                        variant="link" 
+                        className="text-indigo-400 p-0 h-auto"
+                        onClick={() => openRoundTable(latestWorkflowId)}
+                      >
+                        View latest analysis in Round Table →
+                      </Button>
+                    )}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -914,12 +922,13 @@ export function ControlTower() {
                       Run an AI cycle to see agent signals and consensus
                     </p>
                     <Button 
-                      className="mt-4"
+                      className="mt-4 border-indigo-500/50 text-indigo-400 hover:bg-indigo-500/10"
                       variant="outline"
-                      onClick={openRoundTable}
+                      onClick={() => openRoundTable(latestWorkflowId)}
                     >
                       <Layers className="w-4 h-4 mr-2" />
                       Open Round Table
+                      <ExternalLink className="w-3 h-3 ml-2" />
                     </Button>
                   </div>
                 </CardContent>

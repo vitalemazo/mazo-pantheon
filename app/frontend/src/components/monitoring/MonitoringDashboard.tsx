@@ -31,7 +31,9 @@ import {
   Rocket, 
   Briefcase,
   Info,
-  ExternalLink
+  ExternalLink,
+  Layers,
+  Users
 } from 'lucide-react';
 import useSWR, { useSWRConfig } from 'swr';
 
@@ -89,6 +91,11 @@ export function MonitoringDashboard() {
 
   const openTradingWorkspace = () => {
     const tabData = TabService.createTradingWorkspaceTab();
+    openTab(tabData);
+  };
+
+  const openRoundTable = () => {
+    const tabData = TabService.createRoundTableTab();
     openTab(tabData);
   };
   
@@ -260,6 +267,16 @@ export function MonitoringDashboard() {
                   >
                     <Briefcase className="w-4 h-4 mr-1" />
                     Trading Workspace
+                    <ExternalLink className="w-3 h-3 ml-1" />
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={openRoundTable}
+                    className="border-purple-500/50 text-purple-400 hover:bg-purple-500/10"
+                  >
+                    <Layers className="w-4 h-4 mr-1" />
+                    Round Table
                     <ExternalLink className="w-3 h-3 ml-1" />
                   </Button>
                 </div>

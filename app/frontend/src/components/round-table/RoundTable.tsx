@@ -450,9 +450,22 @@ function AgentTable({ agents }: { agents: AgentSignal[] }) {
   );
 }
 
+// Props interface
+interface RoundTableProps {
+  /** Optional workflow ID to auto-select on mount */
+  workflowId?: string;
+}
+
 // Main Component
-export function RoundTable() {
-  const [selectedWorkflow, setSelectedWorkflow] = useState<string | null>(null);
+export function RoundTable({ workflowId: initialWorkflowId }: RoundTableProps = {}) {
+  const [selectedWorkflow, setSelectedWorkflow] = useState<string | null>(initialWorkflowId || null);
+  
+  // Update selected workflow if prop changes (e.g., re-opened from CTA)
+  React.useEffect(() => {
+    if (initialWorkflowId && initialWorkflowId !== selectedWorkflow) {
+      setSelectedWorkflow(initialWorkflowId);
+    }
+  }, [initialWorkflowId]);
 
   // Fetch round table data
   const { data, error, isLoading, mutate } = useSWR<RoundTableData>(
