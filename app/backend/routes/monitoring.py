@@ -577,6 +577,44 @@ async def get_rate_limit_activity(
         raise HTTPException(500, str(e))
 
 
+@router.post("/rate-limits/test-call")
+async def test_rate_limit_call(
+    api_name: str = Query("openai_proxy", description="API name to simulate"),
+    call_type: str = Query("chat_completion", description="Call type"),
+    count: int = Query(1, ge=1, le=10, description="Number of test calls to record"),
+):
+    """
+    Record test API calls for rate limit monitoring verification.
+    
+    This endpoint simulates API calls being recorded without actually
+    making real API calls. Useful for testing the activity dashboard.
+    """
+    try:
+        from src.monitoring import get_rate_limit_monitor
+        import random
+        
+        monitor = get_rate_limit_monitor()
+        
+        for i in range(count):
+            # Simulate realistic latency
+            latency = random.randint(100, 500)
+            monitor.record_call(
+                api_name=api_name,
+                call_type=call_type,
+                success=True,
+                latency_ms=latency,
+            )
+        
+        return {
+            "success": True,
+            "message": f"Recorded {count} test call(s) to {api_name}/{call_type}",
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to record test call: {e}")
+        raise HTTPException(500, str(e))
+
+
 # =============================================================================
 # PERFORMANCE METRICS ENDPOINTS
 # =============================================================================
