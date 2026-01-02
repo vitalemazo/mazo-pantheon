@@ -1,11 +1,20 @@
 /**
  * MonitoringDashboard
  * 
- * Main monitoring dashboard with tabs for different views:
- * - Overview: Key metrics and system status
- * - Alerts: Active and historical alerts
- * - Performance: P&L charts and agent performance
- * - Trades: Trade journal with decision chain
+ * Infrastructure-focused monitoring dashboard.
+ * Answers "is the system healthy?" rather than duplicating trading UI.
+ * 
+ * What belongs here:
+ * - System status (services, scheduler, database)
+ * - Rate limits and API health
+ * - Trading guardrails (PDT, position limits)
+ * - Alerts feed
+ * - Execution quality metrics (latency, fill rate, slippage)
+ * 
+ * What moved elsewhere:
+ * - Trading data → Control Tower / Trading Workspace
+ * - Agent leaderboards → Round Table
+ * - Trade journal → Trading Workspace
  */
 
 import React, { useState, useCallback } from 'react';
@@ -13,25 +22,37 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, AlertTriangle, Activity, TrendingUp, History, Loader2 } from 'lucide-react';
+import { 
+  RefreshCw, 
+  AlertTriangle, 
+  Activity, 
+  Gauge, 
+  Loader2, 
+  Rocket, 
+  Briefcase,
+  Info,
+  ExternalLink
+} from 'lucide-react';
 import useSWR, { useSWRConfig } from 'swr';
 
 import { SystemStatusPanel } from './SystemStatusPanel';
 import { AlertFeed } from './AlertFeed';
 import { PerformanceMetrics } from './PerformanceMetrics';
-import { AgentPerformanceTable } from './AgentPerformanceTable';
-import { TradeJournal } from './TradeJournal';
 import { API_BASE_URL } from '@/lib/api-config';
 import { useToastManager } from '@/hooks/use-toast-manager';
-import { InfoTooltip, TOOLTIP_CONTENT, WithTooltip } from '@/components/ui/info-tooltip';
+import { WithTooltip, TOOLTIP_CONTENT } from '@/components/ui/info-tooltip';
+import { useTabsContext } from '@/contexts/tabs-context';
+import { TabService } from '@/services/tab-service';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
 export function MonitoringDashboard() {
   const [activeTab, setActiveTab] = useState('overview');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showInfoBanner, setShowInfoBanner] = useState(true);
   const { mutate } = useSWRConfig();
   const { success: toastSuccess } = useToastManager();
+  const { openTab } = useTabsContext();
   
   // Fetch alerts for badge count
   const { data: alerts } = useSWR(
@@ -47,15 +68,8 @@ export function MonitoringDashboard() {
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      // Revalidate all SWR caches that match monitoring endpoints
       await mutate(
         (key) => typeof key === 'string' && key.includes('/monitoring/'),
-        undefined,
-        { revalidate: true }
-      );
-      // Also revalidate trading endpoints used by this dashboard
-      await mutate(
-        (key) => typeof key === 'string' && key.includes('/trading/'),
         undefined,
         { revalidate: true }
       );
@@ -66,15 +80,69 @@ export function MonitoringDashboard() {
       setIsRefreshing(false);
     }
   }, [mutate, toastSuccess]);
+
+  // Navigation handlers
+  const openControlTower = () => {
+    const tabData = TabService.createControlTowerTab();
+    openTab(tabData);
+  };
+
+  const openTradingWorkspace = () => {
+    const tabData = TabService.createTradingWorkspaceTab();
+    openTab(tabData);
+  };
   
   return (
-    <div className="h-full overflow-auto p-4 space-y-4">
+    <div className="h-full overflow-auto p-4 space-y-4 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+      {/* Info Banner */}
+      {showInfoBanner && (
+        <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Info className="w-5 h-5 text-slate-400" />
+            <div>
+              <span className="text-slate-300 font-medium">Monitoring = Infrastructure</span>
+              <span className="text-slate-400 ml-2">
+                System health, rate limits, and alerts. Trading data moved to Control Tower & Trading Workspace.
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={openControlTower}
+              className="text-indigo-400 hover:text-indigo-300"
+            >
+              <Rocket className="w-4 h-4 mr-1" />
+              Control Tower
+            </Button>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={openTradingWorkspace}
+              className="text-emerald-400 hover:text-emerald-300"
+            >
+              <Briefcase className="w-4 h-4 mr-1" />
+              Trading Workspace
+            </Button>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={() => setShowInfoBanner(false)}
+              className="text-slate-500"
+            >
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold">Monitoring Dashboard</h2>
-          <p className="text-muted-foreground">
-            System health, alerts, and performance metrics
+          <h2 className="text-2xl font-bold text-white">Monitoring Dashboard</h2>
+          <p className="text-slate-400">
+            System health • Rate limits • Alerts • Execution quality
           </p>
         </div>
         <WithTooltip content={TOOLTIP_CONTENT.refreshButton}>
@@ -83,6 +151,7 @@ export function MonitoringDashboard() {
             size="sm" 
             onClick={handleRefresh}
             disabled={isRefreshing}
+            className="border-slate-600"
           >
             {isRefreshing ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -96,10 +165,10 @@ export function MonitoringDashboard() {
       
       {/* P0 Alert Banner */}
       {hasP0 && (
-        <Card className="border-red-500 bg-red-50 dark:bg-red-950">
+        <Card className="border-red-500 bg-red-500/10">
           <CardContent className="py-3 flex items-center gap-3">
             <AlertTriangle className="h-5 w-5 text-red-500" />
-            <span className="font-medium text-red-700 dark:text-red-300">
+            <span className="font-medium text-red-400">
               Critical alert(s) require immediate attention
             </span>
             <Button 
@@ -114,17 +183,17 @@ export function MonitoringDashboard() {
         </Card>
       )}
       
-      {/* Main Tabs */}
+      {/* Main Tabs - Simplified to 2 tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
-          <WithTooltip content={TOOLTIP_CONTENT.monitoringOverview}>
-            <TabsTrigger value="overview" className="gap-2">
+        <TabsList className="bg-slate-800 border border-slate-700">
+          <WithTooltip content="System health, services, rate limits, and guardrails">
+            <TabsTrigger value="overview" className="gap-2 data-[state=active]:bg-slate-700">
               <Activity className="h-4 w-4" />
-              Overview
+              System Status
             </TabsTrigger>
           </WithTooltip>
-          <WithTooltip content={TOOLTIP_CONTENT.alertsTab}>
-            <TabsTrigger value="alerts" className="gap-2">
+          <WithTooltip content="Active and historical system alerts">
+            <TabsTrigger value="alerts" className="gap-2 data-[state=active]:bg-slate-700">
               <AlertTriangle className="h-4 w-4" />
               Alerts
               {activeAlertCount > 0 && (
@@ -137,27 +206,20 @@ export function MonitoringDashboard() {
               )}
             </TabsTrigger>
           </WithTooltip>
-          <WithTooltip content={TOOLTIP_CONTENT.performanceTab}>
-            <TabsTrigger value="performance" className="gap-2">
-              <TrendingUp className="h-4 w-4" />
-              Performance
-            </TabsTrigger>
-          </WithTooltip>
-          <WithTooltip content={TOOLTIP_CONTENT.tradeJournalTab}>
-            <TabsTrigger value="trades" className="gap-2">
-              <History className="h-4 w-4" />
-              Trade Journal
+          <WithTooltip content="Pipeline latency, fill rates, and Mazo effectiveness">
+            <TabsTrigger value="metrics" className="gap-2 data-[state=active]:bg-slate-700">
+              <Gauge className="h-4 w-4" />
+              Execution Quality
             </TabsTrigger>
           </WithTooltip>
         </TabsList>
         
-        {/* Overview Tab */}
+        {/* System Status Tab */}
         <TabsContent value="overview" className="space-y-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <SystemStatusPanel />
             <AlertFeed limit={5} compact />
           </div>
-          <PerformanceMetrics />
         </TabsContent>
         
         {/* Alerts Tab */}
@@ -165,15 +227,45 @@ export function MonitoringDashboard() {
           <AlertFeed />
         </TabsContent>
         
-        {/* Performance Tab */}
-        <TabsContent value="performance" className="space-y-4">
+        {/* Execution Quality Tab */}
+        <TabsContent value="metrics" className="space-y-4">
           <PerformanceMetrics showCharts />
-          <AgentPerformanceTable />
-        </TabsContent>
-        
-        {/* Trade Journal Tab */}
-        <TabsContent value="trades">
-          <TradeJournal />
+          
+          {/* CTA to trading pages */}
+          <Card className="bg-slate-800/30 border-slate-700">
+            <CardContent className="py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Info className="w-5 h-5 text-slate-400" />
+                  <span className="text-slate-400">
+                    Looking for trading data, positions, or agent performance?
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={openControlTower}
+                    className="border-indigo-500/50 text-indigo-400 hover:bg-indigo-500/10"
+                  >
+                    <Rocket className="w-4 h-4 mr-1" />
+                    Control Tower
+                    <ExternalLink className="w-3 h-3 ml-1" />
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={openTradingWorkspace}
+                    className="border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10"
+                  >
+                    <Briefcase className="w-4 h-4 mr-1" />
+                    Trading Workspace
+                    <ExternalLink className="w-3 h-3 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
