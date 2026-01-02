@@ -4,7 +4,7 @@
  * Displays active alerts with priority color-coding and actions.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,11 +15,13 @@ import {
   Check, 
   CheckCheck,
   Clock,
-  XCircle
+  XCircle,
+  Loader2
 } from 'lucide-react';
-import useSWR, { mutate } from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import { formatDistanceToNow } from 'date-fns';
 import { API_BASE_URL } from '@/lib/api-config';
+import { useToastManager } from '@/hooks/use-toast-manager';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
@@ -68,14 +70,17 @@ function AlertItem({
   compact,
   onAcknowledge,
   onResolve,
+  isLoading,
 }: { 
   alert: Alert; 
   compact?: boolean;
-  onAcknowledge: (id: string) => void;
-  onResolve: (id: string) => void;
+  onAcknowledge: (id: string) => Promise<void>;
+  onResolve: (id: string) => Promise<void>;
+  isLoading?: { [key: string]: 'ack' | 'resolve' | null };
 }) {
   const styles = getPriorityStyles(alert.priority);
   const timeAgo = formatDistanceToNow(new Date(alert.timestamp), { addSuffix: true });
+  const loadingState = isLoading?.[alert.id];
   
   return (
     <div className={`p-3 bg-card rounded-lg ${styles.border} ${alert.acknowledged ? 'opacity-60' : ''}`}>
@@ -115,16 +120,28 @@ function AlertItem({
                 variant="outline" 
                 size="sm"
                 onClick={() => onAcknowledge(alert.id)}
+                disabled={!!loadingState}
+                title="Acknowledge alert"
               >
-                <Check className="h-3 w-3" />
+                {loadingState === 'ack' ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Check className="h-3 w-3" />
+                )}
               </Button>
             )}
             <Button 
               variant="outline" 
               size="sm"
               onClick={() => onResolve(alert.id)}
+              disabled={!!loadingState}
+              title="Resolve alert"
             >
-              <CheckCheck className="h-3 w-3" />
+              {loadingState === 'resolve' ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <CheckCheck className="h-3 w-3" />
+              )}
             </Button>
           </div>
         )}
@@ -133,32 +150,84 @@ function AlertItem({
   );
 }
 
+// SWR key pattern for alerts - used for cache invalidation
+const ALERTS_KEY_PREFIX = `${API_BASE_URL}/monitoring/alerts?resolved=false`;
+
 export function AlertFeed({ limit = 50, compact = false }: AlertFeedProps) {
+  const { mutate } = useSWRConfig();
+  const { success: toastSuccess, error: toastError } = useToastManager();
+  const [loadingStates, setLoadingStates] = useState<{ [key: string]: 'ack' | 'resolve' | null }>({});
+  
   const { data: alerts, error, isLoading } = useSWR<Alert[]>(
-    `${API_BASE_URL}/monitoring/alerts?resolved=false&limit=${limit}`,
+    `${ALERTS_KEY_PREFIX}&limit=${limit}`,
     fetcher,
     { refreshInterval: 10000 }
   );
   
+  // Invalidate all alert-related SWR caches
+  const invalidateAlertCaches = async () => {
+    // Mutate all possible alert cache keys to ensure all components update
+    await Promise.all([
+      mutate(`${ALERTS_KEY_PREFIX}&limit=5`),
+      mutate(`${ALERTS_KEY_PREFIX}&limit=10`),
+      mutate(`${ALERTS_KEY_PREFIX}&limit=50`),
+      mutate(`${ALERTS_KEY_PREFIX}&limit=100`),
+      // Also invalidate any key that starts with this prefix
+      mutate(
+        (key) => typeof key === 'string' && key.startsWith(ALERTS_KEY_PREFIX),
+        undefined,
+        { revalidate: true }
+      ),
+    ]);
+  };
+  
   const handleAcknowledge = async (alertId: string) => {
+    setLoadingStates(prev => ({ ...prev, [alertId]: 'ack' }));
+    
     try {
-      await fetch(`${API_BASE_URL}/monitoring/alerts/${alertId}/acknowledge`, {
+      const response = await fetch(`${API_BASE_URL}/monitoring/alerts/${alertId}/acknowledge`, {
         method: 'POST',
       });
-      mutate(`${API_BASE_URL}/monitoring/alerts?resolved=false&limit=${limit}`);
-    } catch (error) {
-      console.error('Failed to acknowledge alert:', error);
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || `HTTP ${response.status}`);
+      }
+      
+      toastSuccess("Alert acknowledged", `ack-${alertId}`);
+      
+      await invalidateAlertCaches();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to acknowledge alert';
+      console.error('Failed to acknowledge alert:', err);
+      toastError(`Failed to acknowledge: ${message}`, `ack-error-${alertId}`);
+    } finally {
+      setLoadingStates(prev => ({ ...prev, [alertId]: null }));
     }
   };
   
   const handleResolve = async (alertId: string) => {
+    setLoadingStates(prev => ({ ...prev, [alertId]: 'resolve' }));
+    
     try {
-      await fetch(`${API_BASE_URL}/monitoring/alerts/${alertId}/resolve`, {
+      const response = await fetch(`${API_BASE_URL}/monitoring/alerts/${alertId}/resolve`, {
         method: 'POST',
       });
-      mutate(`${API_BASE_URL}/monitoring/alerts?resolved=false&limit=${limit}`);
-    } catch (error) {
-      console.error('Failed to resolve alert:', error);
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || `HTTP ${response.status}`);
+      }
+      
+      toastSuccess("Alert resolved", `resolve-${alertId}`);
+      
+      await invalidateAlertCaches();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to resolve alert';
+      console.error('Failed to resolve alert:', err);
+      toastError(`Failed to resolve: ${message}`, `resolve-error-${alertId}`);
+    } finally {
+      setLoadingStates(prev => ({ ...prev, [alertId]: null }));
     }
   };
   
@@ -237,6 +306,7 @@ export function AlertFeed({ limit = 50, compact = false }: AlertFeedProps) {
                   compact={compact}
                   onAcknowledge={handleAcknowledge}
                   onResolve={handleResolve}
+                  isLoading={loadingStates}
                 />
               ))}
             </div>

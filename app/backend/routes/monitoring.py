@@ -145,13 +145,44 @@ async def get_alerts(
 async def acknowledge_alert(alert_id: str):
     """Acknowledge an alert."""
     try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
         from src.monitoring import get_alert_manager
-        
+        from datetime import datetime, timezone
+
+        # Update in database
+        import uuid as uuid_module
+        try:
+            alert_uuid = uuid_module.UUID(alert_id)
+        except ValueError:
+            raise HTTPException(400, f"Invalid alert ID format: {alert_id}")
+            
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("""
+                    UPDATE alerts 
+                    SET acknowledged = true, 
+                        acknowledged_at = :acknowledged_at,
+                        acknowledged_by = 'api'
+                    WHERE id = :alert_id
+                    RETURNING id
+                """),
+                {"alert_id": str(alert_uuid), "acknowledged_at": datetime.now(timezone.utc)}
+            )
+            row = result.fetchone()  # Must fetch before commit in SQLAlchemy 2.0
+            conn.commit()
+            
+            if row is None:
+                raise HTTPException(404, f"Alert {alert_id} not found")
+
+        # Also update in-memory alert manager
         alert_manager = get_alert_manager()
         alert_manager.acknowledge_alert(alert_id, acknowledged_by="api")
-        
+
         return {"status": "acknowledged", "alert_id": alert_id}
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to acknowledge alert: {e}")
         raise HTTPException(500, str(e))
@@ -161,13 +192,48 @@ async def acknowledge_alert(alert_id: str):
 async def resolve_alert(alert_id: str, resolution_notes: Optional[str] = None):
     """Resolve an alert."""
     try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
         from src.monitoring import get_alert_manager
+        from datetime import datetime, timezone
         
+        # Update in database
+        import uuid as uuid_module
+        try:
+            alert_uuid = uuid_module.UUID(alert_id)
+        except ValueError:
+            raise HTTPException(400, f"Invalid alert ID format: {alert_id}")
+            
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("""
+                    UPDATE alerts 
+                    SET resolved = true, 
+                        resolved_at = :resolved_at,
+                        resolution_notes = :resolution_notes
+                    WHERE id = :alert_id
+                    RETURNING id
+                """),
+                {
+                    "alert_id": str(alert_uuid), 
+                    "resolved_at": datetime.now(timezone.utc),
+                    "resolution_notes": resolution_notes
+                }
+            )
+            row = result.fetchone()  # Must fetch before commit in SQLAlchemy 2.0
+            conn.commit()
+            
+            if row is None:
+                raise HTTPException(404, f"Alert {alert_id} not found")
+        
+        # Also update in-memory alert manager
         alert_manager = get_alert_manager()
         alert_manager.resolve_alert(alert_id, resolution_notes=resolution_notes)
         
         return {"status": "resolved", "alert_id": alert_id}
-        
+    
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to resolve alert: {e}")
         raise HTTPException(500, str(e))

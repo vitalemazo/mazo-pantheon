@@ -8,13 +8,13 @@
  * - Trades: Trade journal with decision chain
  */
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, AlertTriangle, Activity, TrendingUp, History } from 'lucide-react';
-import useSWR from 'swr';
+import { RefreshCw, AlertTriangle, Activity, TrendingUp, History, Loader2 } from 'lucide-react';
+import useSWR, { useSWRConfig } from 'swr';
 
 import { SystemStatusPanel } from './SystemStatusPanel';
 import { AlertFeed } from './AlertFeed';
@@ -22,11 +22,15 @@ import { PerformanceMetrics } from './PerformanceMetrics';
 import { AgentPerformanceTable } from './AgentPerformanceTable';
 import { TradeJournal } from './TradeJournal';
 import { API_BASE_URL } from '@/lib/api-config';
+import { useToastManager } from '@/hooks/use-toast-manager';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
 export function MonitoringDashboard() {
   const [activeTab, setActiveTab] = useState('overview');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const { mutate } = useSWRConfig();
+  const { success: toastSuccess } = useToastManager();
   
   // Fetch alerts for badge count
   const { data: alerts } = useSWR(
@@ -38,6 +42,30 @@ export function MonitoringDashboard() {
   const activeAlertCount = alerts?.length || 0;
   const hasP0 = alerts?.some((a: any) => a.priority === 'P0');
   
+  // Refresh all monitoring data without page reload
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      // Revalidate all SWR caches that match monitoring endpoints
+      await mutate(
+        (key) => typeof key === 'string' && key.includes('/monitoring/'),
+        undefined,
+        { revalidate: true }
+      );
+      // Also revalidate trading endpoints used by this dashboard
+      await mutate(
+        (key) => typeof key === 'string' && key.includes('/trading/'),
+        undefined,
+        { revalidate: true }
+      );
+      toastSuccess("Dashboard refreshed", "refresh-success");
+    } catch (err) {
+      console.error("Refresh failed:", err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [mutate, toastSuccess]);
+  
   return (
     <div className="h-full overflow-auto p-4 space-y-4">
       {/* Header */}
@@ -48,9 +76,18 @@ export function MonitoringDashboard() {
             System health, alerts, and performance metrics
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
+        <Button 
+          variant="outline" 
+          size="sm" 
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+        >
+          {isRefreshing ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4 mr-2" />
+          )}
+          {isRefreshing ? 'Refreshing...' : 'Refresh'}
         </Button>
       </div>
       
