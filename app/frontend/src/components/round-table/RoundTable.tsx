@@ -58,6 +58,7 @@ import {
 } from 'lucide-react';
 import { API_BASE_URL } from '@/lib/api-config';
 import { InfoTooltip } from '@/components/ui/info-tooltip';
+import { formatQuantity, formatShares } from '@/lib/utils';
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
@@ -852,7 +853,7 @@ export function RoundTable() {
                             </Badge>
                             {roundTable.portfolio_manager.quantity && (
                               <span className="text-lg">
-                                {roundTable.portfolio_manager.quantity} shares
+                                {formatShares(roundTable.portfolio_manager.quantity)}
                               </span>
                             )}
                             {roundTable.portfolio_manager.confidence && (

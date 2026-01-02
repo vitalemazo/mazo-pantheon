@@ -245,6 +245,31 @@ class ModelConfig:
 
 
 @dataclass
+class FractionalConfig:
+    """Fractional share trading configuration."""
+    
+    # Enable fractional share trading (default True for paper trading)
+    allow_fractional: bool = field(
+        default_factory=lambda: _env_bool("ALLOW_FRACTIONAL", True)
+    )
+    
+    # Minimum quantity for fractional orders (Alpaca minimum is 0.0001)
+    min_fractional_qty: float = field(
+        default_factory=lambda: _env_float("MIN_FRACTIONAL_QTY", 0.0001)
+    )
+    
+    # Decimal places for quantity rounding (4 is Alpaca's precision)
+    fractional_precision: int = field(
+        default_factory=lambda: _env_int("FRACTIONAL_PRECISION", 4)
+    )
+    
+    # Whether to use notional (dollar-based) orders instead of share-based
+    use_notional_orders: bool = field(
+        default_factory=lambda: _env_bool("USE_NOTIONAL_ORDERS", False)
+    )
+
+
+@dataclass
 class DataConfig:
     """Market data configuration."""
     
@@ -283,6 +308,7 @@ class TradingConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     data: DataConfig = field(default_factory=DataConfig)
     cooldown: CooldownConfig = field(default_factory=CooldownConfig)
+    fractional: FractionalConfig = field(default_factory=FractionalConfig)
     
     def to_dict(self) -> dict:
         """Export configuration as dictionary."""
@@ -348,3 +374,7 @@ def get_data_config() -> DataConfig:
 
 def get_cooldown_config() -> CooldownConfig:
     return get_trading_config().cooldown
+
+
+def get_fractional_config() -> FractionalConfig:
+    return get_trading_config().fractional

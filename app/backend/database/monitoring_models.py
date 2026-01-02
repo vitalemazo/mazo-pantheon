@@ -166,7 +166,7 @@ class PMDecision(Base):
     # Decision
     ticker = Column(String(20), nullable=False, index=True)
     action = Column(String(20), nullable=False)  # buy, sell, short, cover, hold
-    quantity = Column(Integer, nullable=True)
+    quantity = Column(Float, nullable=True)  # Supports fractional shares
     
     # Risk parameters
     stop_loss_pct = Column(Float, nullable=True)

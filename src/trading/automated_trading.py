@@ -1161,8 +1161,17 @@ class AutomatedTradingService:
         self, 
         signal: TradingSignal, 
         portfolio: PortfolioContext
-    ) -> int:
-        """Calculate position size based on signal and portfolio."""
+    ) -> float:
+        """
+        Calculate position size based on signal and portfolio.
+        
+        Supports fractional shares when ALLOW_FRACTIONAL=true.
+        Returns float with up to 4 decimal places for Alpaca compatibility.
+        """
+        from src.trading.config import get_fractional_config
+        
+        fractional_config = get_fractional_config()
+        
         # Use signal's suggested size or default to 5%
         position_pct = signal.position_size_pct or 0.05
         
@@ -1172,10 +1181,19 @@ class AutomatedTradingService:
         
         # Convert to shares
         if signal.entry_price and signal.entry_price > 0:
-            shares = int(position_value / signal.entry_price)
-            return max(1, shares)  # At least 1 share
+            shares = position_value / signal.entry_price
+            
+            if fractional_config.allow_fractional:
+                # Round to configured precision (default 4 decimal places)
+                shares = round(shares, fractional_config.fractional_precision)
+                # Ensure minimum quantity
+                return max(fractional_config.min_fractional_qty, shares)
+            else:
+                # Whole shares only
+                return max(1, int(shares))
         
-        return 1
+        # Fallback: return minimum
+        return fractional_config.min_fractional_qty if fractional_config.allow_fractional else 1
     
     async def _execute_trade(
         self,

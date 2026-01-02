@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/table';
 import { extractBaseAgentKey } from '@/data/node-mappings';
 import { createAgentDisplayNames } from '@/utils/text-utils';
+import { formatQuantity } from '@/lib/utils';
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -171,7 +172,7 @@ export function InvestmentReportDialog({
                       <div className="flex items-center gap-1">
                         {getActionIcon(outputNodeData.decisions[ticker].action as ActionType)}
                         <span className="text-sm font-normal text-muted-foreground">
-                          {outputNodeData.decisions[ticker].action} {outputNodeData.decisions[ticker].quantity} shares
+                          {outputNodeData.decisions[ticker].action} {formatQuantity(outputNodeData.decisions[ticker].quantity)} shares
                         </span>
                       </div>
                     </div>

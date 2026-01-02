@@ -33,7 +33,7 @@ def _get_event_logger():
 
 class PortfolioDecision(BaseModel):
     action: Literal["buy", "sell", "short", "cover", "hold", "cancel", "reduce_long", "reduce_short"]
-    quantity: int = Field(description="Number of shares to trade (0 for cancel/hold)")
+    quantity: float = Field(description="Number of shares to trade (supports fractional, 0 for cancel/hold)")
     confidence: int = Field(description="Confidence 0-100")
     reasoning: str = Field(description="Reasoning for the decision")
     # Optional rebalancing context
@@ -158,9 +158,10 @@ def compute_allowed_actions(
             ticker,
             {"long": 0, "long_cost_basis": 0.0, "short": 0, "short_cost_basis": 0.0},
         )
-        long_shares = int(pos.get("long", 0) or 0)
-        short_shares = int(pos.get("short", 0) or 0)
-        max_qty = int(max_shares.get(ticker, 0) or 0)
+        # Support fractional shares - use float instead of int
+        long_shares = float(pos.get("long", 0) or 0)
+        short_shares = float(pos.get("short", 0) or 0)
+        max_qty = float(max_shares.get(ticker, 0) or 0)
         
         # Check for pending orders on this ticker
         ticker_pending = [o for o in pending_orders if o.get('symbol') == ticker]

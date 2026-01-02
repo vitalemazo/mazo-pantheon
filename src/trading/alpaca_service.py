@@ -487,9 +487,12 @@ class AlpacaService:
         """
         Submit a new order.
 
+        Supports fractional shares for fractionable assets.
+        Non-fractionable assets will be automatically rounded to whole shares.
+
         Args:
             symbol: Stock symbol
-            qty: Number of shares
+            qty: Number of shares (supports fractional)
             side: 'buy' or 'sell'
             order_type: Market, limit, stop, etc.
             time_in_force: Day, GTC, IOC, etc.
@@ -501,6 +504,31 @@ class AlpacaService:
             TradeResult with order details
         """
         try:
+            from src.trading.config import get_fractional_config
+            
+            fractional_config = get_fractional_config()
+            
+            # Round quantity to Alpaca's precision (4 decimal places)
+            qty = round(float(qty), fractional_config.fractional_precision)
+            
+            # Check if fractional trading is enabled and quantity is fractional
+            is_fractional = qty != int(qty)
+            original_qty = qty
+            
+            if is_fractional and not fractional_config.allow_fractional:
+                # Fractional disabled - round to whole shares
+                qty = max(1, int(qty))
+                print(f"[Alpaca] ⚠️ Fractional trading disabled. Rounded {original_qty:.4f} → {qty} shares for {symbol}")
+            
+            # For fractional orders, Alpaca requires market orders with DAY time in force
+            if is_fractional and fractional_config.allow_fractional:
+                if order_type != OrderType.MARKET:
+                    print(f"[Alpaca] ⚠️ Fractional orders require market order type. Converting from {order_type.value}")
+                    order_type = OrderType.MARKET
+                if time_in_force != TimeInForce.DAY:
+                    print(f"[Alpaca] ⚠️ Fractional orders require DAY time in force. Converting from {time_in_force.value}")
+                    time_in_force = TimeInForce.DAY
+            
             order_data = {
                 "symbol": symbol.upper(),
                 "qty": str(qty),
@@ -520,14 +548,35 @@ class AlpacaService:
 
             data = self._request("POST", "orders", data=order_data)
             order = AlpacaOrder.from_api_response(data)
+            
+            # Log fractional order success
+            qty_display = f"{qty:.4f}" if is_fractional else str(int(qty))
 
             return TradeResult(
                 success=True,
                 order=order,
-                message=f"Order submitted: {side.value if isinstance(side, OrderSide) else side} {qty} {symbol}"
+                message=f"Order submitted: {side.value if isinstance(side, OrderSide) else side} {qty_display} {symbol}"
             )
         except Exception as e:
             error_msg = str(e)
+            
+            # Check if error is due to non-fractionable asset
+            if "fractional" in error_msg.lower() or "not fractionable" in error_msg.lower():
+                # Retry with whole shares
+                whole_qty = max(1, int(qty))
+                print(f"[Alpaca] ⚠️ Asset {symbol} not fractionable. Retrying with {whole_qty} whole shares")
+                try:
+                    order_data["qty"] = str(whole_qty)
+                    data = self._request("POST", "orders", data=order_data)
+                    order = AlpacaOrder.from_api_response(data)
+                    return TradeResult(
+                        success=True,
+                        order=order,
+                        message=f"Order submitted (rounded): {side.value if isinstance(side, OrderSide) else side} {whole_qty} {symbol}"
+                    )
+                except Exception as retry_error:
+                    error_msg = str(retry_error)
+            
             print(f"[Alpaca] ❌ Order error for {symbol}: {error_msg}")
             return TradeResult(
                 success=False,
@@ -694,7 +743,7 @@ class AlpacaService:
         self,
         symbol: str,
         action: str,
-        quantity: int,
+        quantity: float,
         order_type: OrderType = OrderType.MARKET
     ) -> TradeResult:
         """
@@ -707,16 +756,22 @@ class AlpacaService:
         - cover: Cover short position
         - hold: No action
 
+        Supports fractional shares for fractionable assets.
+        Non-fractionable assets will be rounded to whole shares.
+
         Args:
             symbol: Stock symbol
             action: Trading action (buy, sell, short, cover, hold)
-            quantity: Number of shares
+            quantity: Number of shares (supports fractional)
             order_type: Order type (market, limit)
 
         Returns:
             TradeResult
         """
         action = action.lower()
+
+        # Round quantity to 4 decimal places (Alpaca's precision)
+        quantity = round(float(quantity), 4)
 
         if action == "hold" or quantity <= 0:
             return TradeResult(

@@ -394,7 +394,7 @@ class TradeDecisionContext(Base):
     
     # PM decision
     pm_action = Column(String(20), nullable=True)  # buy, sell, short, cover, hold
-    pm_quantity = Column(Integer, nullable=True)
+    pm_quantity = Column(Float, nullable=True)  # Supports fractional shares
     pm_confidence = Column(Float, nullable=True)
     pm_reasoning = Column(Text, nullable=True)
     pm_stop_loss_pct = Column(Float, nullable=True)

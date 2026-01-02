@@ -16,6 +16,36 @@ export function formatKeyboardShortcut(key: string): string {
   return `${modifierKey}${key.toUpperCase()}`;
 }
 
+/**
+ * Format quantity for display, handling both whole and fractional shares.
+ * Shows up to 4 decimal places for fractional quantities, no decimals for whole.
+ */
+export function formatQuantity(qty: number | null | undefined): string {
+  if (qty === null || qty === undefined) return 'N/A';
+  
+  const absQty = Math.abs(qty);
+  
+  // Check if it's a whole number
+  if (absQty === Math.floor(absQty)) {
+    return absQty.toLocaleString();
+  }
+  
+  // Fractional - show up to 4 decimal places, trim trailing zeros
+  return absQty.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 4,
+  });
+}
+
+/**
+ * Format quantity with "shares" suffix
+ */
+export function formatShares(qty: number | null | undefined): string {
+  const formatted = formatQuantity(qty);
+  if (formatted === 'N/A') return formatted;
+  return `${formatted} shares`;
+}
+
 // Provider color utility for consistent styling across components
 export function getProviderColor(provider: string): string {
   return 'bg-gray-600/20 text-primary border-gray-600/40';

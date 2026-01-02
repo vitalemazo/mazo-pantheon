@@ -25,6 +25,7 @@ import {
   BarChart3
 } from 'lucide-react';
 import { InfoTooltip, TOOLTIP_CONTENT, WithTooltip, getScheduleDescription } from '@/components/ui/info-tooltip';
+import { formatQuantity, formatShares } from '@/lib/utils';
 
 function formatCurrency(value: number): string {
   const sign = value >= 0 ? '' : '-';
@@ -225,7 +226,7 @@ export function CommandCenter() {
                             <Badge variant="outline" className={pos.side === 'long' ? 'border-emerald-500 text-emerald-400' : 'border-red-500 text-red-400'}>
                               {pos.side.toUpperCase()}
                             </Badge>
-                            <span className="text-slate-400 text-sm">{Math.abs(pos.qty)} shares</span>
+                            <span className="text-slate-400 text-sm">{formatShares(pos.qty)}</span>
                           </div>
                           <div className={`font-mono ${pos.unrealized_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                             {formatCurrency(pos.unrealized_pnl)}
@@ -389,7 +390,7 @@ export function CommandCenter() {
                             }>
                               {trade.action.toUpperCase()}
                             </Badge>
-                            <span className="text-slate-400">{trade.quantity} shares</span>
+                            <span className="text-slate-400">{formatShares(trade.quantity)}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             {trade.status === 'closed' && trade.realized_pnl != null && (
@@ -516,7 +517,7 @@ export function CommandCenter() {
                                 {trade.action}
                               </Badge>
                             </td>
-                            <td className="py-3 px-2 text-right text-white font-mono">{trade.quantity}</td>
+                            <td className="py-3 px-2 text-right text-white font-mono">{formatQuantity(trade.quantity)}</td>
                             <td className="py-3 px-2 text-right text-slate-300 font-mono">
                               {trade.entry_price ? `$${trade.entry_price.toFixed(2)}` : 'N/A'}
                             </td>
@@ -705,7 +706,7 @@ export function CommandCenter() {
                         ? 'bg-emerald-600' 
                         : 'bg-red-600'
                     }>
-                      {selectedTrade.action.toUpperCase()} {selectedTrade.quantity} shares
+                      {selectedTrade.action.toUpperCase()} {formatShares(selectedTrade.quantity)}
                     </Badge>
                   </div>
                   <div>

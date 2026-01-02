@@ -24,6 +24,7 @@ import {
   Settings
 } from 'lucide-react';
 import { InfoTooltip, TOOLTIP_CONTENT, WithTooltip, getScheduleDescription } from '@/components/ui/info-tooltip';
+import { formatShares } from '@/lib/utils';
 
 function formatCurrency(value: number): string {
   const sign = value >= 0 ? '' : '-';
@@ -384,7 +385,7 @@ export function TradingDashboard() {
                         <Badge variant="outline" className={pos.side === 'long' ? 'border-emerald-500 text-emerald-400' : 'border-red-500 text-red-400'}>
                           {pos.side.toUpperCase()}
                         </Badge>
-                        <span className="text-slate-400">{Math.abs(pos.qty)} shares</span>
+                        <span className="text-slate-400">{formatShares(pos.qty)}</span>
                       </div>
                       <div className="text-right">
                         <div className={`font-mono font-bold ${pos.unrealized_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
