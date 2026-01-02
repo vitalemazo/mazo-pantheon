@@ -18,7 +18,7 @@ import {
   Target,
   Zap
 } from 'lucide-react';
-import { InfoTooltip } from '@/components/ui/info-tooltip';
+import { InfoTooltip, TOOLTIP_CONTENT, WithTooltip } from '@/components/ui/info-tooltip';
 
 function getGradeColor(grade: string): string {
   if (grade.startsWith('A')) return 'text-emerald-400';
@@ -103,14 +103,16 @@ export function PortfolioHealthView() {
                 </span>
               </span>
             )}
-            <Button 
-              onClick={runHealthCheck} 
-              disabled={loading}
-              className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500"
-            >
-              <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-              {loading ? 'Analyzing...' : 'Run Health Check'}
-            </Button>
+            <WithTooltip content="Runs a full Mazo AI analysis of your portfolio including diversification, risk assessment, and recommendations. Takes 10-30 seconds.">
+              <Button 
+                onClick={runHealthCheck} 
+                disabled={loading}
+                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500"
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                {loading ? 'Analyzing...' : 'Run Health Check'}
+              </Button>
+            </WithTooltip>
           </div>
         </div>
 
@@ -254,6 +256,7 @@ export function PortfolioHealthView() {
                 <CardTitle className="flex items-center gap-2 text-white">
                   <Activity className="w-5 h-5 text-blue-400" />
                   Current Positions
+                  <InfoTooltip content={TOOLTIP_CONTENT.topHoldings} />
                 </CardTitle>
                 <CardDescription>
                   {healthData.positions.length} active position{healthData.positions.length !== 1 ? 's' : ''}

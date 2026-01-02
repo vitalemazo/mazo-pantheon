@@ -91,6 +91,59 @@ export function LabelWithTooltip({
 }
 
 /**
+ * WithTooltip - Wrap any element with a tooltip
+ * Use this to add tooltips to buttons, cards, tabs, etc.
+ */
+interface WithTooltipProps {
+  content: React.ReactNode;
+  children: React.ReactNode;
+  side?: "top" | "right" | "bottom" | "left";
+  asChild?: boolean;
+}
+
+export function WithTooltip({
+  content,
+  children,
+  side = "top",
+  asChild = true,
+}: WithTooltipProps) {
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild={asChild}>
+          {children}
+        </TooltipTrigger>
+        <TooltipContent 
+          side={side} 
+          className="max-w-xs bg-slate-800 text-slate-100 border-slate-700 p-3 text-sm z-50"
+        >
+          {content}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+/**
+ * MetricCard tooltip wrapper - for stat tiles
+ */
+interface MetricTooltipProps {
+  title: string;
+  description: string;
+  example?: string;
+}
+
+export function MetricTooltip({ title, description, example }: MetricTooltipProps) {
+  return (
+    <div className="space-y-1">
+      <p className="font-semibold">{title}</p>
+      <p className="text-xs">{description}</p>
+      {example && <p className="text-xs text-slate-400 italic">{example}</p>}
+    </div>
+  );
+}
+
+/**
  * Predefined tooltip content for common concepts
  */
 export const TOOLTIP_CONTENT = {
@@ -274,6 +327,69 @@ export const TOOLTIP_CONTENT = {
       </ul>
     </div>
   ),
+  
+  // ===== TRADING DASHBOARD =====
+  totalEquity: "Your total account value including cash and positions. Updates in real-time from Alpaca.",
+  dayPnL: "Profit or loss for today. Includes both realized (closed trades) and unrealized (open positions).",
+  buyingPower: "Available funds for new trades. Margin accounts may show 2x or 4x leverage.",
+  cashBalance: "Liquid cash in your account, not invested in any positions.",
+  openPositions: "Number of stocks you currently hold. Click to see details.",
+  
+  // Scheduler
+  schedulerStatus: "Background task scheduler that runs automated trading cycles. Green = running, Grey = paused.",
+  scheduledTasks: "Automated jobs like position monitoring, trade syncing, and AI trading cycles.",
+  
+  // Watchlist
+  watchlist: "Stocks you're monitoring for potential trades. Add tickers to track opportunities.",
+  
+  // Buttons
+  refreshButton: "Reload all data from the server. Data auto-refreshes every 30 seconds.",
+  runAiCycle: "Runs the full AI trading pipeline: scan → research → analyze → decide → execute.",
+  dryRunButton: "Simulates a trading cycle without placing real orders. Safe for testing.",
+  toggleScheduler: "Start or stop the background scheduler. When running, automated tasks execute on schedule.",
+  
+  // ===== COMMAND CENTER =====
+  commandCenterOverview: "Quick glance at your portfolio performance and recent AI activity.",
+  tradeHistory: "Complete log of all trades executed by the AI team with entry/exit prices and P&L.",
+  agentLeaderboard: "Rankings of all 18 AI analysts by accuracy and performance metrics.",
+  scheduledTasksTab: "View and manage all background jobs and their execution status.",
+  recentWorkflows: "History of recent AI trading cycles with step-by-step progress.",
+  
+  // Agent metrics
+  totalSignals: "Total number of buy/sell/hold signals this agent has generated.",
+  correctPredictions: "Signals that resulted in profitable trades when followed.",
+  avgReturnWhenFollowed: "Average profit/loss from trades that followed this agent's signal.",
+  bestCall: "This agent's most profitable trade recommendation.",
+  worstCall: "This agent's least profitable trade recommendation.",
+  
+  // ===== MONITORING DASHBOARD =====
+  monitoringOverview: "System health, API status, and key performance indicators at a glance.",
+  alertsTab: "Active warnings and issues requiring attention. Resolve or acknowledge to clear.",
+  performanceTab: "Detailed execution quality metrics and trade statistics.",
+  tradeJournalTab: "Full audit trail of all trading activity with agent signals and reasoning.",
+  
+  // System status
+  databaseStatus: "Connection status to PostgreSQL/TimescaleDB. Stores all trade history and metrics.",
+  redisStatus: "In-memory cache for fast data access. Speeds up API responses.",
+  alpacaStatus: "Connection to Alpaca brokerage for trading and market data.",
+  
+  // ===== PORTFOLIO HEALTH =====
+  portfolioGrade: "Overall portfolio health score (A-F) based on diversification, risk, and performance.",
+  riskLevel: "Estimated risk exposure: Low, Moderate, High, or Critical.",
+  sectorExposure: "Breakdown of your holdings by market sector. Helps identify concentration risk.",
+  topHoldings: "Your largest positions by market value. High concentration may increase risk.",
+  mazoAnalysis: "AI-generated portfolio assessment with specific recommendations for improvement.",
+  
+  // ===== AI TEAM =====
+  mazoResearch: "Mazo performs deep research using web search, financial data, and news analysis.",
+  aiAnalysts: "18 AI agents modeled after famous investors (Buffett, Lynch, etc.) analyze each opportunity.",
+  portfolioManager: "Makes final trade decisions based on agent consensus, risk limits, and portfolio state.",
+  
+  // ===== COMMON ACTIONS =====
+  addToWatchlist: "Add this ticker to your monitoring list for future analysis.",
+  removeFromWatchlist: "Remove this ticker from your watchlist.",
+  viewDetails: "See full details including agent signals, research, and trade history.",
+  exportData: "Download this data as CSV or JSON for external analysis.",
 };
 
 export default InfoTooltip;

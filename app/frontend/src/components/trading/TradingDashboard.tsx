@@ -23,7 +23,7 @@ import {
   AlertCircle,
   Settings
 } from 'lucide-react';
-import { InfoTooltip, TOOLTIP_CONTENT } from '@/components/ui/info-tooltip';
+import { InfoTooltip, TOOLTIP_CONTENT, WithTooltip } from '@/components/ui/info-tooltip';
 
 function formatCurrency(value: number): string {
   const sign = value >= 0 ? '' : '-';
@@ -73,15 +73,17 @@ export function TradingDashboard() {
                 <span className="ml-1 text-slate-600">(auto-refreshes every 30s)</span>
               </span>
             )}
-            <Button 
-              onClick={fetchData} 
-              disabled={loading}
-              variant="outline"
-              className="border-slate-600"
-            >
-              <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
+            <WithTooltip content={TOOLTIP_CONTENT.refreshButton}>
+              <Button 
+                onClick={fetchData} 
+                disabled={loading}
+                variant="outline"
+                className="border-slate-600"
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </WithTooltip>
           </div>
         </div>
 
@@ -101,6 +103,7 @@ export function TradingDashboard() {
               <CardDescription className="flex items-center gap-2 text-slate-400">
                 <DollarSign className="w-4 h-4" />
                 Total Equity
+                <InfoTooltip content={TOOLTIP_CONTENT.totalEquity} />
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -179,6 +182,7 @@ export function TradingDashboard() {
               <CardDescription className="flex items-center gap-2 text-slate-400">
                 <Clock className="w-4 h-4" />
                 Auto-Trading
+                <InfoTooltip content={TOOLTIP_CONTENT.schedulerStatus} />
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -186,14 +190,16 @@ export function TradingDashboard() {
                 <Badge className={scheduler?.is_running ? 'bg-emerald-600' : 'bg-slate-600'}>
                   {scheduler?.is_running ? 'ACTIVE' : 'STOPPED'}
                 </Badge>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={toggleScheduler}
-                  className={scheduler?.is_running ? 'border-red-500 text-red-400 hover:bg-red-500/20' : 'border-emerald-500 text-emerald-400 hover:bg-emerald-500/20'}
-                >
-                  {scheduler?.is_running ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                </Button>
+                <WithTooltip content={TOOLTIP_CONTENT.toggleScheduler}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={toggleScheduler}
+                    className={scheduler?.is_running ? 'border-red-500 text-red-400 hover:bg-red-500/20' : 'border-emerald-500 text-emerald-400 hover:bg-emerald-500/20'}
+                  >
+                    {scheduler?.is_running ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                  </Button>
+                </WithTooltip>
               </div>
               <div className="text-sm text-slate-400 mt-2">
                 {scheduler?.scheduled_tasks.length || 0} scheduled tasks
@@ -208,6 +214,7 @@ export function TradingDashboard() {
             <CardTitle className="flex items-center gap-3 text-white">
               <Brain className="w-6 h-6 text-purple-400" />
               AI-Powered Trading Pipeline
+              <InfoTooltip content={TOOLTIP_CONTENT.tradingPipeline} />
               {automatedStatus?.is_running && (
                 <Badge className="bg-purple-600 animate-pulse">RUNNING</Badge>
               )}
@@ -243,27 +250,31 @@ export function TradingDashboard() {
               {/* Controls */}
               <div className="space-y-3">
                 <div className="flex gap-2">
-                  <Button
-                    onClick={() => runAiTradingCycle(false)}
-                    disabled={aiLoading || automatedStatus?.is_running || automatedStatus?.success === false}
-                    className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50"
-                  >
-                    {aiLoading ? (
-                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                    ) : (
-                      <Rocket className="w-4 h-4 mr-2" />
-                    )}
-                    Run AI Trading Cycle
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => runAiTradingCycle(true)}
-                    disabled={aiLoading || automatedStatus?.is_running || automatedStatus?.success === false}
-                    className="border-purple-500 text-purple-400 hover:bg-purple-500/20 disabled:opacity-50"
-                  >
-                    <Eye className="w-4 h-4 mr-2" />
-                    Dry Run
-                  </Button>
+                  <WithTooltip content={TOOLTIP_CONTENT.runAiCycle}>
+                    <Button
+                      onClick={() => runAiTradingCycle(false)}
+                      disabled={aiLoading || automatedStatus?.is_running || automatedStatus?.success === false}
+                      className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50"
+                    >
+                      {aiLoading ? (
+                        <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Rocket className="w-4 h-4 mr-2" />
+                      )}
+                      Run AI Trading Cycle
+                    </Button>
+                  </WithTooltip>
+                  <WithTooltip content={TOOLTIP_CONTENT.dryRunButton}>
+                    <Button
+                      variant="outline"
+                      onClick={() => runAiTradingCycle(true)}
+                      disabled={aiLoading || automatedStatus?.is_running || automatedStatus?.success === false}
+                      className="border-purple-500 text-purple-400 hover:bg-purple-500/20 disabled:opacity-50"
+                    >
+                      <Eye className="w-4 h-4 mr-2" />
+                      Dry Run
+                    </Button>
+                  </WithTooltip>
                 </div>
                 <p className="text-xs text-slate-400">
                   Full cycle: Screen → Validate → Analyze → Decide → Execute
@@ -397,10 +408,13 @@ export function TradingDashboard() {
                 <CardTitle className="flex items-center gap-2 text-white">
                   <Eye className="w-5 h-5 text-purple-400" />
                   Watchlist
+                  <InfoTooltip content={TOOLTIP_CONTENT.watchlist} />
                 </CardTitle>
-                <Button size="sm" variant="ghost" className="text-slate-400 hover:text-white">
-                  <Plus className="w-4 h-4" />
-                </Button>
+                <WithTooltip content={TOOLTIP_CONTENT.addToWatchlist}>
+                  <Button size="sm" variant="ghost" className="text-slate-400 hover:text-white">
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </WithTooltip>
               </div>
             </CardHeader>
             <CardContent>

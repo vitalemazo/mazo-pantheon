@@ -23,6 +23,7 @@ import { AgentPerformanceTable } from './AgentPerformanceTable';
 import { TradeJournal } from './TradeJournal';
 import { API_BASE_URL } from '@/lib/api-config';
 import { useToastManager } from '@/hooks/use-toast-manager';
+import { InfoTooltip, TOOLTIP_CONTENT, WithTooltip } from '@/components/ui/info-tooltip';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
@@ -76,19 +77,21 @@ export function MonitoringDashboard() {
             System health, alerts, and performance metrics
           </p>
         </div>
-        <Button 
-          variant="outline" 
-          size="sm" 
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-        >
-          {isRefreshing ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4 mr-2" />
-          )}
-          {isRefreshing ? 'Refreshing...' : 'Refresh'}
-        </Button>
+        <WithTooltip content={TOOLTIP_CONTENT.refreshButton}>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+          >
+            {isRefreshing ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-2" />
+            )}
+            {isRefreshing ? 'Refreshing...' : 'Refresh'}
+          </Button>
+        </WithTooltip>
       </div>
       
       {/* P0 Alert Banner */}
@@ -114,30 +117,38 @@ export function MonitoringDashboard() {
       {/* Main Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="overview" className="gap-2">
-            <Activity className="h-4 w-4" />
-            Overview
-          </TabsTrigger>
-          <TabsTrigger value="alerts" className="gap-2">
-            <AlertTriangle className="h-4 w-4" />
-            Alerts
-            {activeAlertCount > 0 && (
-              <Badge 
-                variant={hasP0 ? "destructive" : "secondary"} 
-                className="ml-1"
-              >
-                {activeAlertCount}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="performance" className="gap-2">
-            <TrendingUp className="h-4 w-4" />
-            Performance
-          </TabsTrigger>
-          <TabsTrigger value="trades" className="gap-2">
-            <History className="h-4 w-4" />
-            Trade Journal
-          </TabsTrigger>
+          <WithTooltip content={TOOLTIP_CONTENT.monitoringOverview}>
+            <TabsTrigger value="overview" className="gap-2">
+              <Activity className="h-4 w-4" />
+              Overview
+            </TabsTrigger>
+          </WithTooltip>
+          <WithTooltip content={TOOLTIP_CONTENT.alertsTab}>
+            <TabsTrigger value="alerts" className="gap-2">
+              <AlertTriangle className="h-4 w-4" />
+              Alerts
+              {activeAlertCount > 0 && (
+                <Badge 
+                  variant={hasP0 ? "destructive" : "secondary"} 
+                  className="ml-1"
+                >
+                  {activeAlertCount}
+                </Badge>
+              )}
+            </TabsTrigger>
+          </WithTooltip>
+          <WithTooltip content={TOOLTIP_CONTENT.performanceTab}>
+            <TabsTrigger value="performance" className="gap-2">
+              <TrendingUp className="h-4 w-4" />
+              Performance
+            </TabsTrigger>
+          </WithTooltip>
+          <WithTooltip content={TOOLTIP_CONTENT.tradeJournalTab}>
+            <TabsTrigger value="trades" className="gap-2">
+              <History className="h-4 w-4" />
+              Trade Journal
+            </TabsTrigger>
+          </WithTooltip>
         </TabsList>
         
         {/* Overview Tab */}

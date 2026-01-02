@@ -24,7 +24,7 @@ import {
   XCircle,
   BarChart3
 } from 'lucide-react';
-import { InfoTooltip, TOOLTIP_CONTENT } from '@/components/ui/info-tooltip';
+import { InfoTooltip, TOOLTIP_CONTENT, WithTooltip } from '@/components/ui/info-tooltip';
 
 function formatCurrency(value: number): string {
   const sign = value >= 0 ? '' : '-';
@@ -76,15 +76,17 @@ export function CommandCenter() {
               Unified view • Trade history • Agent performance • Real-time status
             </p>
           </div>
-          <Button 
-            onClick={handleRefresh}
-            disabled={isManualRefresh || isRefreshing}
-            variant="outline"
-            className="border-slate-600"
-          >
-            <RefreshCw className={`w-4 h-4 mr-2 ${isManualRefresh || isRefreshing ? 'animate-spin' : ''}`} />
-            Refresh All
-          </Button>
+          <WithTooltip content={TOOLTIP_CONTENT.refreshButton}>
+            <Button 
+              onClick={handleRefresh}
+              disabled={isManualRefresh || isRefreshing}
+              variant="outline"
+              className="border-slate-600"
+            >
+              <RefreshCw className={`w-4 h-4 mr-2 ${isManualRefresh || isRefreshing ? 'animate-spin' : ''}`} />
+              Refresh All
+            </Button>
+          </WithTooltip>
         </div>
 
         {/* Quick Stats Row */}
@@ -94,6 +96,7 @@ export function CommandCenter() {
               <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
                 <DollarSign className="w-3 h-3" />
                 Equity
+                <InfoTooltip content={TOOLTIP_CONTENT.totalEquity} />
               </div>
               <div className="text-xl font-bold text-white">
                 {formatCurrency(performance?.equity || 0)}
@@ -110,6 +113,7 @@ export function CommandCenter() {
                   <TrendingDown className="w-3 h-3 text-red-400" />
                 )}
                 Unrealized P&L
+                <InfoTooltip content={TOOLTIP_CONTENT.unrealizedPnL} />
               </div>
               <div className={`text-xl font-bold ${(performance?.total_unrealized_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                 {formatCurrency(performance?.total_unrealized_pnl || 0)}
@@ -122,6 +126,7 @@ export function CommandCenter() {
               <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
                 <Activity className="w-3 h-3" />
                 Positions
+                <InfoTooltip content={TOOLTIP_CONTENT.openPositions} />
               </div>
               <div className="text-xl font-bold text-white">
                 {performance?.positions_count || 0}
@@ -134,6 +139,7 @@ export function CommandCenter() {
               <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
                 <History className="w-3 h-3" />
                 Total Trades
+                <InfoTooltip content="Total number of trades executed by the AI team." />
               </div>
               <div className="text-xl font-bold text-cyan-400">
                 {metrics?.total_trades || 0}
@@ -146,6 +152,7 @@ export function CommandCenter() {
               <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
                 <Award className="w-3 h-3" />
                 Win Rate
+                <InfoTooltip content={TOOLTIP_CONTENT.winRate} />
               </div>
               <div className="text-xl font-bold text-purple-400">
                 {metrics?.win_rate != null ? `${metrics.win_rate}%` : 'N/A'}
@@ -169,18 +176,24 @@ export function CommandCenter() {
         {/* Main Content Tabs */}
         <Tabs defaultValue="overview" className="space-y-4">
           <TabsList className="bg-slate-800 border border-slate-700">
-            <TabsTrigger value="overview" className="data-[state=active]:bg-slate-700">
-              <Activity className="w-4 h-4 mr-2" />
-              Overview
-            </TabsTrigger>
-            <TabsTrigger value="trades" className="data-[state=active]:bg-slate-700">
-              <History className="w-4 h-4 mr-2" />
-              Trade History
-            </TabsTrigger>
-            <TabsTrigger value="agents" className="data-[state=active]:bg-slate-700">
-              <Users className="w-4 h-4 mr-2" />
-              Agent Leaderboard
-            </TabsTrigger>
+            <WithTooltip content={TOOLTIP_CONTENT.commandCenterOverview}>
+              <TabsTrigger value="overview" className="data-[state=active]:bg-slate-700">
+                <Activity className="w-4 h-4 mr-2" />
+                Overview
+              </TabsTrigger>
+            </WithTooltip>
+            <WithTooltip content={TOOLTIP_CONTENT.tradeHistory}>
+              <TabsTrigger value="trades" className="data-[state=active]:bg-slate-700">
+                <History className="w-4 h-4 mr-2" />
+                Trade History
+              </TabsTrigger>
+            </WithTooltip>
+            <WithTooltip content={TOOLTIP_CONTENT.agentLeaderboard}>
+              <TabsTrigger value="agents" className="data-[state=active]:bg-slate-700">
+                <Users className="w-4 h-4 mr-2" />
+                Agent Leaderboard
+              </TabsTrigger>
+            </WithTooltip>
           </TabsList>
 
           {/* Overview Tab */}
