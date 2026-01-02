@@ -20,6 +20,9 @@ function MessageBubble({ message }: { message: ResearchMessage }) {
   const isUser = message.type === 'user';
   const isError = message.type === 'error';
 
+  // Safely handle empty/null content
+  const content = message.content?.trim() || '';
+
   return (
     <div
       className={cn(
@@ -38,7 +41,9 @@ function MessageBubble({ message }: { message: ResearchMessage }) {
         )}
       >
         {/* Message content */}
-        <div className="text-sm whitespace-pre-wrap">{message.content}</div>
+        <div className="text-sm whitespace-pre-wrap">
+          {content || <span className="text-muted-foreground italic">No content available</span>}
+        </div>
 
         {/* Metadata for assistant messages */}
         {message.type === 'assistant' && (

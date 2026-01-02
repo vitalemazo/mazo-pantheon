@@ -47,6 +47,8 @@ export function MazoResearchViewer({ className }: MazoResearchViewerProps) {
     );
   }
 
+  const hasContent = typeof research.response === 'string' && research.response.trim().length > 0;
+
   return (
     <div className={cn('flex flex-col h-full', className)}>
       {/* Header */}
@@ -60,6 +62,8 @@ export function MazoResearchViewer({ className }: MazoResearchViewerProps) {
           size="sm"
           className="h-6 px-2"
           onClick={copyToClipboard}
+          disabled={!hasContent}
+          title={hasContent ? "Copy to clipboard" : "No content to copy"}
         >
           {copied ? (
             <Check className="w-3 h-3 text-green-400" />
@@ -83,7 +87,7 @@ export function MazoResearchViewer({ className }: MazoResearchViewerProps) {
       {/* Research Content */}
       <div className="flex-1 overflow-y-auto p-3">
         <div className="prose prose-sm prose-invert max-w-none">
-          <ResearchContent content={research.response} />
+          <ResearchContent content={hasContent ? research.response : undefined} />
         </div>
       </div>
 
@@ -115,7 +119,14 @@ export function MazoResearchViewer({ className }: MazoResearchViewerProps) {
 }
 
 // Research content with basic markdown-like formatting
-function ResearchContent({ content }: { content: string }) {
+function ResearchContent({ content }: { content?: string }) {
+  if (!content || !content.trim()) {
+    return (
+      <p className="text-xs text-muted-foreground text-center py-6">
+        Research metadata was received but no written summary is available yet.
+      </p>
+    );
+  }
   // Split content into sections
   const sections = content.split(/\n\n+/);
 
