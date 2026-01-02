@@ -499,10 +499,87 @@ async def get_daily_snapshots(days: int = 30):
 
 # ==================== Automated Trading Endpoints ====================
 
+def _check_alpaca_credentials() -> tuple[bool, dict]:
+    """
+    Check if Alpaca credentials are configured.
+    
+    Returns:
+        (is_configured, error_response) - If not configured, error_response has details.
+    """
+    import os
+    
+    api_key = os.environ.get("ALPACA_API_KEY", "").strip()
+    secret_key = os.environ.get("ALPACA_SECRET_KEY", "").strip()
+    
+    if not api_key or not secret_key:
+        return False, {
+            "success": False,
+            "error": "Alpaca credentials not configured",
+            "message": "Autonomous trading requires Alpaca API credentials. Please set ALPACA_API_KEY and ALPACA_SECRET_KEY in Settings > API Keys.",
+            "requires_setup": {
+                "alpaca": True,
+                "missing_keys": [
+                    k for k, v in [("ALPACA_API_KEY", api_key), ("ALPACA_SECRET_KEY", secret_key)]
+                    if not v
+                ],
+            },
+        }
+    
+    return True, {}
+
+
+def _get_safe_trading_service():
+    """
+    Safely get the automated trading service, returning (service, error_response).
+    
+    If service creation fails, returns (None, error_dict).
+    """
+    try:
+        service = get_automated_trading_service()
+        # Verify the service has valid Alpaca connection
+        if not service.alpaca or not service.alpaca.api_key:
+            return None, {
+                "success": False,
+                "error": "Alpaca service not properly initialized",
+                "message": "The trading service could not connect to Alpaca. Please verify your API credentials in Settings > API Keys.",
+                "requires_setup": {"alpaca": True},
+            }
+        return service, None
+    except Exception as e:
+        logger.error(f"Failed to create automated trading service: {e}")
+        return None, {
+            "success": False,
+            "error": f"Trading service initialization failed: {str(e)[:200]}",
+            "message": "Could not initialize the trading service. Please check your Alpaca credentials and try again.",
+            "requires_setup": {"alpaca": True},
+        }
+
+
 @router.get("/automated/status")
 async def get_automated_trading_status():
     """Get automated trading service status."""
-    service = get_automated_trading_service()
+    # First check if credentials are configured
+    is_configured, error_response = _check_alpaca_credentials()
+    if not is_configured:
+        return {
+            **error_response,
+            "auto_trading_enabled": False,
+            "is_running": False,
+            "last_run": None,
+            "total_runs": 0,
+        }
+    
+    # Try to get the service
+    service, error = _get_safe_trading_service()
+    if error:
+        return {
+            **error,
+            "auto_trading_enabled": False,
+            "is_running": False,
+            "last_run": None,
+            "total_runs": 0,
+        }
+    
     return {
         "success": True,
         **service.get_status()
@@ -521,9 +598,20 @@ async def run_automated_trading_cycle(request: AutomatedTradingRequest):
     4. Portfolio Manager makes final decision
     5. Trades execute on Alpaca
     """
-    import asyncio
+    # Check credentials first
+    is_configured, error_response = _check_alpaca_credentials()
+    if not is_configured:
+        raise HTTPException(
+            status_code=400,
+            detail=error_response.get("message", "Alpaca credentials not configured")
+        )
     
-    service = get_automated_trading_service()
+    service, error = _get_safe_trading_service()
+    if error:
+        raise HTTPException(
+            status_code=400,
+            detail=error.get("message", "Trading service unavailable")
+        )
     
     if service.is_running:
         raise HTTPException(
@@ -549,7 +637,21 @@ async def run_automated_trading_cycle(request: AutomatedTradingRequest):
 @router.get("/automated/history")
 async def get_automated_trading_history(limit: int = 10):
     """Get automated trading run history."""
-    service = get_automated_trading_service()
+    # Check credentials first
+    is_configured, error_response = _check_alpaca_credentials()
+    if not is_configured:
+        return {
+            **error_response,
+            "history": [],
+        }
+    
+    service, error = _get_safe_trading_service()
+    if error:
+        return {
+            **error,
+            "history": [],
+        }
+    
     return {
         "success": True,
         "history": service.get_history(limit=limit),
@@ -563,9 +665,20 @@ async def run_automated_trading_dry_run(request: AutomatedTradingRequest):
     
     Useful for testing the pipeline without executing.
     """
-    import asyncio
+    # Check credentials first
+    is_configured, error_response = _check_alpaca_credentials()
+    if not is_configured:
+        raise HTTPException(
+            status_code=400,
+            detail=error_response.get("message", "Alpaca credentials not configured")
+        )
     
-    service = get_automated_trading_service()
+    service, error = _get_safe_trading_service()
+    if error:
+        raise HTTPException(
+            status_code=400,
+            detail=error.get("message", "Trading service unavailable")
+        )
     
     if service.is_running:
         raise HTTPException(

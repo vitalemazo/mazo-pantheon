@@ -47,7 +47,8 @@ import {
   Eye,
   Lock,
   Search,
-  Telescope
+  Telescope,
+  Settings
 } from 'lucide-react';
 
 // Map API agent names to roster IDs
@@ -635,10 +636,10 @@ export function AutonomousTradingHub() {
                 </div>
                 <Button
                   onClick={runManualCycle}
-                  disabled={isStarting || automatedStatus?.is_running}
+                  disabled={isStarting || automatedStatus?.is_running || automatedStatus?.success === false}
                   size="sm"
                   variant="outline"
-                  className="border-indigo-500 text-indigo-400 hover:bg-indigo-500/20"
+                  className="border-indigo-500 text-indigo-400 hover:bg-indigo-500/20 disabled:opacity-50"
                 >
                   {isStarting ? (
                     <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
@@ -653,6 +654,27 @@ export function AutonomousTradingHub() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Alpaca Setup Warning */}
+              {automatedStatus && automatedStatus.success === false && automatedStatus.requires_setup?.alpaca && (
+                <div className="p-3 rounded-lg bg-amber-900/30 border border-amber-600/50 flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm text-amber-200 font-medium">
+                      Alpaca credentials required
+                    </p>
+                    <p className="text-xs text-amber-300/80 mt-1">
+                      {automatedStatus.message || 'Configure ALPACA_API_KEY in Settings to enable autonomous trading.'}
+                    </p>
+                    <a 
+                      href="/settings" 
+                      className="inline-flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 mt-2"
+                    >
+                      <Settings className="w-3 h-3" />
+                      Go to Settings
+                    </a>
+                  </div>
+                </div>
+              )}
               {/* Team Members */}
               <div className="grid grid-cols-3 gap-3">
                 <div className="p-3 rounded-lg bg-gradient-to-br from-blue-500/20 to-blue-600/10 border border-blue-500/30">

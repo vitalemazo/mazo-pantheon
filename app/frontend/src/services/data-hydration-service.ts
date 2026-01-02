@@ -98,10 +98,19 @@ export interface WatchlistItem {
 }
 
 export interface AutomatedTradingStatus {
+  success: boolean;
   is_running: boolean;
+  auto_trading_enabled: boolean;
   last_run: string | null;
   total_runs: number;
   last_result: any | null;
+  // Error state fields (when success=false)
+  error?: string;
+  message?: string;
+  requires_setup?: {
+    alpaca?: boolean;
+    missing_keys?: string[];
+  };
 }
 
 export interface PortfolioHealthData {

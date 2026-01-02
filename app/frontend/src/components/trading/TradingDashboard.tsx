@@ -19,7 +19,9 @@ import {
   Calendar,
   Award,
   Brain,
-  Rocket
+  Rocket,
+  AlertCircle,
+  Settings
 } from 'lucide-react';
 
 function formatCurrency(value: number): string {
@@ -212,14 +214,36 @@ export function TradingDashboard() {
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {/* Alpaca Setup Warning */}
+            {automatedStatus && automatedStatus.success === false && automatedStatus.requires_setup?.alpaca && (
+              <div className="mb-4 p-3 rounded-lg bg-amber-900/30 border border-amber-600/50 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm text-amber-200 font-medium">
+                    Alpaca API credentials required
+                  </p>
+                  <p className="text-xs text-amber-300/80 mt-1">
+                    {automatedStatus.message || 'Set ALPACA_API_KEY and ALPACA_SECRET_KEY in Settings to enable automated trading.'}
+                  </p>
+                  <a 
+                    href="/settings" 
+                    className="inline-flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 mt-2"
+                  >
+                    <Settings className="w-3 h-3" />
+                    Go to Settings
+                  </a>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Controls */}
               <div className="space-y-3">
                 <div className="flex gap-2">
                   <Button
                     onClick={() => runAiTradingCycle(false)}
-                    disabled={aiLoading || automatedStatus?.is_running}
-                    className="bg-purple-600 hover:bg-purple-700"
+                    disabled={aiLoading || automatedStatus?.is_running || automatedStatus?.success === false}
+                    className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50"
                   >
                     {aiLoading ? (
                       <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
@@ -231,8 +255,8 @@ export function TradingDashboard() {
                   <Button
                     variant="outline"
                     onClick={() => runAiTradingCycle(true)}
-                    disabled={aiLoading || automatedStatus?.is_running}
-                    className="border-purple-500 text-purple-400 hover:bg-purple-500/20"
+                    disabled={aiLoading || automatedStatus?.is_running || automatedStatus?.success === false}
+                    className="border-purple-500 text-purple-400 hover:bg-purple-500/20 disabled:opacity-50"
                   >
                     <Eye className="w-4 h-4 mr-2" />
                     Dry Run
