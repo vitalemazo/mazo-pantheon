@@ -625,24 +625,324 @@ class TrendFollowingStrategy(BaseStrategy):
         )
 
 
+class VWAPScalperStrategy(BaseStrategy):
+    """
+    VWAP Scalper Strategy (Small Account Optimized)
+    
+    Entry: Price crosses VWAP with volume confirmation
+    Exit: Quick scalp profits (1-2%) or time-based
+    
+    Best for: Small accounts, high-frequency micro-trades
+    """
+    
+    name = "vwap_scalper"
+    description = "Quick scalps on VWAP crossovers"
+    
+    # Tighter risk for scalping
+    default_stop_loss_pct: float = 0.015  # 1.5%
+    default_take_profit_pct: float = 0.025  # 2.5%
+    default_position_size_pct: float = 0.03  # 3% per trade (small)
+    
+    def __init__(self, params: Optional[Dict] = None):
+        super().__init__(params)
+    
+    def analyze(self, ticker: str) -> Optional[TradingSignal]:
+        """Analyze ticker for VWAP scalp opportunities."""
+        prices = self._get_price_data(ticker, days=5)
+        if len(prices) < 5:
+            return None
+        
+        current_price = prices[-1]
+        
+        # Calculate a simple VWAP approximation using 5-day average
+        # (True VWAP needs volume-weighted intraday data)
+        vwap_approx = sum(prices) / len(prices)
+        
+        # Calculate recent momentum
+        short_momentum = ((current_price - prices[-3]) / prices[-3]) * 100 if prices[-3] > 0 else 0
+        
+        # RSI for overbought/oversold
+        rsi = self._calculate_rsi(prices)
+        
+        direction = SignalDirection.NEUTRAL
+        strength = SignalStrength.WEAK
+        confidence = 50
+        reasoning_parts = []
+        
+        # Price crossing above VWAP with momentum
+        if current_price > vwap_approx * 1.005:  # 0.5% above VWAP
+            if short_momentum > 0.5:
+                direction = SignalDirection.LONG
+                confidence = 55 + min(short_momentum * 5, 20)
+                strength = SignalStrength.MODERATE if short_momentum > 1 else SignalStrength.WEAK
+                reasoning_parts.append(f"Price above VWAP (+{((current_price/vwap_approx)-1)*100:.2f}%)")
+                reasoning_parts.append(f"Short momentum: +{short_momentum:.2f}%")
+                
+                if rsi and rsi < 65:
+                    reasoning_parts.append(f"RSI {rsi:.0f} (room to run)")
+                elif rsi and rsi > 70:
+                    confidence -= 10
+                    reasoning_parts.append(f"⚠️ RSI {rsi:.0f} (overbought)")
+        
+        # Price crossing below VWAP with momentum
+        elif current_price < vwap_approx * 0.995:  # 0.5% below VWAP
+            if short_momentum < -0.5:
+                direction = SignalDirection.SHORT
+                confidence = 55 + min(abs(short_momentum) * 5, 20)
+                strength = SignalStrength.MODERATE if abs(short_momentum) > 1 else SignalStrength.WEAK
+                reasoning_parts.append(f"Price below VWAP ({((current_price/vwap_approx)-1)*100:.2f}%)")
+                reasoning_parts.append(f"Short momentum: {short_momentum:.2f}%")
+                
+                if rsi and rsi > 35:
+                    reasoning_parts.append(f"RSI {rsi:.0f} (room to fall)")
+                elif rsi and rsi < 30:
+                    confidence -= 10
+                    reasoning_parts.append(f"⚠️ RSI {rsi:.0f} (oversold)")
+        
+        if direction == SignalDirection.NEUTRAL:
+            return None
+        
+        # Tight stops for scalping
+        stop_distance = current_price * self.default_stop_loss_pct
+        
+        if direction == SignalDirection.LONG:
+            stop_loss = current_price - stop_distance
+            take_profit = current_price + (stop_distance * 1.5)  # 1.5:1 risk-reward for scalps
+        else:
+            stop_loss = current_price + stop_distance
+            take_profit = current_price - (stop_distance * 1.5)
+        
+        return TradingSignal(
+            ticker=ticker,
+            strategy=self.name,
+            direction=direction,
+            strength=strength,
+            confidence=min(75, confidence),  # Cap at 75 for scalps
+            entry_price=current_price,
+            stop_loss=round(stop_loss, 2),
+            take_profit=round(take_profit, 2),
+            position_size_pct=self.default_position_size_pct,
+            reasoning=" | ".join(reasoning_parts)
+        )
+
+
+class BreakoutMicroStrategy(BaseStrategy):
+    """
+    Breakout Micro Strategy (Small Account Optimized)
+    
+    Entry: Price breaks out of recent range with volume
+    Exit: Quick profit target or stop
+    
+    Best for: Small accounts, quick momentum captures
+    """
+    
+    name = "breakout_micro"
+    description = "Micro-trades on range breakouts"
+    
+    # Tight risk for micro trades
+    default_stop_loss_pct: float = 0.02  # 2%
+    default_take_profit_pct: float = 0.03  # 3%
+    default_position_size_pct: float = 0.03  # 3% per trade
+    
+    lookback_period: int = 5  # Short lookback for micro breakouts
+    
+    def __init__(self, params: Optional[Dict] = None):
+        super().__init__(params)
+        self.lookback_period = params.get("lookback_period", 5) if params else 5
+    
+    def analyze(self, ticker: str) -> Optional[TradingSignal]:
+        """Analyze ticker for micro breakout opportunities."""
+        prices = self._get_price_data(ticker, days=self.lookback_period + 5)
+        if len(prices) < self.lookback_period + 2:
+            return None
+        
+        current_price = prices[-1]
+        recent_prices = prices[-(self.lookback_period + 1):-1]
+        
+        # Calculate range
+        range_high = max(recent_prices)
+        range_low = min(recent_prices)
+        range_size = range_high - range_low
+        range_pct = (range_size / range_low) * 100 if range_low > 0 else 0
+        
+        # RSI
+        rsi = self._calculate_rsi(prices)
+        
+        direction = SignalDirection.NEUTRAL
+        strength = SignalStrength.WEAK
+        confidence = 50
+        reasoning_parts = []
+        
+        # Breakout above range
+        if current_price > range_high:
+            breakout_pct = ((current_price - range_high) / range_high) * 100
+            if breakout_pct > 0.3:  # At least 0.3% breakout
+                direction = SignalDirection.LONG
+                confidence = 55 + min(breakout_pct * 10, 20)
+                strength = SignalStrength.MODERATE if breakout_pct > 1 else SignalStrength.WEAK
+                
+                reasoning_parts.append(f"Breakout above ${range_high:.2f} (+{breakout_pct:.2f}%)")
+                reasoning_parts.append(f"Range was {range_pct:.1f}%")
+                
+                if rsi and rsi < 70:
+                    reasoning_parts.append(f"RSI {rsi:.0f} (not overbought)")
+        
+        # Breakdown below range
+        elif current_price < range_low:
+            breakdown_pct = ((range_low - current_price) / range_low) * 100
+            if breakdown_pct > 0.3:  # At least 0.3% breakdown
+                direction = SignalDirection.SHORT
+                confidence = 55 + min(breakdown_pct * 10, 20)
+                strength = SignalStrength.MODERATE if breakdown_pct > 1 else SignalStrength.WEAK
+                
+                reasoning_parts.append(f"Breakdown below ${range_low:.2f} (-{breakdown_pct:.2f}%)")
+                reasoning_parts.append(f"Range was {range_pct:.1f}%")
+                
+                if rsi and rsi > 30:
+                    reasoning_parts.append(f"RSI {rsi:.0f} (not oversold)")
+        
+        if direction == SignalDirection.NEUTRAL:
+            return None
+        
+        # Stops based on range size
+        stop_distance = max(range_size * 0.5, current_price * 0.015)
+        
+        if direction == SignalDirection.LONG:
+            stop_loss = current_price - stop_distance
+            take_profit = current_price + (stop_distance * 1.5)
+        else:
+            stop_loss = current_price + stop_distance
+            take_profit = current_price - (stop_distance * 1.5)
+        
+        return TradingSignal(
+            ticker=ticker,
+            strategy=self.name,
+            direction=direction,
+            strength=strength,
+            confidence=min(75, confidence),
+            entry_price=current_price,
+            stop_loss=round(stop_loss, 2),
+            take_profit=round(take_profit, 2),
+            position_size_pct=self.default_position_size_pct,
+            reasoning=" | ".join(reasoning_parts)
+        )
+
+
+# Strategy registry for data-driven configuration
+STRATEGY_REGISTRY: Dict[str, type] = {
+    "momentum": MomentumStrategy,
+    "mean_reversion": MeanReversionStrategy,
+    "trend_following": TrendFollowingStrategy,
+    "vwap_scalper": VWAPScalperStrategy,
+    "breakout_micro": BreakoutMicroStrategy,
+}
+
+# Strategy metadata for UI/docs
+STRATEGY_METADATA: Dict[str, Dict[str, Any]] = {
+    "momentum": {
+        "name": "Momentum",
+        "description": "Capture quick moves on high-momentum stocks",
+        "best_for": "1-3% moves on high-volume stocks",
+        "hold_time": "1-3 days",
+        "small_account_friendly": True,
+    },
+    "mean_reversion": {
+        "name": "Mean Reversion",
+        "description": "Fade extreme moves back to mean",
+        "best_for": "Oversold bounces, overbought pullbacks",
+        "hold_time": "1-5 days",
+        "small_account_friendly": True,
+    },
+    "trend_following": {
+        "name": "Trend Following",
+        "description": "Ride multi-day trends",
+        "best_for": "Sustained trends with MA confirmation",
+        "hold_time": "3-10 days",
+        "small_account_friendly": False,  # Longer hold time
+    },
+    "vwap_scalper": {
+        "name": "VWAP Scalper",
+        "description": "Quick scalps on VWAP crossovers",
+        "best_for": "Intraday micro-profits",
+        "hold_time": "Minutes to hours",
+        "small_account_friendly": True,
+        "intraday_only": True,
+    },
+    "breakout_micro": {
+        "name": "Breakout Micro",
+        "description": "Micro-trades on range breakouts",
+        "best_for": "Quick momentum captures",
+        "hold_time": "Hours to 1 day",
+        "small_account_friendly": True,
+        "intraday_only": True,
+    },
+}
+
+
 class StrategyEngine:
     """
     Strategy Engine
     
     Manages and runs multiple trading strategies.
+    Supports data-driven strategy registration and small account mode.
     """
     
-    def __init__(self):
+    def __init__(self, enabled_strategies: Optional[List[str]] = None):
+        """
+        Initialize strategy engine.
+        
+        Args:
+            enabled_strategies: List of strategy names to enable.
+                              If None, uses default set.
+        """
         self.strategies: Dict[str, BaseStrategy] = {}
-        self._register_default_strategies()
+        self._register_strategies(enabled_strategies)
     
-    def _register_default_strategies(self):
-        """Register default strategies."""
-        self.strategies = {
-            "momentum": MomentumStrategy(),
-            "mean_reversion": MeanReversionStrategy(),
-            "trend_following": TrendFollowingStrategy(),
-        }
+    def _register_strategies(self, enabled_strategies: Optional[List[str]] = None):
+        """
+        Register strategies from registry.
+        
+        Uses data-driven registry instead of hardcoding.
+        """
+        # Default strategies (standard mode)
+        default_strategies = ["momentum", "mean_reversion", "trend_following"]
+        
+        strategies_to_register = enabled_strategies or default_strategies
+        
+        for name in strategies_to_register:
+            if name in STRATEGY_REGISTRY:
+                try:
+                    self.strategies[name] = STRATEGY_REGISTRY[name]()
+                    logger.debug(f"Registered strategy: {name}")
+                except Exception as e:
+                    logger.error(f"Failed to register strategy {name}: {e}")
+            else:
+                logger.warning(f"Unknown strategy: {name}")
+        
+        logger.info(f"Strategy engine initialized with {len(self.strategies)} strategies: {list(self.strategies.keys())}")
+    
+    def enable_small_account_strategies(self):
+        """Enable additional strategies optimized for small accounts."""
+        small_account_strategies = ["vwap_scalper", "breakout_micro"]
+        
+        for name in small_account_strategies:
+            if name not in self.strategies and name in STRATEGY_REGISTRY:
+                self.strategies[name] = STRATEGY_REGISTRY[name]()
+                logger.info(f"Enabled small-account strategy: {name}")
+    
+    def disable_strategy(self, name: str):
+        """Disable a strategy by name."""
+        if name in self.strategies:
+            del self.strategies[name]
+            logger.info(f"Disabled strategy: {name}")
+    
+    def set_strategies(self, strategy_names: List[str]):
+        """Set the active strategies to a specific list."""
+        self.strategies = {}
+        for name in strategy_names:
+            if name in STRATEGY_REGISTRY:
+                self.strategies[name] = STRATEGY_REGISTRY[name]()
+        logger.info(f"Strategy set updated: {list(self.strategies.keys())}")
     
     def add_strategy(self, strategy: BaseStrategy):
         """Add a custom strategy."""
@@ -758,15 +1058,39 @@ class StrategyEngine:
     
     def get_available_strategies(self) -> List[Dict[str, Any]]:
         """Get list of available strategies with info."""
-        return [
-            {
+        result = []
+        for s in self.strategies.values():
+            info = {
                 "name": s.name,
                 "description": s.description,
                 "default_stop_loss_pct": s.default_stop_loss_pct,
                 "default_take_profit_pct": s.default_take_profit_pct,
+                "default_position_size_pct": s.default_position_size_pct,
+                "enabled": True,
             }
-            for s in self.strategies.values()
-        ]
+            # Add metadata if available
+            if s.name in STRATEGY_METADATA:
+                info.update(STRATEGY_METADATA[s.name])
+            result.append(info)
+        return result
+    
+    def get_all_strategies_info(self) -> List[Dict[str, Any]]:
+        """Get info for ALL strategies in registry (enabled and disabled)."""
+        result = []
+        for name, strategy_class in STRATEGY_REGISTRY.items():
+            instance = strategy_class()
+            info = {
+                "name": instance.name,
+                "description": instance.description,
+                "default_stop_loss_pct": instance.default_stop_loss_pct,
+                "default_take_profit_pct": instance.default_take_profit_pct,
+                "default_position_size_pct": instance.default_position_size_pct,
+                "enabled": name in self.strategies,
+            }
+            if name in STRATEGY_METADATA:
+                info.update(STRATEGY_METADATA[name])
+            result.append(info)
+        return result
 
 
 # Global engine instance

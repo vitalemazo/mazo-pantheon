@@ -87,6 +87,40 @@ interface GuardrailsData {
   };
 }
 
+// Small account mode data types
+interface SmallAccountModeData {
+  success: boolean;
+  small_account_mode?: {
+    enabled_in_config: boolean;
+    active: boolean;
+    equity_threshold: number;
+    current_equity: number;
+    below_threshold?: boolean;
+  };
+  effective_params?: {
+    mode: string;
+    active: boolean;
+    target_notional_per_trade?: number;
+    max_signals: number;
+    min_confidence: number;
+    max_positions: number;
+    max_position_pct: number;
+    trade_cooldown_minutes: number;
+  };
+  config_details?: {
+    target_notional_per_trade: number;
+    max_signals: number;
+    min_confidence: number;
+    max_positions: number;
+    max_position_pct: number;
+    min_buying_power_pct: number;
+    trade_cooldown_minutes: number;
+    max_ticker_price: number;
+    include_etfs: boolean;
+    enable_scalping_strategies: boolean;
+  };
+}
+
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
 interface ServiceStatus {
@@ -340,6 +374,13 @@ export function SystemStatusPanel() {
   // Fetch trading guardrails status
   const { data: guardrailsData } = useSWR<GuardrailsData>(
     `${API_BASE_URL}/monitoring/trading/guardrails`,
+    fetcher,
+    { refreshInterval: 30000 }
+  );
+  
+  // Fetch small account mode status
+  const { data: smallAccountData } = useSWR<SmallAccountModeData>(
+    `${API_BASE_URL}/trading/small-account-mode`,
     fetcher,
     { refreshInterval: 30000 }
   );
@@ -621,6 +662,141 @@ export function SystemStatusPanel() {
                   </p>
                 </TooltipContent>
               </Tooltip>
+            </div>
+          </div>
+        )}
+        
+        {/* Small Account Mode */}
+        {smallAccountData?.success && (
+          <div>
+            <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+              <Activity className="h-4 w-4" />
+              Small Account Mode
+              <InfoTooltip content="Dynamic trading mode for accounts under the equity threshold. Enables micro-trades with notional sizing and additional intraday strategies." />
+              {smallAccountData.small_account_mode?.active && (
+                <Badge variant="outline" className="ml-2 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/50">
+                  ACTIVE
+                </Badge>
+              )}
+            </h4>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {/* Mode Status */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className={`p-3 rounded-lg ${
+                    smallAccountData.small_account_mode?.active
+                      ? 'bg-cyan-50 dark:bg-cyan-500/10 border border-cyan-200 dark:border-cyan-500/30'
+                      : 'bg-muted/50'
+                  }`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      {smallAccountData.small_account_mode?.active ? (
+                        <Activity className="h-4 w-4 text-cyan-500" />
+                      ) : (
+                        <Activity className="h-4 w-4 text-muted-foreground" />
+                      )}
+                      <span className="text-xs font-medium">Status</span>
+                    </div>
+                    <div className="text-lg font-bold">
+                      {smallAccountData.small_account_mode?.active ? 'Active' : 'Off'}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {smallAccountData.small_account_mode?.enabled_in_config ? 'Enabled' : 'Disabled'} in config
+                    </div>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p className="font-medium">Small Account Mode</p>
+                  <p className="text-xs mt-1">
+                    {smallAccountData.small_account_mode?.active 
+                      ? 'Mode is active - using micro-trade parameters'
+                      : smallAccountData.small_account_mode?.enabled_in_config
+                        ? `Waiting for equity to drop below $${smallAccountData.small_account_mode?.equity_threshold?.toLocaleString()}`
+                        : 'Mode is disabled in configuration'}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* Current Equity */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className={`p-3 rounded-lg ${
+                    smallAccountData.small_account_mode?.below_threshold
+                      ? 'bg-cyan-50 dark:bg-cyan-500/10 border border-cyan-200 dark:border-cyan-500/30'
+                      : 'bg-muted/50'
+                  }`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <Gauge className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-xs font-medium">Equity</span>
+                    </div>
+                    <div className="text-lg font-bold">
+                      ${(smallAccountData.small_account_mode?.current_equity || 0).toLocaleString(undefined, {maximumFractionDigits: 0})}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      threshold: ${(smallAccountData.small_account_mode?.equity_threshold || 0).toLocaleString()}
+                    </div>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="font-medium">Equity vs Threshold</p>
+                  <p className="text-xs mt-1">
+                    {smallAccountData.small_account_mode?.below_threshold
+                      ? 'Below threshold - small account mode eligible'
+                      : 'Above threshold - standard mode'}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* Target Notional */}
+              {smallAccountData.small_account_mode?.active && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="p-3 rounded-lg bg-cyan-50 dark:bg-cyan-500/10 border border-cyan-200 dark:border-cyan-500/30">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Cpu className="h-4 w-4 text-cyan-500" />
+                        <span className="text-xs font-medium">Trade Size</span>
+                      </div>
+                      <div className="text-lg font-bold text-cyan-600 dark:text-cyan-400">
+                        ${smallAccountData.config_details?.target_notional_per_trade || 30}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        per trade
+                      </div>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Target Notional per Trade</p>
+                    <p className="text-xs mt-1">
+                      Each trade targets ~${smallAccountData.config_details?.target_notional_per_trade} exposure
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+
+              {/* Max Signals */}
+              {smallAccountData.small_account_mode?.active && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="p-3 rounded-lg bg-cyan-50 dark:bg-cyan-500/10 border border-cyan-200 dark:border-cyan-500/30">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Activity className="h-4 w-4 text-cyan-500" />
+                        <span className="text-xs font-medium">Max Signals</span>
+                      </div>
+                      <div className="text-lg font-bold text-cyan-600 dark:text-cyan-400">
+                        {smallAccountData.config_details?.max_signals || 15}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        per cycle
+                      </div>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Maximum Signals per Cycle</p>
+                    <p className="text-xs mt-1">
+                      Higher than standard mode ({smallAccountData.effective_params?.max_signals || 5} standard)
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </div>
           </div>
         )}

@@ -586,6 +586,78 @@ async def get_automated_trading_status():
     }
 
 
+@router.get("/small-account-mode")
+async def get_small_account_mode_status():
+    """
+    Get Small Account Mode status and effective trading parameters.
+    
+    Returns current equity, whether mode is active, and all effective
+    parameters that will be used in the next trading cycle.
+    """
+    from src.trading.config import (
+        get_small_account_config, 
+        get_effective_trading_params,
+        is_small_account_mode_active
+    )
+    from src.trading.strategy_engine import get_strategy_engine, STRATEGY_METADATA
+    
+    # Get account equity
+    current_equity = 0.0
+    try:
+        is_configured, _ = _check_alpaca_credentials()
+        if is_configured:
+            from src.trading.alpaca_service import AlpacaService
+            alpaca = AlpacaService()
+            account = alpaca.get_account()
+            if account:
+                current_equity = float(account.equity)
+    except Exception as e:
+        logger.warning(f"Could not fetch equity for small account mode check: {e}")
+    
+    # Get config and effective params
+    config = get_small_account_config()
+    effective_params = get_effective_trading_params(current_equity)
+    is_active = is_small_account_mode_active(current_equity)
+    
+    # Get strategy info
+    engine = get_strategy_engine()
+    enabled_strategies = list(engine.strategies.keys())
+    
+    # If small account mode is active, show which strategies would be enabled
+    small_account_strategies = []
+    if is_active and config.enabled_strategies:
+        small_account_strategies = config.enabled_strategies
+    
+    return {
+        "success": True,
+        "small_account_mode": {
+            "enabled_in_config": config.enabled,
+            "active": is_active,
+            "equity_threshold": config.equity_threshold,
+            "current_equity": current_equity,
+            "below_threshold": current_equity <= config.equity_threshold if current_equity > 0 else None,
+        },
+        "effective_params": effective_params,
+        "strategies": {
+            "currently_enabled": enabled_strategies,
+            "small_account_enabled": small_account_strategies,
+            "available": list(STRATEGY_METADATA.keys()),
+        },
+        "config_details": {
+            "target_notional_per_trade": config.target_notional_per_trade,
+            "max_signals": config.max_signals,
+            "min_confidence": config.min_confidence,
+            "max_positions": config.max_positions,
+            "max_position_pct": config.max_position_pct,
+            "min_buying_power_pct": config.min_buying_power_pct,
+            "trade_cooldown_minutes": config.trade_cooldown_minutes,
+            "max_ticker_price": config.max_ticker_price,
+            "include_etfs": config.include_etfs,
+            "enable_scalping_strategies": config.enable_scalping_strategies,
+        }
+    }
+
+
 @router.post("/automated/run")
 async def run_automated_trading_cycle(request: AutomatedTradingRequest):
     """

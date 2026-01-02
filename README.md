@@ -600,6 +600,22 @@ MIN_FRACTIONAL_QTY=0.001     # Minimum fractional quantity
 FRACTIONAL_PRECISION=4       # Decimal places for fractional trades
 
 # ===========================================
+# SMALL ACCOUNT MODE (Dynamic Micro-Trading)
+# ===========================================
+SMALL_ACCOUNT_MODE=false              # Enable dynamic small account mode
+SMALL_ACCOUNT_EQUITY_THRESHOLD=10000  # Activate when equity <= this value
+SMALL_ACCOUNT_TARGET_NOTIONAL=30      # Target $ per trade (e.g., $30)
+SMALL_ACCOUNT_MAX_SIGNALS=15          # Max signals per cycle (higher than standard)
+SMALL_ACCOUNT_MIN_CONFIDENCE=55       # Lower confidence threshold
+SMALL_ACCOUNT_MAX_POSITIONS=30        # Allow more positions for diversification
+SMALL_ACCOUNT_MAX_POSITION_PCT=0.05   # Lower per-position limit (5%)
+SMALL_ACCOUNT_MIN_BUYING_POWER_PCT=0.02  # Keep cash flowing (2%)
+SMALL_ACCOUNT_COOLDOWN_MINUTES=10     # Shorter cooldown
+SMALL_ACCOUNT_MAX_TICKER_PRICE=500    # Max price for tickers in universe
+SMALL_ACCOUNT_INCLUDE_ETFS=true       # Include affordable ETFs
+SMALL_ACCOUNT_ENABLE_SCALPING=true    # Enable VWAP/breakout micro strategies
+
+# ===========================================
 # RISK LIMITS
 # ===========================================
 TRADING_RISK_MAX_POSITION_PCT=0.20  # Max 20% per position
@@ -865,6 +881,56 @@ Prevent rapid-fire trading on the same ticker:
 | `TRADE_COOLDOWN_ENABLED` | `true` | Enable cooldown checks |
 | `TRADE_COOLDOWN_MINUTES` | `30` | Min time between trades |
 | `MAX_POSITION_PCT_PER_TICKER` | `0.15` | Max concentration per ticker |
+
+---
+
+## 💰 Small Account Mode
+
+For accounts under $10,000, the system can dynamically adjust its trading behavior to enable more frequent, smaller trades:
+
+### What it Does
+
+| Standard Mode | Small Account Mode |
+|--------------|-------------------|
+| 5 signals/cycle max | 15 signals/cycle max |
+| 60% confidence min | 55% confidence min |
+| 5% position sizing | $30 fixed notional |
+| 30 min cooldown | 10 min cooldown |
+| 20 max positions | 30 max positions |
+
+### How to Enable
+
+**Option 1: Environment Variable**
+```bash
+SMALL_ACCOUNT_MODE=true
+SMALL_ACCOUNT_EQUITY_THRESHOLD=10000  # Activate when equity <= $10k
+```
+
+**Option 2: Settings UI**
+Coming soon - will be configurable in Settings.
+
+### How it Works
+
+1. **Automatic Detection**: At the start of each trading cycle, the system checks your account equity
+2. **Dynamic Parameters**: If equity is below threshold, parameters automatically adjust
+3. **Notional Sizing**: Instead of % sizing, uses fixed dollar amounts per trade (e.g., $30)
+4. **Extra Strategies**: Enables intraday strategies like VWAP Scalper and Breakout Micro
+5. **Affordable Universe**: Filters tickers by max price and includes liquid ETFs
+
+### Monitoring
+
+Check the Monitoring Dashboard → System Status → "Small Account Mode" section to see:
+- Whether mode is active
+- Current equity vs threshold
+- Effective parameters in use
+
+### Best Practices for Small Accounts
+
+1. ✅ Use **paper trading** first to validate the system works for your account
+2. ✅ Start with conservative settings (`SMALL_ACCOUNT_TARGET_NOTIONAL=25`)
+3. ✅ Monitor PDT limits carefully (3 day trades per 5 days under $25k)
+4. ✅ Enable fractional shares (`ALLOW_FRACTIONAL=true`)
+5. ⚠️ Be aware that many small trades = more transaction costs
 
 ---
 

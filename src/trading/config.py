@@ -290,6 +290,91 @@ class FractionalConfig:
 
 
 @dataclass
+class SmallAccountConfig:
+    """
+    Dynamic Small Account Mode Configuration.
+    
+    When enabled and account equity is below threshold, the system
+    adjusts the entire pipeline to favor many small intraday trades.
+    """
+    
+    # Master toggle for small account mode
+    enabled: bool = field(
+        default_factory=lambda: _env_bool("SMALL_ACCOUNT_MODE", False)
+    )
+    
+    # Equity threshold to activate small account mode (USD)
+    # When equity <= this value, small account optimizations apply
+    equity_threshold: float = field(
+        default_factory=lambda: _env_float("SMALL_ACCOUNT_EQUITY_THRESHOLD", 10000.0)
+    )
+    
+    # Target notional (dollar) amount per trade
+    # e.g., $30 means each trade targets ~$30 exposure
+    target_notional_per_trade: float = field(
+        default_factory=lambda: _env_float("SMALL_ACCOUNT_TARGET_NOTIONAL", 30.0)
+    )
+    
+    # Maximum signals to process per cycle (higher than normal)
+    max_signals: int = field(
+        default_factory=lambda: _env_int("SMALL_ACCOUNT_MAX_SIGNALS", 15)
+    )
+    
+    # Minimum confidence threshold (lower to allow more trades)
+    min_confidence: int = field(
+        default_factory=lambda: _env_int("SMALL_ACCOUNT_MIN_CONFIDENCE", 55)
+    )
+    
+    # Maximum concurrent positions (higher for diversification)
+    max_positions: int = field(
+        default_factory=lambda: _env_int("SMALL_ACCOUNT_MAX_POSITIONS", 30)
+    )
+    
+    # Maximum position percentage per ticker (lower for diversification)
+    max_position_pct: float = field(
+        default_factory=lambda: _env_float("SMALL_ACCOUNT_MAX_POSITION_PCT", 0.05)
+    )
+    
+    # Minimum buying power percentage before blocking trades
+    min_buying_power_pct: float = field(
+        default_factory=lambda: _env_float("SMALL_ACCOUNT_MIN_BUYING_POWER_PCT", 0.02)
+    )
+    
+    # Trade cooldown in minutes (shorter for more activity)
+    trade_cooldown_minutes: int = field(
+        default_factory=lambda: _env_int("SMALL_ACCOUNT_COOLDOWN_MINUTES", 10)
+    )
+    
+    # Maximum price for tickers in small account mode
+    max_ticker_price: float = field(
+        default_factory=lambda: _env_float("SMALL_ACCOUNT_MAX_TICKER_PRICE", 500.0)
+    )
+    
+    # Minimum average daily volume
+    min_avg_volume: int = field(
+        default_factory=lambda: _env_int("SMALL_ACCOUNT_MIN_VOLUME", 500000)
+    )
+    
+    # Include ETFs in universe (good for small accounts)
+    include_etfs: bool = field(
+        default_factory=lambda: _env_bool("SMALL_ACCOUNT_INCLUDE_ETFS", True)
+    )
+    
+    # Enable intraday scalping strategies
+    enable_scalping_strategies: bool = field(
+        default_factory=lambda: _env_bool("SMALL_ACCOUNT_ENABLE_SCALPING", True)
+    )
+    
+    # Enabled strategy names (comma-separated list or empty for all)
+    enabled_strategies: List[str] = field(
+        default_factory=lambda: _env_list(
+            "SMALL_ACCOUNT_STRATEGIES",
+            ["momentum", "mean_reversion", "trend_following", "vwap_scalper", "breakout_micro"]
+        )
+    )
+
+
+@dataclass
 class DataConfig:
     """Market data configuration."""
     
@@ -330,6 +415,7 @@ class TradingConfig:
     cooldown: CooldownConfig = field(default_factory=CooldownConfig)
     fractional: FractionalConfig = field(default_factory=FractionalConfig)
     intraday: IntradayConfig = field(default_factory=IntradayConfig)
+    small_account: SmallAccountConfig = field(default_factory=SmallAccountConfig)
     
     def to_dict(self) -> dict:
         """Export configuration as dictionary."""
@@ -403,3 +489,77 @@ def get_fractional_config() -> FractionalConfig:
 
 def get_intraday_config() -> IntradayConfig:
     return get_trading_config().intraday
+
+
+def get_small_account_config() -> SmallAccountConfig:
+    return get_trading_config().small_account
+
+
+def is_small_account_mode_active(equity: float) -> bool:
+    """
+    Check if small account mode should be active based on config and equity.
+    
+    Args:
+        equity: Current account equity in USD
+        
+    Returns:
+        True if small account mode is enabled AND equity is below threshold
+    """
+    config = get_small_account_config()
+    if not config.enabled:
+        return False
+    return equity <= config.equity_threshold
+
+
+def get_effective_trading_params(equity: float) -> Dict[str, Any]:
+    """
+    Get effective trading parameters based on account size.
+    
+    Returns a dict with the active parameters, sourced from either
+    SmallAccountConfig or the regular configs depending on mode.
+    
+    Args:
+        equity: Current account equity
+        
+    Returns:
+        Dict with effective parameters and mode indicator
+    """
+    small_active = is_small_account_mode_active(equity)
+    
+    if small_active:
+        sac = get_small_account_config()
+        return {
+            "mode": "small_account",
+            "active": True,
+            "equity_threshold": sac.equity_threshold,
+            "target_notional_per_trade": sac.target_notional_per_trade,
+            "max_signals": sac.max_signals,
+            "min_confidence": sac.min_confidence,
+            "max_positions": sac.max_positions,
+            "max_position_pct": sac.max_position_pct,
+            "min_buying_power_pct": sac.min_buying_power_pct,
+            "trade_cooldown_minutes": sac.trade_cooldown_minutes,
+            "max_ticker_price": sac.max_ticker_price,
+            "min_avg_volume": sac.min_avg_volume,
+            "include_etfs": sac.include_etfs,
+            "enabled_strategies": sac.enabled_strategies,
+            "use_notional_sizing": True,
+        }
+    else:
+        # Use standard config values
+        signal = get_signal_config()
+        risk = get_risk_config()
+        capital = get_capital_config()
+        cooldown = get_cooldown_config()
+        
+        return {
+            "mode": "standard",
+            "active": False,
+            "max_signals": signal.max_signals_per_cycle,
+            "min_confidence": signal.min_signal_confidence,
+            "max_positions": risk.max_total_positions,
+            "max_position_pct": risk.max_position_pct,
+            "min_buying_power_pct": capital.min_buying_power_pct,
+            "trade_cooldown_minutes": cooldown.trade_cooldown_minutes,
+            "use_notional_sizing": False,
+        }

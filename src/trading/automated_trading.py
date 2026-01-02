@@ -20,7 +20,10 @@ from enum import Enum
 from src.trading.strategy_engine import get_strategy_engine, TradingSignal, SignalDirection
 from src.trading.alpaca_service import AlpacaService
 from src.trading.performance_tracker import get_performance_tracker
-from src.trading.config import get_signal_config, get_capital_config, get_scanner_config, get_cooldown_config
+from src.trading.config import (
+    get_signal_config, get_capital_config, get_scanner_config, get_cooldown_config,
+    get_small_account_config, get_effective_trading_params, is_small_account_mode_active
+)
 from src.graph.portfolio_context import build_portfolio_context, PortfolioContext
 from integration.mazo_bridge import MazoBridge
 from integration.unified_workflow import UnifiedWorkflow, execute_trades
@@ -261,6 +264,8 @@ class AutomatedTradingService:
         """
         Check portfolio-wide risk limits.
         
+        Uses small account mode parameters if active.
+        
         Returns:
             Dict with violations and status
         """
@@ -269,33 +274,47 @@ class AutomatedTradingService:
         risk_config = get_risk_config()
         violations = []
         
+        # Get effective params (may override risk config in small account mode)
+        effective_params = getattr(self, '_effective_params', {})
+        small_account_active = effective_params.get("active", False)
+        
+        if small_account_active:
+            max_positions = effective_params.get("max_positions", 30)
+            max_position_pct = effective_params.get("max_position_pct", 0.05)
+            mode_label = "small-account"
+        else:
+            max_positions = risk_config.max_total_positions
+            max_position_pct = risk_config.max_position_pct
+            mode_label = "standard"
+        
         try:
             positions = self.alpaca.get_positions()
             account = self.alpaca.get_account()
-            portfolio_value = account.portfolio_value
+            portfolio_value = float(account.portfolio_value) if account else 0
             
             # Check total positions limit
-            if len(positions) >= risk_config.max_total_positions:
+            if len(positions) >= max_positions:
                 violations.append(
-                    f"Max positions reached: {len(positions)}/{risk_config.max_total_positions}"
+                    f"Max positions reached ({mode_label}): {len(positions)}/{max_positions}"
                 )
             
             # Check individual position concentration
             for pos in positions:
                 pos_value = abs(float(pos.market_value))
                 pos_pct = (pos_value / portfolio_value) * 100 if portfolio_value > 0 else 0
-                max_pct = risk_config.max_position_pct * 100
+                max_pct_display = max_position_pct * 100
                 
-                if pos_pct > max_pct:
+                if pos_pct > max_pct_display:
                     violations.append(
-                        f"{pos.symbol} exceeds max position: {pos_pct:.1f}% > {max_pct:.1f}%"
+                        f"{pos.symbol} exceeds max position ({mode_label}): {pos_pct:.1f}% > {max_pct_display:.1f}%"
                     )
             
             return {
                 "violations": violations,
                 "position_count": len(positions),
-                "max_positions": risk_config.max_total_positions,
-                "can_add_position": len(positions) < risk_config.max_total_positions,
+                "max_positions": max_positions,
+                "can_add_position": len(positions) < max_positions,
+                "small_account_mode": small_account_active,
             }
             
         except Exception as e:
@@ -464,9 +483,33 @@ class AutomatedTradingService:
         
         self.is_running = True
         
-        signal_config = get_signal_config()
-        min_conf = min_confidence or signal_config.min_signal_confidence
-        max_sig = max_signals or signal_config.max_signals_per_cycle
+        # Check account equity for small account mode
+        try:
+            account = self.alpaca.get_account()
+            current_equity = float(account.equity) if account else 0.0
+        except Exception as e:
+            logger.warning(f"Could not fetch account equity: {e}")
+            current_equity = 0.0
+        
+        # Get effective parameters based on account size
+        effective_params = get_effective_trading_params(current_equity)
+        small_account_active = effective_params.get("active", False)
+        
+        if small_account_active:
+            logger.info(
+                f"💰 SMALL ACCOUNT MODE ACTIVE (equity: ${current_equity:,.2f}) - "
+                f"targeting ${effective_params.get('target_notional_per_trade', 30):.0f}/trade, "
+                f"max {effective_params.get('max_signals', 15)} signals"
+            )
+            min_conf = min_confidence or effective_params.get("min_confidence", 55)
+            max_sig = max_signals or effective_params.get("max_signals", 15)
+        else:
+            signal_config = get_signal_config()
+            min_conf = min_confidence or signal_config.min_signal_confidence
+            max_sig = max_signals or signal_config.max_signals_per_cycle
+        
+        # Store for use in position sizing
+        self._effective_params = effective_params
         
         result = AutomatedTradeResult(
             timestamp=start_time,
@@ -487,7 +530,17 @@ class AutomatedTradingService:
                 workflow_type="automated_trading",
                 step_name="trading_cycle_start",
                 status="started",
-                payload={"dry_run": dry_run, "execute_trades": execute_trades_flag}
+                payload={
+                    "dry_run": dry_run,
+                    "execute_trades": execute_trades_flag,
+                    "small_account_mode": small_account_active,
+                    "effective_params": {
+                        "min_confidence": min_conf,
+                        "max_signals": max_sig,
+                        "target_notional": effective_params.get("target_notional_per_trade") if small_account_active else None,
+                    },
+                    "equity": current_equity,
+                }
             )
         except Exception as e:
             logger.debug(f"Failed to log workflow start: {e}")
@@ -882,17 +935,28 @@ class AutomatedTradingService:
         3. Diversified sector picks based on buying power
         4. Trending/momentum stocks from various sectors
         
-        This ensures we're not hardcoded to specific tickers and 
+        In small account mode, prioritizes affordable, liquid stocks and ETFs.
+
+        This ensures we're not hardcoded to specific tickers and
         the system discovers opportunities across the market.
         """
         tickers = []
         
+        # Check for small account mode
+        effective_params = getattr(self, '_effective_params', {})
+        small_account_active = effective_params.get("active", False)
+        max_ticker_price = effective_params.get("max_ticker_price", 500.0) if small_account_active else 10000.0
+        include_etfs = effective_params.get("include_etfs", False) if small_account_active else False
+        
+        if small_account_active:
+            logger.info(f"🔍 Building small-account universe (max price: ${max_ticker_price:.0f}, ETFs: {include_etfs})")
+
         # PRIORITY 1: Current positions (ALWAYS monitor what we own)
         try:
             positions = self.alpaca.get_positions()
             account = self.alpaca.get_account()
             buying_power = float(account.buying_power) if account else 0
-            
+
             for pos in positions or []:
                 if pos.symbol not in tickers:
                     tickers.append(pos.symbol)
@@ -900,7 +964,7 @@ class AutomatedTradingService:
         except Exception as e:
             logger.warning(f"Could not fetch positions: {e}")
             buying_power = 10000  # Default assumption
-        
+
         # PRIORITY 2: User watchlist
         try:
             from src.trading.watchlist_service import get_watchlist_service
@@ -912,14 +976,30 @@ class AutomatedTradingService:
         except Exception as e:
             logger.debug(f"Watchlist not available: {e}")
         
+        # PRIORITY 2.5: Small account ETFs (affordable, liquid, diversified)
+        if small_account_active and include_etfs:
+            small_account_etfs = [
+                "SPY", "QQQ", "IWM",  # Major indexes
+                "XLF", "XLK", "XLE", "XLV", "XLI",  # Sector ETFs
+                "ARKK", "ARKG",  # Growth/Innovation
+                "VTI", "VOO",  # Broad market
+                "SOXL", "TQQQ",  # Leveraged (high volatility for small trades)
+            ]
+            for etf in small_account_etfs:
+                if etf not in tickers and len(tickers) < 40:
+                    tickers.append(etf)
+            logger.debug(f"Added {len(small_account_etfs)} small-account ETFs to universe")
+
         # PRIORITY 3: Diversified sector picks based on buying power
+        max_universe_size = 40 if small_account_active else 25
+        
         try:
             from src.trading.diversification_scanner import DiversificationScanner
             scanner = DiversificationScanner()
-            
+
             # Get current sector allocation
             current_sectors = scanner.get_current_portfolio_sectors()
-            
+
             # Find underweight sectors and add stocks from them
             for sector, stocks in scanner.SECTOR_STOCKS.items():
                 sector_weight = current_sectors.get(sector, 0)
@@ -927,16 +1007,21 @@ class AutomatedTradingService:
                 if sector_weight < 0.15:  # Under 15% allocation
                     for stock in stocks[:2]:  # Add up to 2 per sector
                         if stock not in tickers:
-                            # Check if affordable based on buying power
+                            # Check if affordable based on buying power and price limit
                             try:
                                 quote = self.alpaca.get_quote(stock)
-                                if quote and float(quote.ask_price) < buying_power * 0.1:
-                                    tickers.append(stock)
+                                if quote:
+                                    price = float(quote.ask_price) if quote.ask_price else 0
+                                    # In small account mode, also check max price
+                                    if small_account_active and price > max_ticker_price:
+                                        continue
+                                    if price < buying_power * 0.1:
+                                        tickers.append(stock)
                             except Exception:
                                 tickers.append(stock)  # Add anyway, will filter later
-                        if len(tickers) >= 25:
+                        if len(tickers) >= max_universe_size:
                             break
-                if len(tickers) >= 25:
+                if len(tickers) >= max_universe_size:
                     break
         except Exception as e:
             logger.debug(f"Diversification scanner not available: {e}")
@@ -947,13 +1032,14 @@ class AutomatedTradingService:
         scanner_config = get_scanner_config()
         rotation_tickers = scanner_config.sector_rotation.get(day_of_week, [])
         for ticker in rotation_tickers:
-            if ticker not in tickers and len(tickers) < 30:
+            if ticker not in tickers and len(tickers) < max_universe_size + 5:
                 tickers.append(ticker)
         
         # Log the universe
-        logger.info(f"Screening universe: {len(tickers)} tickers from positions, watchlist, and sector rotation")
+        mode_label = "small-account" if small_account_active else "standard"
+        logger.info(f"Screening universe ({mode_label}): {len(tickers)} tickers from positions, watchlist, and sector rotation")
         
-        return tickers[:25]  # Limit to 25 tickers per cycle for efficiency
+        return tickers[:max_universe_size]
     
     async def _run_strategy_screening(
         self,
@@ -1280,6 +1366,12 @@ class AutomatedTradingService:
             action = "buy" if direction_value == "long" else "short"
             
             import uuid as uuid_module
+            
+            # Get effective params for position sizing
+            effective_params = getattr(self, '_effective_params', {})
+            use_notional = effective_params.get("use_notional_sizing", False)
+            target_notional = effective_params.get("target_notional_per_trade", 30.0)
+            
             return AnalysisResult(
                 ticker=signal.ticker,
                 analyst_signals={},
@@ -1287,11 +1379,17 @@ class AutomatedTradingService:
                 consensus_confidence=signal.confidence,
                 pm_decision={
                     "action": action,
-                    "quantity": self._calculate_position_size(signal, portfolio_context),
+                    "quantity": self._calculate_position_size(
+                        signal, portfolio_context,
+                        use_notional_sizing=use_notional,
+                        target_notional=target_notional
+                    ),
                     "confidence": signal.confidence,
                     "reasoning": f"Strategy: {signal.strategy} | {signal.reasoning}",
                     "stop_loss_pct": 5,
                     "take_profit_pct": 10,
+                    "small_account_mode": use_notional,
+                    "target_notional": target_notional if use_notional else None,
                 },
                 reasoning=f"Fallback: {signal.reasoning}",
                 workflow_id=str(uuid_module.uuid4())  # Generate new ID for fallback
@@ -1300,33 +1398,45 @@ class AutomatedTradingService:
     def _calculate_position_size(
         self,
         signal: TradingSignal,
-        portfolio: PortfolioContext
+        portfolio: PortfolioContext,
+        use_notional_sizing: bool = False,
+        target_notional: float = 30.0
     ) -> float:
         """
         Calculate position size based on signal and portfolio.
 
+        Supports two modes:
+        1. Standard mode: Uses signal.position_size_pct of available capital
+        2. Small account mode: Uses fixed notional (dollar) amount per trade
+
         Supports fractional shares when:
         - ALLOW_FRACTIONAL=true (global setting)
         - AND signal.fractionable=True (asset-specific)
-        
+
         Returns float with up to 4 decimal places for Alpaca compatibility.
         """
         from src.trading.config import get_fractional_config
 
         fractional_config = get_fractional_config()
-        
+
         # Determine if fractional trading is allowed for this specific asset
         use_fractional = (
-            fractional_config.allow_fractional and 
+            fractional_config.allow_fractional and
             getattr(signal, 'fractionable', True)  # Default True for backwards compat
         )
 
-        # Use signal's suggested size or default to 5%
-        position_pct = signal.position_size_pct or 0.05
-
-        # Calculate dollar amount
-        available = min(portfolio.cash, portfolio.buying_power)
-        position_value = available * position_pct
+        # Calculate dollar amount to invest
+        if use_notional_sizing:
+            # Small account mode: use fixed notional amount
+            position_value = target_notional
+            logger.debug(
+                f"[{signal.ticker}] Small account sizing: targeting ${target_notional:.2f} notional"
+            )
+        else:
+            # Standard mode: use percentage of available capital
+            position_pct = signal.position_size_pct or 0.05
+            available = min(portfolio.cash, portfolio.buying_power)
+            position_value = available * position_pct
 
         # Convert to shares
         if signal.entry_price and signal.entry_price > 0:
@@ -1336,7 +1446,14 @@ class AutomatedTradingService:
                 # Round to configured precision (default 4 decimal places)
                 shares = round(shares, fractional_config.fractional_precision)
                 # Ensure minimum quantity
-                return max(fractional_config.min_fractional_qty, shares)
+                result = max(fractional_config.min_fractional_qty, shares)
+                
+                if use_notional_sizing:
+                    logger.info(
+                        f"[{signal.ticker}] Notional sizing: "
+                        f"${target_notional:.2f} @ ${signal.entry_price:.2f} = {result:.4f} shares"
+                    )
+                return result
             else:
                 # Whole shares only - log if we're rounding due to non-fractionable asset
                 whole_shares = max(1, int(shares))
