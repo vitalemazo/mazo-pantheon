@@ -7,14 +7,16 @@ import { CommandCenter } from '@/components/command-center/CommandCenter';
 import { MonitoringDashboard } from '@/components/monitoring';
 import { RoundTable } from '@/components/round-table';
 import { ControlTower } from '@/components/control-tower';
+import { TradingWorkspace } from '@/components/trading-workspace';
 import { Flow } from '@/types/flow';
 import { ReactNode, createElement } from 'react';
 
-// Feature flag for UI consolidation - set to true to use new Control Tower
-const USE_CONTROL_TOWER = true;
+// Feature flags for UI consolidation
+const USE_CONTROL_TOWER = true;      // Merges AI Hedge Fund + Command Center
+const USE_TRADING_WORKSPACE = true;  // Merges Trading Dashboard + Portfolio Health
 
 export interface TabData {
-  type: 'flow' | 'settings' | 'unified-workflow' | 'portfolio' | 'trading' | 'command-center' | 'monitoring' | 'round-table' | 'control-tower';
+  type: 'flow' | 'settings' | 'unified-workflow' | 'portfolio' | 'trading' | 'command-center' | 'monitoring' | 'round-table' | 'control-tower' | 'trading-workspace';
   title: string;
   flow?: Flow;
   metadata?: Record<string, any>;
@@ -40,10 +42,21 @@ export class TabService {
         return createElement(AutonomousTradingHub);
       
       case 'portfolio':
+        // If Trading Workspace is enabled, redirect to it
+        if (USE_TRADING_WORKSPACE) {
+          return createElement(TradingWorkspace);
+        }
         return createElement(PortfolioHealthView);
       
       case 'trading':
+        // If Trading Workspace is enabled, redirect to it
+        if (USE_TRADING_WORKSPACE) {
+          return createElement(TradingWorkspace);
+        }
         return createElement(TradingDashboard);
+      
+      case 'trading-workspace':
+        return createElement(TradingWorkspace);
       
       case 'command-center':
         // If Control Tower is enabled, redirect to it
@@ -139,6 +152,14 @@ export class TabService {
     };
   }
 
+  static createTradingWorkspaceTab(): TabData & { content: ReactNode } {
+    return {
+      type: 'trading-workspace',
+      title: 'Trading Workspace',
+      content: TabService.createTabContent({ type: 'trading-workspace', title: 'Trading Workspace' }),
+    };
+  }
+
   // Restore tab content for persisted tabs (used when loading from localStorage)
   static restoreTabContent(tabData: TabData): ReactNode {
     return TabService.createTabContent(tabData);
@@ -164,10 +185,21 @@ export class TabService {
         return TabService.createUnifiedWorkflowTab();
       
       case 'portfolio':
+        // Redirect to Trading Workspace if enabled
+        if (USE_TRADING_WORKSPACE) {
+          return TabService.createTradingWorkspaceTab();
+        }
         return TabService.createPortfolioTab();
       
       case 'trading':
+        // Redirect to Trading Workspace if enabled
+        if (USE_TRADING_WORKSPACE) {
+          return TabService.createTradingWorkspaceTab();
+        }
         return TabService.createTradingTab();
+      
+      case 'trading-workspace':
+        return TabService.createTradingWorkspaceTab();
       
       case 'command-center':
         // Redirect to Control Tower if enabled

@@ -6,13 +6,14 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings, Bot, Activity, BarChart3, Crosshair, Sparkles, Gauge, Users, Rocket } from 'lucide-react';
+import { Keyboard, PanelBottom, PanelLeft, PanelRight, Settings, Bot, Activity, BarChart3, Crosshair, Sparkles, Gauge, Users, Rocket, Briefcase } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { KeyboardShortcutsDialog } from './keyboard-shortcuts-dialog';
 import { API_BASE_URL } from '@/lib/api-config';
 
-// Feature flag for UI consolidation
-const USE_CONTROL_TOWER = true;
+// Feature flags for UI consolidation
+const USE_CONTROL_TOWER = true;      // Merges AI Hedge Fund + Command Center
+const USE_TRADING_WORKSPACE = true;  // Merges Trading Dashboard + Portfolio Health
 
 interface TopBarProps {
   isLeftCollapsed: boolean;
@@ -29,6 +30,7 @@ interface TopBarProps {
   onMonitoringClick: () => void;
   onRoundTableClick: () => void;
   onControlTowerClick?: () => void;
+  onTradingWorkspaceClick?: () => void;
 }
 
 export function TopBar({
@@ -46,6 +48,7 @@ export function TopBar({
   onMonitoringClick,
   onRoundTableClick,
   onControlTowerClick,
+  onTradingWorkspaceClick,
 }: TopBarProps) {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [isAutonomousActive, setIsAutonomousActive] = useState(false);
@@ -215,43 +218,68 @@ export function TopBar({
           </Tooltip>
         )}
 
-        {/* Portfolio Health */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onPortfolioClick}
-              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-ramp-grey-700 transition-colors"
-              aria-label="Open portfolio health"
-            >
-              <Activity size={16} />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="flex flex-col gap-0.5">
-            <span className="font-medium">Portfolio Health</span>
-            <span className="text-xs text-muted-foreground">AI-powered portfolio analysis • ⌘P</span>
-          </TooltipContent>
-        </Tooltip>
+        {/* Trading Workspace (NEW - replaces Trading Dashboard + Portfolio Health) */}
+        {USE_TRADING_WORKSPACE && onTradingWorkspaceClick && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onTradingWorkspaceClick}
+                className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-ramp-grey-700 transition-colors"
+                aria-label="Open Trading Workspace"
+              >
+                <Briefcase size={16} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="flex flex-col gap-0.5">
+              <span className="font-medium">Trading Workspace</span>
+              <span className="text-xs text-muted-foreground">Positions • Performance • Health • Research</span>
+            </TooltipContent>
+          </Tooltip>
+        )}
 
-        {/* Trading Dashboard */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onTradingClick}
-              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-ramp-grey-700 transition-colors"
-              aria-label="Open trading dashboard"
-            >
-              <BarChart3 size={16} />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="flex flex-col gap-0.5">
-            <span className="font-medium">Trading Dashboard</span>
-            <span className="text-xs text-muted-foreground">Performance & strategies • ⌘T</span>
-          </TooltipContent>
-        </Tooltip>
+        {/* Portfolio Health (Legacy - hidden when Trading Workspace is enabled) */}
+        {!USE_TRADING_WORKSPACE && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onPortfolioClick}
+                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-ramp-grey-700 transition-colors"
+                aria-label="Open portfolio health"
+              >
+                <Activity size={16} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="flex flex-col gap-0.5">
+              <span className="font-medium">Portfolio Health</span>
+              <span className="text-xs text-muted-foreground">AI-powered portfolio analysis • ⌘P</span>
+            </TooltipContent>
+          </Tooltip>
+        )}
+
+        {/* Trading Dashboard (Legacy - hidden when Trading Workspace is enabled) */}
+        {!USE_TRADING_WORKSPACE && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onTradingClick}
+                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-ramp-grey-700 transition-colors"
+                aria-label="Open trading dashboard"
+              >
+                <BarChart3 size={16} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="flex flex-col gap-0.5">
+              <span className="font-medium">Trading Dashboard</span>
+              <span className="text-xs text-muted-foreground">Performance & strategies • ⌘T</span>
+            </TooltipContent>
+          </Tooltip>
+        )}
 
         {/* Command Center (Legacy - hidden when Control Tower is enabled) */}
         {!USE_CONTROL_TOWER && (
