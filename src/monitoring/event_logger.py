@@ -472,3 +472,33 @@ class EventLogger:
                 conn.commit()
             except Exception as e:
                 logger.debug(f"Failed to log heartbeat: {e}")
+    
+    def log_rate_limit(
+        self,
+        api_name: str,
+        calls_made: int = 0,
+        calls_remaining: int = None,
+        window_start: datetime = None,
+        window_resets_at: datetime = None,
+        utilization_pct: float = 0.0,
+        last_call_at: datetime = None,
+    ):
+        """Log rate limit status for an API."""
+        # This is a high-frequency operation, so we'll skip DB logging
+        # and just use in-memory tracking via the RateLimitMonitor
+        # The monitor already tracks this data
+        pass
+    
+    def log_system_health(
+        self,
+        service: str,
+        status: str = "healthy",
+        latency_ms: int = None,
+        rate_limit_remaining: int = None,
+        rate_limit_reset_at: datetime = None,
+        details: Dict[str, Any] = None,
+    ):
+        """Log system health status for a service."""
+        # High-frequency operation, skip DB logging
+        # Health data is tracked in-memory by the HealthChecker
+        pass
