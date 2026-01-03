@@ -500,7 +500,7 @@ class WatchlistService:
             Dict with added, skipped, and error counts
         """
         try:
-            from src.tools.danelfin_api import get_top_stocks, is_danelfin_enabled
+            from src.tools.danelfin_api import get_top_stocks, get_scores_batch, is_danelfin_enabled
             from src.trading.config import get_danelfin_config
             
             danelfin_config = get_danelfin_config()
@@ -509,13 +509,29 @@ class WatchlistService:
                 return {"added": 0, "skipped": 0, "error": "Danelfin not enabled"}
             
             # Get existing watchlist tickers
-            existing = {item.ticker for item in self.get_items() if item.status == "watching"}
+            watchlist = self.get_watchlist()
+            existing = {item.ticker for item in watchlist if item.status == "watching"}
             
-            # Get Danelfin top stocks (high AI score)
+            # Try to get Danelfin top stocks (may fail on basic plan)
             top_stocks = get_top_stocks(min_ai_score=min_ai_score, limit=max_total * 2)
             
+            # Fallback: score popular tickers individually if ranking API unavailable
             if not top_stocks:
-                return {"added": 0, "skipped": 0, "error": "No Danelfin top stocks found"}
+                logger.info("[Watchlist Auto] Ranking API unavailable, scoring popular tickers...")
+                popular_tickers = [
+                    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
+                    "AMD", "PLTR", "SOFI", "COIN", "HOOD", "NU", "RBLX",
+                    "F", "GM", "NIO", "RIVN", "XOM", "JPM"
+                ]
+                scores = get_scores_batch(popular_tickers)
+                # Filter by min_ai_score and convert to dict
+                top_stocks = {
+                    ticker: score for ticker, score in scores.items()
+                    if score.success and score.ai_score >= min_ai_score
+                }
+            
+            if not top_stocks:
+                return {"added": 0, "skipped": 0, "error": "No stocks met the AI score threshold"}
             
             added = []
             skipped = []
