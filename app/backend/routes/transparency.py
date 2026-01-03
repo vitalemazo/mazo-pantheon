@@ -541,6 +541,18 @@ async def get_round_table(
                         response.universe_risk.universe_tickers = tickers[:20]  # Limit
                         response.universe_risk.universe_size = len(tickers)
                 
+                if row[0] == 'universe_prepared':
+                    # Get universe and watchlist data
+                    tickers = payload.get("tickers", [])
+                    if isinstance(tickers, list) and len(tickers) > 0:
+                        response.universe_risk.universe_tickers = tickers[:20]
+                        response.universe_risk.universe_size = payload.get("universe_size", len(tickers))
+                    
+                    watchlist = payload.get("watchlist_tickers", [])
+                    if isinstance(watchlist, list):
+                        response.universe_risk.watchlist_tickers = watchlist[:20]
+                        response.universe_risk.watchlist_count = payload.get("watchlist_count", len(watchlist))
+                
                 if row[0] == 'capital_rotation':
                     response.universe_risk.portfolio_value = payload.get("portfolio_value")
                     response.universe_risk.buying_power = payload.get("buying_power")

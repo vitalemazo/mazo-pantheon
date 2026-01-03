@@ -526,6 +526,11 @@ class AutomatedTradingService:
         try:
             from src.monitoring import get_event_logger
             event_logger = get_event_logger()
+            # Check if market is open
+            from src.trading.alpaca_service import get_alpaca_service
+            alpaca = get_alpaca_service()
+            market_open = alpaca.is_market_open() if alpaca else False
+            
             event_logger.log_workflow_event(
                 workflow_id=workflow_id,
                 workflow_type="automated_trading",
@@ -535,6 +540,8 @@ class AutomatedTradingService:
                     "dry_run": dry_run,
                     "execute_trades": execute_trades_flag,
                     "small_account_mode": small_account_active,
+                    "auto_trading_enabled": auto_enabled,
+                    "market_hours": market_open,
                     "effective_params": {
                         "min_confidence": min_conf,
                         "max_signals": max_sig,
@@ -553,6 +560,29 @@ class AutomatedTradingService:
             
             result.tickers_screened = len(tickers)
             logger.info(f"🔍 Starting trading cycle - Screening {len(tickers)} tickers")
+            
+            # Log universe data for Round Table
+            try:
+                from src.monitoring import get_event_logger
+                from src.trading.watchlist_service import get_watchlist_service
+                ws = get_watchlist_service()
+                watchlist_items = ws.get_watchlist(status="watching")
+                watchlist_tickers = [w.ticker for w in watchlist_items] if watchlist_items else []
+                
+                get_event_logger().log_workflow_event(
+                    workflow_id=workflow_id,
+                    workflow_type="automated_trading",
+                    step_name="universe_prepared",
+                    status="completed",
+                    payload={
+                        "tickers": tickers,
+                        "universe_size": len(tickers),
+                        "watchlist_tickers": watchlist_tickers,
+                        "watchlist_count": len(watchlist_tickers),
+                    }
+                )
+            except Exception:
+                pass
             
             # Helper to log step events
             def log_step(step_name: str, status: str, ticker: str = None, payload: dict = None):
