@@ -445,6 +445,7 @@ class EventLogger:
         active_jobs: int = 0,
         details: Dict[str, Any] = None,
         scheduler_id: str = "main",
+        hostname: str = None,
     ):
         """Log scheduler heartbeat."""
         with self._get_connection() as conn:
