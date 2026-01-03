@@ -446,8 +446,12 @@ class EventLogger:
         details: Dict[str, Any] = None,
         scheduler_id: str = "main",
         hostname: str = None,
+        jobs_pending: int = 0,
+        jobs_running: int = 0,
+        memory_mb: float = None,
+        cpu_percent: float = None,
     ):
-        """Log scheduler heartbeat."""
+        """Log scheduler heartbeat with resource metrics."""
         with self._get_connection() as conn:
             if conn is None:
                 return
