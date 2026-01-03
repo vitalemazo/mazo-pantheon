@@ -556,39 +556,44 @@ export function TradingWorkspace() {
                     </p>
                   </div>
                   
-                  {/* Last Run Stats */}
-                  <div className="grid grid-cols-5 gap-2 text-center">
-                    <div className="p-2 bg-slate-700/50 rounded-lg">
-                      <div className="text-lg font-bold text-white">
-                        {automatedStatus?.last_result?.tickers_screened || 0}
+                  {/* Last Run Stats - use latest_cycle or fall back to last_result */}
+                  {(() => {
+                    const cycle = automatedStatus?.latest_cycle || automatedStatus?.last_result;
+                    return (
+                      <div className="grid grid-cols-5 gap-2 text-center">
+                        <div className="p-2 bg-slate-700/50 rounded-lg">
+                          <div className="text-lg font-bold text-white">
+                            {cycle?.tickers_screened || 0}
+                          </div>
+                          <div className="text-xs text-slate-400">Screened</div>
+                        </div>
+                        <div className="p-2 bg-slate-700/50 rounded-lg">
+                          <div className="text-lg font-bold text-cyan-400">
+                            {cycle?.signals_found || 0}
+                          </div>
+                          <div className="text-xs text-slate-400">Signals</div>
+                        </div>
+                        <div className="p-2 bg-slate-700/50 rounded-lg">
+                          <div className="text-lg font-bold text-purple-400">
+                            {cycle?.mazo_validated || 0}
+                          </div>
+                          <div className="text-xs text-slate-400">Validated</div>
+                        </div>
+                        <div className="p-2 bg-slate-700/50 rounded-lg">
+                          <div className="text-lg font-bold text-yellow-400">
+                            {cycle?.trades_analyzed || 0}
+                          </div>
+                          <div className="text-xs text-slate-400">Analyzed</div>
+                        </div>
+                        <div className="p-2 bg-slate-700/50 rounded-lg">
+                          <div className="text-lg font-bold text-emerald-400">
+                            {cycle?.trades_executed || 0}
+                          </div>
+                          <div className="text-xs text-slate-400">Executed</div>
+                        </div>
                       </div>
-                      <div className="text-xs text-slate-400">Screened</div>
-                    </div>
-                    <div className="p-2 bg-slate-700/50 rounded-lg">
-                      <div className="text-lg font-bold text-cyan-400">
-                        {automatedStatus?.last_result?.signals_found || 0}
-                      </div>
-                      <div className="text-xs text-slate-400">Signals</div>
-                    </div>
-                    <div className="p-2 bg-slate-700/50 rounded-lg">
-                      <div className="text-lg font-bold text-purple-400">
-                        {automatedStatus?.last_result?.mazo_validated || 0}
-                      </div>
-                      <div className="text-xs text-slate-400">Validated</div>
-                    </div>
-                    <div className="p-2 bg-slate-700/50 rounded-lg">
-                      <div className="text-lg font-bold text-yellow-400">
-                        {automatedStatus?.last_result?.trades_analyzed || 0}
-                      </div>
-                      <div className="text-xs text-slate-400">Analyzed</div>
-                    </div>
-                    <div className="p-2 bg-slate-700/50 rounded-lg">
-                      <div className="text-lg font-bold text-emerald-400">
-                        {automatedStatus?.last_result?.trades_executed || 0}
-                      </div>
-                      <div className="text-xs text-slate-400">Executed</div>
-                    </div>
-                  </div>
+                    );
+                  })()}
                 </div>
               </CardContent>
             </Card>

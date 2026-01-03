@@ -209,7 +209,8 @@ class WatchlistService:
             session.refresh(db_item)
             
             item = self._db_to_item(db_item)
-            logger.info(f"Added {ticker} to watchlist with target ${entry_target:.2f if entry_target else 0:.2f}")
+            target_str = f"${entry_target:.2f}" if entry_target else "not set"
+            logger.info(f"Added {ticker} to watchlist with target {target_str}")
             return item
             
         except Exception as e:
@@ -477,6 +478,105 @@ class WatchlistService:
             priority=8 if signal.strength.value == "strong" else 5,
             notes=signal.reasoning,
         )
+    
+    def auto_enrich_from_danelfin(
+        self,
+        min_ai_score: int = 8,
+        stocks_per_sector: int = 2,
+        max_total: int = 10,
+    ) -> Dict[str, Any]:
+        """
+        Auto-populate watchlist with high-scoring Danelfin picks.
+        
+        Adds top AI-scored stocks from underrepresented sectors.
+        Items are tagged as 'auto_generated' so users can manage them.
+        
+        Args:
+            min_ai_score: Minimum Danelfin AI score (default 8)
+            stocks_per_sector: Max stocks to add per sector (default 2)
+            max_total: Maximum total stocks to add (default 10)
+        
+        Returns:
+            Dict with added, skipped, and error counts
+        """
+        try:
+            from src.tools.danelfin_api import get_top_stocks, is_danelfin_enabled
+            from src.trading.config import get_danelfin_config
+            
+            danelfin_config = get_danelfin_config()
+            
+            if not is_danelfin_enabled() or not danelfin_config.enabled:
+                return {"added": 0, "skipped": 0, "error": "Danelfin not enabled"}
+            
+            # Get existing watchlist tickers
+            existing = {item.ticker for item in self.get_items() if item.status == "watching"}
+            
+            # Get Danelfin top stocks (high AI score)
+            top_stocks = get_top_stocks(min_ai_score=min_ai_score, limit=max_total * 2)
+            
+            if not top_stocks:
+                return {"added": 0, "skipped": 0, "error": "No Danelfin top stocks found"}
+            
+            added = []
+            skipped = []
+            sector_counts = {}
+            
+            # Sort by AI score
+            sorted_tickers = sorted(
+                top_stocks.keys(),
+                key=lambda t: top_stocks[t].ai_score,
+                reverse=True
+            )
+            
+            for ticker in sorted_tickers:
+                if len(added) >= max_total:
+                    break
+                
+                score = top_stocks[ticker]
+                
+                # Skip if already watching
+                if ticker in existing:
+                    skipped.append((ticker, "already watching"))
+                    continue
+                
+                # Limit per sector (inferred from score data)
+                sector = "General"  # Danelfin basic plan may not include sector
+                if sector_counts.get(sector, 0) >= stocks_per_sector:
+                    skipped.append((ticker, f"sector limit ({sector})"))
+                    continue
+                
+                # Add to watchlist with auto-generated note
+                try:
+                    self.add_item(
+                        ticker=ticker,
+                        entry_target=None,  # No specific target
+                        entry_condition="below",
+                        priority=min(10, 5 + score.ai_score // 2),  # Higher AI = higher priority
+                        notes=f"[Auto-Danelfin] AI:{score.ai_score}/10, Tech:{score.technical}, Fund:{score.fundamental}, Risk:{score.low_risk}",
+                        expires_in_days=14,  # Short expiry for auto items
+                    )
+                    added.append(ticker)
+                    sector_counts[sector] = sector_counts.get(sector, 0) + 1
+                    logger.info(f"[Watchlist Auto] Added {ticker} (AI score: {score.ai_score})")
+                except Exception as e:
+                    logger.warning(f"Failed to add {ticker} to watchlist: {e}")
+                    skipped.append((ticker, str(e)))
+            
+            result = {
+                "added": len(added),
+                "added_tickers": added,
+                "skipped": len(skipped),
+                "skipped_details": skipped[:5],  # Limit details
+            }
+            
+            logger.info(f"[Watchlist Auto] Enriched watchlist: {len(added)} added, {len(skipped)} skipped")
+            return result
+            
+        except ImportError as e:
+            return {"added": 0, "skipped": 0, "error": f"Danelfin not available: {e}"}
+        except Exception as e:
+            logger.error(f"Watchlist auto-enrich error: {e}")
+            return {"added": 0, "skipped": 0, "error": str(e)}
     
     def get_summary(self) -> Dict[str, Any]:
         """Get watchlist summary statistics from database."""

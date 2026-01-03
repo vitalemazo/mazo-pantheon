@@ -95,7 +95,7 @@ def _log_mazo_research(
             query=query[:500] if query else "",
             mode=mode,
             response=research.answer if research else None,
-            sources=[{"source": s} for s in (research.sources or [])] if research else None,
+            sources=[{"source": s} for s in (research.data_sources or [])] if research else None,
             sentiment=sentiment,
             sentiment_confidence=sentiment_confidence,
             key_points=key_points,

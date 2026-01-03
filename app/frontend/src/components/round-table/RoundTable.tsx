@@ -130,6 +130,21 @@ interface RoundTableData {
     success: boolean;
     duration_ms: number | null;
   };
+  // Stage 3.5: Danelfin External AI Validation
+  danelfin?: {
+    enabled: boolean;
+    scores: {
+      [ticker: string]: {
+        ai_score: number;
+        technical: number;
+        fundamental: number;
+        sentiment: number;
+        low_risk: number;
+        signal: string;
+      };
+    };
+    tickers_scored: number;
+  };
   // Stage 4: Agents
   agents: {
     agents: AgentSignal[];
@@ -832,6 +847,65 @@ export function RoundTable({ workflowId: initialWorkflowId }: RoundTableProps = 
                         </>
                       ) : (
                         <p className="text-sm text-muted-foreground">No Mazo research data available</p>
+                      )}
+                    </div>
+                  </PipelineStage>
+
+                  {/* Stage 3.5: Danelfin External AI Validation */}
+                  <PipelineStage
+                    icon={Zap}
+                    title="Danelfin AI Validation"
+                    status={roundTable.danelfin?.tickers_scored ? 'completed' : 'skipped'}
+                  >
+                    <div className="pl-12 space-y-3">
+                      {roundTable.danelfin?.tickers_scored ? (
+                        <>
+                          <div className="flex items-center gap-2 mb-2">
+                            <Badge variant="outline" className="border-yellow-500 text-yellow-400">
+                              External AI
+                            </Badge>
+                            <span className="text-sm text-muted-foreground">
+                              {roundTable.danelfin.tickers_scored} ticker(s) scored
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-1 gap-2">
+                            {Object.entries(roundTable.danelfin.scores || {}).slice(0, 5).map(([ticker, score]) => (
+                              <div key={ticker} className="bg-muted p-3 rounded-lg">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="font-medium">{ticker}</span>
+                                  <Badge className={
+                                    score.ai_score >= 8 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' :
+                                    score.ai_score >= 6 ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                                    score.ai_score >= 4 ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
+                                    'bg-red-500/20 text-red-400 border-red-500/30'
+                                  }>
+                                    AI: {score.ai_score}/10 → {score.signal?.toUpperCase().replace('_', ' ')}
+                                  </Badge>
+                                </div>
+                                <div className="grid grid-cols-4 gap-2 text-xs">
+                                  <div className="text-center">
+                                    <div className="text-muted-foreground">Tech</div>
+                                    <div className={score.technical >= 7 ? 'text-emerald-400' : score.technical <= 4 ? 'text-red-400' : ''}>{score.technical}</div>
+                                  </div>
+                                  <div className="text-center">
+                                    <div className="text-muted-foreground">Fund</div>
+                                    <div className={score.fundamental >= 7 ? 'text-emerald-400' : score.fundamental <= 4 ? 'text-red-400' : ''}>{score.fundamental}</div>
+                                  </div>
+                                  <div className="text-center">
+                                    <div className="text-muted-foreground">Sent</div>
+                                    <div className={score.sentiment >= 7 ? 'text-emerald-400' : score.sentiment <= 4 ? 'text-red-400' : ''}>{score.sentiment}</div>
+                                  </div>
+                                  <div className="text-center">
+                                    <div className="text-muted-foreground">Risk</div>
+                                    <div className={score.low_risk >= 6 ? 'text-emerald-400' : score.low_risk <= 4 ? 'text-red-400' : ''}>{score.low_risk}</div>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">Danelfin not configured or no scores available</p>
                       )}
                     </div>
                   </PipelineStage>

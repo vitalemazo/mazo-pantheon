@@ -138,6 +138,71 @@ def _get_fmp_context(tickers: list[str]) -> str:
     return ""
 
 
+def _get_danelfin_context(tickers: list[str]) -> str:
+    """
+    Get Danelfin AI scores context for PM decisions.
+    
+    Danelfin provides external AI validation with 5 metrics:
+    - AI Score (overall rating)
+    - Technical, Fundamental, Sentiment, Low Risk scores
+    
+    This gives the PM an independent "second opinion" beyond our 18 agents.
+    """
+    try:
+        from src.tools.danelfin_api import get_scores_batch, is_danelfin_enabled
+        from src.trading.config import get_danelfin_config
+        
+        danelfin_config = get_danelfin_config()
+        
+        if not danelfin_config.enabled or not is_danelfin_enabled():
+            return ""
+        
+        scores = get_scores_batch(tickers[:10])  # Limit to avoid rate limits
+        
+        context_parts = []
+        for ticker in tickers[:10]:
+            score = scores.get(ticker)
+            if score and score.success:
+                # Build signal emoji
+                signal_emoji = "🟢" if score.ai_score >= 7 else "🟡" if score.ai_score >= 5 else "🔴"
+                
+                # Build score line
+                score_line = (
+                    f"{ticker}: {signal_emoji} AI {score.ai_score}/10 | "
+                    f"Tech {score.technical} | Fund {score.fundamental} | "
+                    f"Sent {score.sentiment} | Risk {score.low_risk}"
+                )
+                
+                # Add signal interpretation
+                if score.ai_score >= 8:
+                    score_line += " → STRONG BUY signal"
+                elif score.ai_score >= 6:
+                    score_line += " → BUY signal"
+                elif score.ai_score <= 3:
+                    score_line += " → SELL signal"
+                elif score.ai_score <= 4:
+                    score_line += " → HOLD/CAUTIOUS"
+                
+                context_parts.append(score_line)
+        
+        if context_parts:
+            header = (
+                "\n=== DANELFIN AI SCORES (External Validation) ===\n"
+                "Independent AI ratings (1-10 scale, higher = better):\n"
+            )
+            return header + "\n".join(context_parts) + "\n\n" + (
+                f"DANELFIN WEIGHT: {int(danelfin_config.pm_weight * 100)}% of decision weight. "
+                "If Danelfin strongly disagrees with our agents, consider it a warning sign.\n"
+            )
+        
+    except ImportError:
+        pass  # Danelfin not available
+    except Exception as e:
+        logger.debug(f"Failed to get Danelfin context: {e}")
+    
+    return ""
+
+
 class PortfolioDecision(BaseModel):
     action: Literal["buy", "sell", "short", "cover", "hold", "cancel", "reduce_long", "reduce_short"]
     quantity: float = Field(description="Number of shares to trade (supports fractional, 0 for cancel/hold)")
@@ -722,6 +787,9 @@ def generate_trading_decision(
     # Get FMP market intelligence for enhanced context
     fmp_context = _get_fmp_context(tickers_for_llm)
     
+    # Get Danelfin AI scores for enhanced context
+    danelfin_section = _get_danelfin_context(tickers_for_llm)
+    
     # Enhanced prompt with portfolio awareness, historical context, and Mazo research
     template = ChatPromptTemplate.from_messages(
         [
@@ -733,6 +801,7 @@ def generate_trading_decision(
                 "=== ANALYST SIGNALS (18 AI Agents) ===\n{signals}\n\n"
                 "{mazo_research}"
                 "{fmp_context}"
+                "{danelfin_context}"
                 "=== ALLOWED ACTIONS (max qty per action) ===\n{allowed}\n\n"
                 "DECISION REQUIRED: For each ticker, pick ONE action.\n"
                 "Priority order:\n"
@@ -766,6 +835,7 @@ def generate_trading_decision(
         "allowed": json.dumps(compact_allowed, indent=2, ensure_ascii=False),
         "mazo_research": mazo_section,
         "fmp_context": fmp_context,
+        "danelfin_context": danelfin_section,
     }
     prompt = template.invoke(prompt_data)
 

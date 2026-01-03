@@ -213,7 +213,7 @@ class PerformanceTracker:
                     "ticker": pos.symbol,
                     "qty": float(pos.qty),
                     "side": "long" if float(pos.qty) > 0 else "short",
-                    "entry_price": float(pos.avg_entry_price),
+                    "avg_entry_price": float(pos.avg_entry_price),  # Match frontend Position type
                     "current_price": float(pos.current_price),
                     "market_value": float(pos.market_value),
                     "unrealized_pnl": pnl,

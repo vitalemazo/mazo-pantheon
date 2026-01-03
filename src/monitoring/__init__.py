@@ -1,55 +1,37 @@
 """
-Monitoring Package
+Monitoring Module - Event logging for Round Table transparency.
 
-Provides comprehensive logging, alerting, and analytics for the trading system.
-
-Components:
-- EventLogger: Central logging service for all trading events
-- AlertManager: Priority-based alerting system
-- RateLimitMonitor: Real-time API quota tracking
-- HealthChecker: Pre-market and continuous health checks
-- Analytics: Metrics calculation and aggregation
+This module provides database logging for all pipeline stages:
+- Workflow events (start, complete, error)
+- Agent signals with reasoning
+- Mazo research results
+- PM decisions
+- Trade executions
+- System health and rate limits
 """
 
-from .event_logger import EventLogger, get_event_logger, timed_operation
-from .alerting import AlertManager, AlertPriority, AlertCategory, get_alert_manager
+from .event_logger import EventLogger, get_event_logger
 from .rate_limit_monitor import RateLimitMonitor, get_rate_limit_monitor
-from .health_check import (
-    HealthChecker, HealthReport, HealthStatus, 
-    get_health_checker, run_pre_market_health_check, run_continuous_health_check
-)
+from .health_check import HealthChecker, get_health_checker, run_pre_market_health_check, run_continuous_health_check
+from .alerting import AlertManager, get_alert_manager
 from .analytics import AnalyticsService, get_analytics_service
-from .accuracy_backfill import AccuracyBackfillService, get_accuracy_backfill_service
 
 __all__ = [
-    # Event Logger
+    # Event logging
     "EventLogger",
     "get_event_logger",
-    "timed_operation",
-    
-    # Alerting
-    "AlertManager",
-    "AlertPriority",
-    "AlertCategory",
-    "get_alert_manager",
-    
-    # Rate Limit Monitor
+    # Rate limiting
     "RateLimitMonitor",
     "get_rate_limit_monitor",
-    
-    # Health Check
+    # Health checks
     "HealthChecker",
-    "HealthReport",
-    "HealthStatus",
     "get_health_checker",
     "run_pre_market_health_check",
     "run_continuous_health_check",
-    
+    # Alerting
+    "AlertManager",
+    "get_alert_manager",
     # Analytics
     "AnalyticsService",
     "get_analytics_service",
-    
-    # Accuracy Backfill
-    "AccuracyBackfillService",
-    "get_accuracy_backfill_service",
 ]

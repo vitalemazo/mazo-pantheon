@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { apiKeysService } from '@/services/api-keys-api';
 import { API_BASE_URL } from '@/lib/api-config';
-import { Eye, EyeOff, Key, Trash2, Globe, Zap, Info, CheckCircle, XCircle, Loader2, RefreshCw, Cloud, Server } from 'lucide-react';
+import { Eye, EyeOff, Key, Trash2, Globe, Zap, Info, CheckCircle, XCircle, Loader2, RefreshCw, Cloud, Server, BarChart2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -174,6 +174,26 @@ const SEARCH_API_KEYS: ApiKey[] = [
     description: 'For real-time web search in Mazo research',
     url: 'https://tavily.com/',
     placeholder: 'your-tavily-api-key'
+  }
+];
+
+const CHART_API_KEYS: ApiKey[] = [
+  {
+    key: 'CHART_IMG_API_KEY',
+    label: 'Chart-img API Key',
+    description: 'TradingView chart snapshots for AI visual analysis (PRO plan recommended)',
+    url: 'https://chart-img.com/',
+    placeholder: 'your-chart-img-api-key'
+  }
+];
+
+const AI_SCORING_API_KEYS: ApiKey[] = [
+  {
+    key: 'DANELFIN_API_KEY',
+    label: 'Danelfin API Key',
+    description: 'AI-powered stock scoring (AI Score, Technical, Fundamental, Sentiment, Low-Risk)',
+    url: 'https://danelfin.com/',
+    placeholder: 'your-danelfin-api-key'
   }
 ];
 
@@ -400,6 +420,11 @@ export function ApiKeysSettings() {
           key_value: value.trim(),
           is_active: true
         });
+        
+        // If this is an Alpaca key, show a hint to test the connection
+        if (key.startsWith('ALPACA_')) {
+          toast.info('Click "Test Alpaca" to apply the new credentials and refresh portfolio data.', { duration: 4000 });
+        }
       } else {
         // If value is empty, delete the key
         try {
@@ -439,14 +464,30 @@ export function ApiKeysSettings() {
   const testAlpacaConnection = async () => {
     setTestingConnection('alpaca');
     try {
-      const response = await fetch(`${API_BASE_URL}/alpaca/status`);
-      const data = await response.json();
-      if (data.connected) {
+      // First, force refresh to pick up new credentials from database
+      const refreshResponse = await fetch(`${API_BASE_URL}/alpaca/refresh`, { method: 'POST' });
+      const refreshData = await refreshResponse.json();
+      
+      if (refreshData.success && refreshData.account) {
         setConnectionStatus(prev => ({ ...prev, alpaca: 'success' }));
-        toast.success(`Alpaca Connected! Mode: ${data.mode}, Balance: $${data.portfolio_value?.toLocaleString() || 'N/A'}`);
+        const account = refreshData.account;
+        toast.success(
+          `Alpaca Connected! Mode: ${account.mode}, Equity: $${account.equity?.toLocaleString() || 'N/A'}, Positions: ${account.positions_count || 0}`,
+          { duration: 5000 }
+        );
+        
+        // Trigger a full data refresh in the background so Control Tower/Workspace update
+        try {
+          // Import dynamically to avoid circular deps
+          const { dataHydrationService } = await import('@/services/data-hydration-service');
+          await dataHydrationService.hydrateAll(true);
+          toast.success('Portfolio data refreshed with new account!', { duration: 3000 });
+        } catch (hydrateErr) {
+          console.warn('Could not auto-refresh data:', hydrateErr);
+        }
       } else {
         setConnectionStatus(prev => ({ ...prev, alpaca: 'error' }));
-        toast.error('Alpaca connection failed. Check your API keys.');
+        toast.error(refreshData.error || 'Alpaca connection failed. Check your API keys.');
       }
     } catch (err) {
       setConnectionStatus(prev => ({ ...prev, alpaca: 'error' }));
@@ -471,6 +512,48 @@ export function ApiKeysSettings() {
     } catch (err) {
       setConnectionStatus(prev => ({ ...prev, [provider]: 'error' }));
       toast.error(`Failed to validate ${provider}`);
+    } finally {
+      setTestingConnection(null);
+    }
+  };
+
+  const testChartImgConnection = async () => {
+    setTestingConnection('chartimg');
+    try {
+      const response = await fetch(`${API_BASE_URL}/charts/test`);
+      const data = await response.json();
+
+      if (data.success) {
+        setConnectionStatus(prev => ({ ...prev, chartimg: 'success' }));
+        toast.success(`Chart-img Connected! Plan: ${data.plan || 'Unknown'}`, { duration: 4000 });
+      } else {
+        setConnectionStatus(prev => ({ ...prev, chartimg: 'error' }));
+        toast.error(data.error || 'Chart-img connection failed. Check your API key.');
+      }
+    } catch (err) {
+      setConnectionStatus(prev => ({ ...prev, chartimg: 'error' }));
+      toast.error('Failed to test Chart-img connection');
+    } finally {
+      setTestingConnection(null);
+    }
+  };
+
+  const testDanelfinConnection = async () => {
+    setTestingConnection('danelfin');
+    try {
+      const response = await fetch(`${API_BASE_URL}/ai/danelfin/test`);
+      const data = await response.json();
+
+      if (data.success) {
+        setConnectionStatus(prev => ({ ...prev, danelfin: 'success' }));
+        toast.success('Danelfin AI Scoring Connected!', { duration: 4000 });
+      } else {
+        setConnectionStatus(prev => ({ ...prev, danelfin: 'error' }));
+        toast.error(data.error || 'Danelfin connection failed. Check your API key.');
+      }
+    } catch (err) {
+      setConnectionStatus(prev => ({ ...prev, danelfin: 'error' }));
+      toast.error('Failed to test Danelfin connection');
     } finally {
       setTestingConnection(null);
     }
@@ -652,6 +735,38 @@ export function ApiKeysSettings() {
                 ) : null}
                 Test Anthropic
               </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={testChartImgConnection}
+                disabled={testingConnection === 'chartimg'}
+                className="text-xs"
+              >
+                {testingConnection === 'chartimg' ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : connectionStatus.chartimg === 'success' ? (
+                  <CheckCircle className="h-3 w-3 text-green-500 mr-1" />
+                ) : connectionStatus.chartimg === 'error' ? (
+                  <XCircle className="h-3 w-3 text-red-500 mr-1" />
+                ) : null}
+                Test Chart-img
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={testDanelfinConnection}
+                disabled={testingConnection === 'danelfin'}
+                className="text-xs"
+              >
+                {testingConnection === 'danelfin' ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : connectionStatus.danelfin === 'success' ? (
+                  <CheckCircle className="h-3 w-3 text-green-500 mr-1" />
+                ) : connectionStatus.danelfin === 'error' ? (
+                  <XCircle className="h-3 w-3 text-red-500 mr-1" />
+                ) : null}
+                Test Danelfin
+              </Button>
             </div>
           </div>
         </CardContent>
@@ -729,6 +844,22 @@ export function ApiKeysSettings() {
         'API keys for real-time web search capabilities.',
         SEARCH_API_KEYS,
         <Globe className="h-4 w-4" />
+      )}
+
+      {/* Chart Image API */}
+      {renderApiKeySection(
+        'Chart Visualization',
+        'Generate TradingView chart images for AI visual pattern analysis.',
+        CHART_API_KEYS,
+        <BarChart2 className="h-4 w-4" />
+      )}
+
+      {/* AI Scoring API */}
+      {renderApiKeySection(
+        'AI Stock Scoring',
+        'Danelfin AI-powered scores: Technical, Fundamental, Sentiment, Low-Risk.',
+        AI_SCORING_API_KEYS,
+        <Zap className="h-4 w-4" />
       )}
 
       {/* Trading API Keys */}

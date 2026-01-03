@@ -18,6 +18,9 @@ from app.backend.routes.history import router as history_router
 from app.backend.routes.monitoring import router as monitoring_router
 from app.backend.routes.system_config import router as system_config_router
 from app.backend.routes.transparency import router as transparency_router
+from app.backend.routes.sync import router as sync_router
+from app.backend.routes.charts import router as charts_router
+from app.backend.routes.danelfin import router as danelfin_router
 
 # Main API router
 api_router = APIRouter()
@@ -41,3 +44,6 @@ api_router.include_router(history_router, tags=["history"])
 api_router.include_router(monitoring_router, tags=["monitoring"])
 api_router.include_router(system_config_router, tags=["system-config"])
 api_router.include_router(transparency_router, tags=["transparency"])
+api_router.include_router(sync_router, tags=["sync"])
+api_router.include_router(charts_router, tags=["charts"])
+api_router.include_router(danelfin_router, tags=["danelfin"])

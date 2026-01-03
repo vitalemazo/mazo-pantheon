@@ -270,18 +270,24 @@ class AlpacaService:
             base_url: API base URL (defaults to env var or paper trading)
             paper: If True, use paper trading API
         """
-        self.api_key = api_key or os.environ.get("ALPACA_API_KEY")
-        self.secret_key = secret_key or os.environ.get("ALPACA_SECRET_KEY")
+        # Try to get credentials from database first (Settings UI), then fall back to env vars
+        self.api_key = api_key or self._get_key_from_db("ALPACA_API_KEY") or os.environ.get("ALPACA_API_KEY")
+        self.secret_key = secret_key or self._get_key_from_db("ALPACA_SECRET_KEY") or os.environ.get("ALPACA_SECRET_KEY")
 
         if base_url:
             self.base_url = base_url
-        elif os.environ.get("ALPACA_BASE_URL"):
-            self.base_url = os.environ.get("ALPACA_BASE_URL")
         else:
-            self.base_url = (
-                "https://paper-api.alpaca.markets/v2" if paper
-                else "https://api.alpaca.markets/v2"
-            )
+            db_base_url = self._get_key_from_db("ALPACA_BASE_URL")
+            env_base_url = os.environ.get("ALPACA_BASE_URL")
+            if db_base_url:
+                self.base_url = db_base_url
+            elif env_base_url:
+                self.base_url = env_base_url
+            else:
+                self.base_url = (
+                    "https://paper-api.alpaca.markets/v2" if paper
+                    else "https://api.alpaca.markets/v2"
+                )
 
         self.paper = paper or "paper" in self.base_url
 
@@ -290,6 +296,25 @@ class AlpacaService:
                 "Alpaca API credentials not found. "
                 "Set ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables."
             )
+
+    @staticmethod
+    def _get_key_from_db(key_name: str) -> Optional[str]:
+        """Try to get an API key from the database (Settings UI)."""
+        try:
+            from sqlalchemy import create_engine, text
+            db_url = os.environ.get("DATABASE_URL", "postgresql://mazo:mazo@mazo-postgres:5432/mazo_pantheon")
+            engine = create_engine(db_url)
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT key_value FROM api_keys WHERE provider = :key AND is_active = true"),
+                    {"key": key_name}
+                )
+                row = result.fetchone()
+                if row and row[0]:
+                    return row[0]
+        except Exception:
+            pass  # Fall back to env vars
+        return None
 
     def _headers(self) -> Dict[str, str]:
         """Get API headers"""

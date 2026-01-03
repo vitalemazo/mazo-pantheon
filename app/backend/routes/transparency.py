@@ -5,13 +5,83 @@ Provides full visibility into the AI trading decision pipeline.
 The "Round Table" endpoint aggregates all stages of a trading cycle.
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
+from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 import logging
+import os
+import requests
+
+from app.backend.database import get_db
+from app.backend.repositories.api_key_repository import ApiKeyRepository
+from app.backend.services.cache_service import get_cached, set_cached, CacheTTL
 
 logger = logging.getLogger(__name__)
+
+
+def get_live_alpaca_account(db: Session) -> dict:
+    """
+    Fetch real-time Alpaca account data for Round Table display.
+    Uses caching to avoid excessive API calls.
+    """
+    cache_key = "transparency:alpaca_account"
+    cached = get_cached(cache_key)
+    if cached:
+        return cached
+    
+    try:
+        repo = ApiKeyRepository(db)
+        
+        # Get credentials
+        api_key = None
+        secret_key = None
+        base_url = None
+        
+        api_key_record = repo.get_api_key_by_provider("ALPACA_API_KEY")
+        if api_key_record:
+            api_key = api_key_record.key_value
+        
+        secret_key_record = repo.get_api_key_by_provider("ALPACA_SECRET_KEY")
+        if secret_key_record:
+            secret_key = secret_key_record.key_value
+        
+        base_url_record = repo.get_api_key_by_provider("ALPACA_BASE_URL")
+        if base_url_record:
+            base_url = base_url_record.key_value
+        
+        # Fallback to environment
+        api_key = api_key or os.environ.get("ALPACA_API_KEY")
+        secret_key = secret_key or os.environ.get("ALPACA_SECRET_KEY")
+        base_url = base_url or os.environ.get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets/v2")
+        
+        if not api_key or not secret_key:
+            return {}
+        
+        headers = {
+            "APCA-API-KEY-ID": api_key,
+            "APCA-API-SECRET-KEY": secret_key,
+        }
+        
+        response = requests.get(f"{base_url}/account", headers=headers, timeout=5)
+        if response.status_code == 200:
+            account = response.json()
+            result = {
+                "portfolio_value": float(account.get("portfolio_value", 0)),
+                "buying_power": float(account.get("buying_power", 0)),
+                "cash": float(account.get("cash", 0)),
+                "equity": float(account.get("equity", 0)),
+                "daytrade_count": int(account.get("daytrade_count", 0)),
+                "day_trades_remaining": 3 - int(account.get("daytrade_count", 0)),
+            }
+            # Cache for 30 seconds
+            set_cached(cache_key, result, CacheTTL.ALPACA_ACCOUNT)
+            return result
+    except Exception as e:
+        logger.warning(f"Failed to fetch live Alpaca account: {e}")
+    
+    return {}
 
 router = APIRouter(prefix="/transparency", tags=["Transparency"])
 
@@ -316,6 +386,7 @@ def _get_agent_type(agent_id: str) -> str:
 async def get_round_table(
     workflow_id: Optional[str] = Query(None, description="Specific workflow ID to inspect"),
     ticker: Optional[str] = Query(None, description="Filter by ticker"),
+    db: Session = Depends(get_db),
 ):
     """
     Get the complete Round Table view of a trading cycle.
@@ -330,6 +401,9 @@ async def get_round_table(
     
     Returns the latest workflow by default, or a specific workflow_id if provided.
     """
+    # Fetch live Alpaca account data upfront
+    live_account = get_live_alpaca_account(db)
+    
     try:
         from sqlalchemy import text
         from app.backend.database.connection import engine
@@ -337,6 +411,12 @@ async def get_round_table(
         response = RoundTableResponse()
         
         with engine.connect() as conn:
+            # Set query timeout (5 seconds for PostgreSQL)
+            try:
+                conn.execute(text("SET statement_timeout = '5000'"))
+            except Exception:
+                pass  # Skip if not supported
+            
             # 1. Get the workflow to inspect
             if workflow_id:
                 wf_query = """
@@ -352,26 +432,34 @@ async def get_round_table(
                 """
                 result = conn.execute(text(wf_query), {"workflow_id": workflow_id})
             else:
-                # Get latest workflow - order by MAX timestamp
-                wf_query = """
+                # Try to find the latest REAL workflow with agent signals
+                # Filter out test data (portfolio_equity = 100000 is fake test data)
+                wf_query_with_agents = """
                     SELECT 
-                        workflow_id, workflow_type, 
-                        MAX(ticker) as ticker,
-                        MIN(timestamp) as started_at,
-                        MAX(timestamp) as completed_at,
-                        MAX(CASE WHEN step_name = 'trading_cycle_complete' THEN 'completed'
-                                 WHEN step_name = 'trading_cycle_error' THEN 'failed'
-                                 ELSE 'running' END) as final_status
-                    FROM workflow_events
-                    WHERE workflow_type = 'automated_trading'
-                    GROUP BY workflow_id, workflow_type
-                    ORDER BY MAX(timestamp) DESC
+                        a.workflow_id, 
+                        'automated_trading' as workflow_type,
+                        MAX(a.ticker) as ticker,
+                        MIN(a.timestamp) as started_at,
+                        MAX(a.timestamp) as completed_at,
+                        'completed' as final_status
+                    FROM agent_signals a
+                    LEFT JOIN pm_decisions pm ON a.workflow_id = pm.workflow_id
+                    WHERE (pm.portfolio_equity IS NULL OR pm.portfolio_equity != 100000)
+                    GROUP BY a.workflow_id
+                    ORDER BY MAX(a.timestamp) DESC
                     LIMIT 1
                 """
-                if ticker:
+                result = conn.execute(text(wf_query_with_agents))
+                wf_row_from_agents = result.fetchone()
+                
+                # If we found a workflow with agents, use it directly
+                if wf_row_from_agents and wf_row_from_agents[0]:
+                    wf_row = wf_row_from_agents
+                else:
+                    # Fall back to workflow_events
                     wf_query = """
                         SELECT 
-                            workflow_id, workflow_type,
+                            workflow_id, workflow_type, 
                             MAX(ticker) as ticker,
                             MIN(timestamp) as started_at,
                             MAX(timestamp) as completed_at,
@@ -379,16 +467,35 @@ async def get_round_table(
                                      WHEN step_name = 'trading_cycle_error' THEN 'failed'
                                      ELSE 'running' END) as final_status
                         FROM workflow_events
-                        WHERE workflow_type = 'automated_trading' AND ticker = :ticker
+                        WHERE workflow_type = 'automated_trading'
                         GROUP BY workflow_id, workflow_type
                         ORDER BY MAX(timestamp) DESC
                         LIMIT 1
                     """
-                    result = conn.execute(text(wf_query), {"ticker": ticker})
-                else:
-                    result = conn.execute(text(wf_query))
+                    if ticker:
+                        wf_query = """
+                            SELECT 
+                                workflow_id, workflow_type,
+                                MAX(ticker) as ticker,
+                                MIN(timestamp) as started_at,
+                                MAX(timestamp) as completed_at,
+                                MAX(CASE WHEN step_name = 'trading_cycle_complete' THEN 'completed'
+                                         WHEN step_name = 'trading_cycle_error' THEN 'failed'
+                                         ELSE 'running' END) as final_status
+                            FROM workflow_events
+                            WHERE workflow_type = 'automated_trading' AND ticker = :ticker
+                            GROUP BY workflow_id, workflow_type
+                            ORDER BY MAX(timestamp) DESC
+                            LIMIT 1
+                        """
+                        result = conn.execute(text(wf_query), {"ticker": ticker})
+                    else:
+                        result = conn.execute(text(wf_query))
+                    wf_row = result.fetchone()
             
-            wf_row = result.fetchone()
+            # For specific workflow_id queries, fetch the row
+            if workflow_id:
+                wf_row = result.fetchone()
             if not wf_row:
                 response.status = "no_data"
                 response.errors.append("No workflow data found")
@@ -485,6 +592,40 @@ async def get_round_table(
             
             response.universe_risk.guard_rails = guard_rails
             response.universe_risk.status = "pass" if response.universe_risk.auto_trading_enabled else "fail"
+            
+            # ALWAYS use LIVE Alpaca data for portfolio values (real-time accuracy)
+            if live_account:
+                response.universe_risk.portfolio_value = live_account.get("portfolio_value")
+                response.universe_risk.buying_power = live_account.get("buying_power")
+                response.universe_risk.cash_available = live_account.get("cash")
+                response.universe_risk.day_trades_remaining = live_account.get("day_trades_remaining", 3)
+                
+                # Update PDT status based on live data
+                if response.universe_risk.day_trades_remaining is not None:
+                    if response.universe_risk.day_trades_remaining <= 0:
+                        response.universe_risk.pdt_status = "restricted"
+                    elif response.universe_risk.day_trades_remaining <= 1:
+                        response.universe_risk.pdt_status = "warning"
+                    else:
+                        response.universe_risk.pdt_status = "clear"
+                    
+                    # Update or add PDT guard rail
+                    pdt_found = False
+                    for gr in response.universe_risk.guard_rails:
+                        if gr.name == "PDT Status":
+                            gr.value = response.universe_risk.day_trades_remaining
+                            gr.status = "pass" if response.universe_risk.pdt_status == "clear" else ("fail" if response.universe_risk.pdt_status == "restricted" else "skip")
+                            gr.message = f"{response.universe_risk.day_trades_remaining} day trades remaining"
+                            pdt_found = True
+                            break
+                    if not pdt_found:
+                        response.universe_risk.guard_rails.append(GuardRailCheck(
+                            name="PDT Status",
+                            status="pass" if response.universe_risk.pdt_status == "clear" else "skip",
+                            value=response.universe_risk.day_trades_remaining,
+                            threshold=3,
+                            message=f"{response.universe_risk.day_trades_remaining} day trades remaining"
+                        ))
             
             # =================================================================
             # STAGE 2: Strategy Engine
@@ -799,7 +940,16 @@ async def populate_test_data():
     """
     Populate test data for Round Table demonstration.
     Creates a complete workflow with all 8 stages for testing the UI.
+    
+    DISABLED in production - returns error unless ENABLE_TEST_DATA=true env var is set.
     """
+    import os
+    if os.environ.get("ENABLE_TEST_DATA", "false").lower() != "true":
+        raise HTTPException(
+            status_code=403, 
+            detail="Test data population disabled. Set ENABLE_TEST_DATA=true to enable."
+        )
+    
     try:
         from sqlalchemy import text
         from app.backend.database.connection import engine
@@ -986,27 +1136,36 @@ async def get_round_table_history(
     try:
         from sqlalchemy import text
         from app.backend.database.connection import engine
-        
+
         with engine.connect() as conn:
+            # Set query timeout (3 seconds)
+            try:
+                conn.execute(text("SET statement_timeout = '3000'"))
+            except Exception:
+                pass
+            
+            # Query for real workflows only (filter out test data with portfolio_equity = 100000)
             query = """
-                SELECT 
-                    workflow_id,
-                    MAX(ticker) as ticker,
-                    MIN(timestamp) as started_at,
-                    MAX(timestamp) as completed_at,
-                    MAX(CASE WHEN step_name = 'trading_cycle_complete' THEN 'completed'
-                             WHEN step_name = 'trading_cycle_error' THEN 'failed'
+                SELECT
+                    we.workflow_id,
+                    MAX(we.ticker) as ticker,
+                    MIN(we.timestamp) as started_at,
+                    MAX(we.timestamp) as completed_at,
+                    MAX(CASE WHEN we.step_name = 'trading_cycle_complete' THEN 'completed'
+                             WHEN we.step_name = 'trading_cycle_error' THEN 'failed'
                              ELSE 'running' END) as status
-                FROM workflow_events
-                WHERE workflow_type = 'automated_trading'
+                FROM workflow_events we
+                LEFT JOIN pm_decisions pm ON we.workflow_id = pm.workflow_id
+                WHERE we.workflow_type = 'automated_trading'
+                  AND (pm.portfolio_equity IS NULL OR pm.portfolio_equity != 100000)
             """
             
             if ticker:
-                query += " AND ticker = :ticker"
+                query += " AND we.ticker = :ticker"
             
             query += """
-                GROUP BY workflow_id
-                ORDER BY MIN(timestamp) DESC
+                GROUP BY we.workflow_id
+                ORDER BY MIN(we.timestamp) DESC
                 LIMIT :limit
             """
             

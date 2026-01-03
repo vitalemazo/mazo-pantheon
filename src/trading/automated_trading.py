@@ -22,7 +22,8 @@ from src.trading.alpaca_service import AlpacaService
 from src.trading.performance_tracker import get_performance_tracker
 from src.trading.config import (
     get_signal_config, get_capital_config, get_scanner_config, get_cooldown_config,
-    get_small_account_config, get_effective_trading_params, is_small_account_mode_active
+    get_small_account_config, get_effective_trading_params, is_small_account_mode_active,
+    get_danelfin_config
 )
 from src.graph.portfolio_context import build_portfolio_context, PortfolioContext
 from integration.mazo_bridge import MazoBridge
@@ -573,7 +574,19 @@ class AutomatedTradingService:
             # =============================================
             log_step("capital_rotation", "started")
             await self._manage_capital_rotation(result, execute_trades_flag, dry_run)
-            log_step("capital_rotation", "completed")
+            
+            # Log capital rotation with REAL portfolio data
+            try:
+                acct = self.alpaca.get_account()
+                day_trades_remaining = 3 - int(getattr(acct, 'daytrade_count', 0))
+                log_step("capital_rotation", "completed", payload={
+                    "portfolio_value": float(acct.portfolio_value) if acct else None,
+                    "buying_power": float(acct.buying_power) if acct else None,
+                    "cash_available": float(acct.cash) if acct else None,
+                    "day_trades_remaining": day_trades_remaining,
+                })
+            except Exception:
+                log_step("capital_rotation", "completed")
             
             # =============================================
             # STEP 1: Strategy Engine Quick Screening
@@ -1039,7 +1052,244 @@ class AutomatedTradingService:
         mode_label = "small-account" if small_account_active else "standard"
         logger.info(f"Screening universe ({mode_label}): {len(tickers)} tickers from positions, watchlist, and sector rotation")
         
-        return tickers[:max_universe_size]
+        # Cap initial universe before expensive filtering
+        tickers = tickers[:max_universe_size]
+        
+        # Apply FMP liquidity filter (price/volume)
+        if small_account_active:
+            # Smaller accounts need more affordable, liquid stocks
+            tickers = self._apply_liquidity_filter(
+                tickers,
+                min_price=1.0,
+                max_price=100.0,  # Focus on sub-$100 for small accounts
+                min_avg_volume=200000,  # Higher volume for better fills
+            )
+        else:
+            tickers = self._apply_liquidity_filter(tickers)
+        
+        # Apply Danelfin AI scoring filter
+        tickers, danelfin_scores = self._apply_danelfin_filter(tickers, small_account_active)
+
+        # Store scores for downstream use
+        self._universe_danelfin_scores = danelfin_scores
+
+        return tickers
+    
+    def _apply_danelfin_filter(
+        self,
+        tickers: List[str],
+        small_account_active: bool = False,
+    ) -> Tuple[List[str], Dict[str, Any]]:
+        """
+        Apply Danelfin AI scoring to filter and prioritize universe.
+        
+        Returns:
+            Tuple of (filtered_tickers, danelfin_scores_dict)
+        """
+        try:
+            from src.tools.danelfin_api import (
+                is_danelfin_enabled,
+                filter_universe_by_danelfin,
+                prioritize_by_danelfin,
+            )
+            
+            if not is_danelfin_enabled():
+                logger.debug("Danelfin integration disabled, skipping filter")
+                return tickers, {}
+            
+            danelfin_config = get_danelfin_config()
+            
+            # Determine minimum scores based on mode
+            min_ai_score = danelfin_config.min_ai_score
+            if small_account_active and danelfin_config.min_ai_score_small_account > 0:
+                min_ai_score = danelfin_config.min_ai_score_small_account
+            
+            min_low_risk = danelfin_config.min_low_risk_score
+            
+            # Filter by Danelfin scores
+            filtered_tickers, scores, filtered_out = filter_universe_by_danelfin(
+                tickers,
+                min_ai_score=min_ai_score,
+                min_low_risk=min_low_risk,
+            )
+            
+            if filtered_out:
+                logger.info(
+                    f"[Danelfin] Filtered {len(filtered_out)} tickers below thresholds "
+                    f"(min AI={min_ai_score}, min LowRisk={min_low_risk})"
+                )
+            
+            # Prioritize by Danelfin score if enabled
+            if danelfin_config.prioritize_in_selection and scores:
+                filtered_tickers = prioritize_by_danelfin(filtered_tickers, scores)
+                logger.info(f"[Danelfin] Prioritized {len(filtered_tickers)} tickers by AI score")
+            
+            # Convert DanelfinScore objects to dicts for storage
+            scores_dict = {}
+            for ticker, score in scores.items():
+                if hasattr(score, 'to_dict'):
+                    scores_dict[ticker] = score.to_dict()
+                else:
+                    scores_dict[ticker] = score
+            
+            return filtered_tickers, scores_dict
+            
+        except ImportError as e:
+            logger.debug(f"Danelfin not available: {e}")
+            return tickers, {}
+        except Exception as e:
+            logger.warning(f"Danelfin filter error: {e}")
+            return tickers, {}
+    
+    def _apply_liquidity_filter(
+        self,
+        tickers: List[str],
+        min_price: float = 1.0,
+        max_price: float = 500.0,
+        min_avg_volume: int = 100000,
+    ) -> List[str]:
+        """
+        Filter tickers by liquidity criteria using FMP data.
+        
+        Args:
+            tickers: List of ticker symbols
+            min_price: Minimum stock price (default $1)
+            max_price: Maximum stock price (default $500)
+            min_avg_volume: Minimum average daily volume (default 100k)
+        
+        Returns:
+            List of tickers meeting liquidity requirements
+        """
+        if not tickers:
+            return tickers
+        
+        try:
+            from src.tools.api import get_prices
+            from datetime import datetime, timedelta
+            
+            end_date = datetime.now().strftime("%Y-%m-%d")
+            start_date = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+            
+            liquid_tickers = []
+            illiquid_tickers = []
+            
+            for ticker in tickers[:50]:  # Limit API calls
+                try:
+                    prices = get_prices(ticker, start_date, end_date)
+                    
+                    if not prices:
+                        illiquid_tickers.append((ticker, "no price data"))
+                        continue
+                    
+                    # Get latest price and average volume
+                    latest_price = prices[0].close if prices else 0
+                    avg_volume = sum(p.volume for p in prices if p.volume) / len(prices) if prices else 0
+                    
+                    # Apply filters
+                    if latest_price < min_price:
+                        illiquid_tickers.append((ticker, f"price ${latest_price:.2f} < ${min_price}"))
+                    elif latest_price > max_price:
+                        illiquid_tickers.append((ticker, f"price ${latest_price:.2f} > ${max_price}"))
+                    elif avg_volume < min_avg_volume:
+                        illiquid_tickers.append((ticker, f"volume {avg_volume:.0f} < {min_avg_volume}"))
+                    else:
+                        liquid_tickers.append(ticker)
+                        
+                except Exception as e:
+                    # Include ticker on error (don't filter out due to API issues)
+                    liquid_tickers.append(ticker)
+                    logger.debug(f"Liquidity check skipped for {ticker}: {e}")
+            
+            # Add remaining tickers that weren't checked (due to API limit)
+            unchecked = [t for t in tickers[50:] if t not in liquid_tickers]
+            liquid_tickers.extend(unchecked)
+            
+            if illiquid_tickers:
+                logger.info(
+                    f"[Liquidity] Filtered {len(illiquid_tickers)} illiquid tickers: "
+                    f"{', '.join([f'{t[0]}({t[1]})' for t in illiquid_tickers[:5]])}"
+                )
+            
+            logger.debug(f"[Liquidity] {len(liquid_tickers)}/{len(tickers)} tickers passed filter")
+            return liquid_tickers
+            
+        except Exception as e:
+            logger.debug(f"Liquidity filter error, returning all tickers: {e}")
+            return tickers
+    
+    def _annotate_signal_with_danelfin(
+        self,
+        signal: TradingSignal,
+        danelfin_data: Dict[str, Any],
+        danelfin_config: Any,
+    ) -> TradingSignal:
+        """
+        Annotate a trading signal with Danelfin data.
+        
+        - Adds Danelfin scores to signal metadata
+        - Adjusts confidence if Danelfin disagrees
+        - Flags signals for review if needed
+        """
+        if not danelfin_data or not danelfin_data.get('success', False):
+            # No Danelfin data, return signal unchanged
+            return signal
+        
+        try:
+            # Add Danelfin data to signal metadata
+            if not hasattr(signal, 'metadata') or signal.metadata is None:
+                signal.metadata = {}
+            
+            signal.metadata['danelfin'] = {
+                'ai_score': danelfin_data.get('ai_score', 0),
+                'technical': danelfin_data.get('technical', 0),
+                'fundamental': danelfin_data.get('fundamental', 0),
+                'sentiment': danelfin_data.get('sentiment', 0),
+                'low_risk': danelfin_data.get('low_risk', 0),
+                'signal': danelfin_data.get('signal', 'unknown'),
+            }
+            
+            # Check for disagreement
+            ai_score = danelfin_data.get('ai_score', 5)
+            signal_direction = signal.direction.value.lower() if hasattr(signal.direction, 'value') else str(signal.direction).lower()
+            
+            # If we're bullish but Danelfin score is very low, flag it
+            if signal_direction in ('long', 'buy'):
+                if ai_score < danelfin_config.disagreement_threshold:
+                    # Apply confidence penalty
+                    original_confidence = signal.confidence
+                    signal.confidence = int(signal.confidence * danelfin_config.disagreement_confidence_penalty)
+                    signal.metadata['danelfin']['disagreement'] = True
+                    signal.metadata['danelfin']['confidence_adjusted'] = True
+                    signal.metadata['danelfin']['original_confidence'] = original_confidence
+                    logger.warning(
+                        f"[Danelfin] Disagreement for {signal.ticker}: "
+                        f"BUY signal but AI score is {ai_score}/10 (threshold: {danelfin_config.disagreement_threshold}). "
+                        f"Confidence reduced {original_confidence}% → {signal.confidence}%"
+                    )
+                elif ai_score >= 8:
+                    # Boost confidence slightly for strong agreement
+                    signal.confidence = min(100, int(signal.confidence * 1.05))
+                    signal.metadata['danelfin']['strong_agreement'] = True
+            
+            # For sell signals, low Danelfin score is actually agreement
+            elif signal_direction in ('short', 'sell'):
+                if ai_score >= 7:
+                    # Danelfin thinks it's a good stock, but we want to sell - flag it
+                    original_confidence = signal.confidence
+                    signal.confidence = int(signal.confidence * 0.9)
+                    signal.metadata['danelfin']['disagreement'] = True
+                    signal.metadata['danelfin']['confidence_adjusted'] = True
+                    logger.warning(
+                        f"[Danelfin] Disagreement for {signal.ticker}: "
+                        f"SELL signal but AI score is {ai_score}/10 (high). "
+                        f"Confidence reduced {original_confidence}% → {signal.confidence}%"
+                    )
+            
+            return signal
+            
+        except Exception as e:
+            logger.debug(f"Error annotating signal with Danelfin: {e}")
+            return signal
     
     async def _run_strategy_screening(
         self,
@@ -1049,8 +1299,13 @@ class AutomatedTradingService:
         """Run strategy engine screening on tickers.
         
         Signals include fractionable status from Alpaca asset info.
+        Annotates signals with Danelfin data if available.
         """
         all_signals = []
+        
+        # Get Danelfin scores (already fetched during universe building)
+        danelfin_scores = getattr(self, '_universe_danelfin_scores', {})
+        danelfin_config = get_danelfin_config()
 
         for ticker in tickers:
             try:
@@ -1059,8 +1314,15 @@ class AutomatedTradingService:
                     ticker, 
                     alpaca_service=self.alpaca
                 )
+                
                 for signal in signals:
                     if signal.confidence >= min_confidence:
+                        # Annotate with Danelfin data
+                        signal = self._annotate_signal_with_danelfin(
+                            signal, 
+                            danelfin_scores.get(ticker),
+                            danelfin_config
+                        )
                         all_signals.append(signal)
             except Exception as e:
                 logger.warning(f"Screening failed for {ticker}: {e}")
@@ -1112,7 +1374,7 @@ class AutomatedTradingService:
                         query=query,
                         mode="automated_validation",
                         response=research.answer if research else None,
-                        sources=[{"source": s} for s in (research.sources or [])] if research else None,
+                        sources=[{"source": s} for s in (research.data_sources or [])] if research else None,
                         sentiment=sentiment,
                         sentiment_confidence="medium",
                         key_points=[],
@@ -1340,12 +1602,47 @@ class AutomatedTradingService:
             agent_signals = {signal.ticker: {get_agent_name(s): s for s in result_agent_signals}} if result_agent_signals else {}
             
             total = bullish_count + bearish_count
+            neutral_count = len(result_agent_signals) - bullish_count - bearish_count
             if total > 0:
                 if bullish_count > bearish_count:
                     consensus_direction = "bullish"
                 elif bearish_count > bullish_count:
                     consensus_direction = "bearish"
                 consensus_confidence = total_confidence / total
+            
+            # Log PM decision with full context
+            if event_logger and pm_decision:
+                try:
+                    # Get portfolio context for logging
+                    portfolio_equity = None
+                    portfolio_cash = None
+                    try:
+                        acct = self.alpaca.get_account()
+                        portfolio_equity = float(acct.equity) if acct else None
+                        portfolio_cash = float(acct.cash) if acct else None
+                    except Exception:
+                        pass
+                    
+                    event_logger.log_pm_decision(
+                        workflow_id=workflow_id,
+                        ticker=signal.ticker,
+                        action=pm_decision.get("action", "hold"),
+                        quantity=pm_decision.get("quantity"),
+                        stop_loss_pct=pm_decision.get("stop_loss_pct"),
+                        take_profit_pct=pm_decision.get("take_profit_pct"),
+                        confidence=pm_decision.get("confidence"),
+                        reasoning=pm_decision.get("reasoning") or (result.portfolio_manager_reasoning if hasattr(result, 'portfolio_manager_reasoning') else None),
+                        bullish_count=bullish_count,
+                        bearish_count=bearish_count,
+                        neutral_count=neutral_count,
+                        consensus_direction=consensus_direction,
+                        consensus_score=consensus_confidence,
+                        portfolio_equity=portfolio_equity,
+                        portfolio_cash=portfolio_cash,
+                        mazo_sentiment=validation.mazo_sentiment if validation else None,
+                    )
+                except Exception as pm_log_err:
+                    logger.debug(f"Failed to log PM decision: {pm_log_err}")
             
             return AnalysisResult(
                 ticker=signal.ticker,
@@ -1409,6 +1706,10 @@ class AutomatedTradingService:
         1. Standard mode: Uses signal.position_size_pct of available capital
         2. Small account mode: Uses fixed notional (dollar) amount per trade
 
+        Also applies Danelfin-based size adjustments:
+        - High Danelfin score (AI >= 8, Low Risk >= 6): boost size
+        - Low Danelfin score (AI <= 4): reduce size
+
         Supports fractional shares when:
         - ALLOW_FRACTIONAL=true (global setting)
         - AND signal.fractionable=True (asset-specific)
@@ -1437,6 +1738,9 @@ class AutomatedTradingService:
             position_pct = signal.position_size_pct or 0.05
             available = min(portfolio.cash, portfolio.buying_power)
             position_value = available * position_pct
+        
+        # Apply Danelfin-based size adjustment
+        position_value = self._apply_danelfin_size_adjustment(signal.ticker, position_value)
 
         # Convert to shares
         if signal.entry_price and signal.entry_price > 0:
@@ -1463,6 +1767,81 @@ class AutomatedTradingService:
 
         # Fallback: return minimum
         return fractional_config.min_fractional_qty if use_fractional else 1
+    
+    def _apply_danelfin_size_adjustment(
+        self,
+        ticker: str,
+        base_value: float,
+    ) -> float:
+        """
+        Apply Danelfin-based position size adjustment.
+
+        - High AI score (>=8) + High Low Risk (>=6): boost by config factor
+        - Low AI score (<=4): reduce by config factor
+        - Otherwise: no adjustment
+        
+        Also stores allocation reason for Round Table logging.
+        """
+        try:
+            danelfin_config = get_danelfin_config()
+
+            if not danelfin_config.enabled:
+                return base_value
+
+            # Get Danelfin score from cached universe data
+            danelfin_scores = getattr(self, '_universe_danelfin_scores', {})
+            score_data = danelfin_scores.get(ticker)
+
+            if not score_data or not score_data.get('success', False):
+                return base_value
+
+            ai_score = score_data.get('ai_score', 5)
+            low_risk = score_data.get('low_risk', 5)
+
+            # Track allocation reasons for Round Table
+            allocation_reasons = getattr(self, '_allocation_reasons', {})
+
+            # High conviction: AI >= 8 AND Low Risk >= 6
+            if ai_score >= 8 and low_risk >= 6:
+                boost = danelfin_config.high_score_size_boost
+                adjusted = base_value * boost
+                reason = f"Selected for boosted allocation: Danelfin AI={ai_score}/10, LowRisk={low_risk}/10 → +{int((boost-1)*100)}% size"
+                allocation_reasons[ticker] = {
+                    "type": "danelfin_boost",
+                    "ai_score": ai_score,
+                    "low_risk": low_risk,
+                    "adjustment": boost,
+                    "reason": reason,
+                }
+                self._allocation_reasons = allocation_reasons
+                logger.info(f"[Danelfin] {ticker}: {reason} (${base_value:.2f} → ${adjusted:.2f})")
+                return adjusted
+
+            # Low conviction: AI <= 4
+            if ai_score <= 4:
+                reduction = danelfin_config.low_score_size_reduction
+                adjusted = base_value * reduction
+                reason = f"Reduced allocation: Danelfin AI={ai_score}/10 (low) → -{int((1-reduction)*100)}% size"
+                allocation_reasons[ticker] = {
+                    "type": "danelfin_reduce",
+                    "ai_score": ai_score,
+                    "low_risk": low_risk,
+                    "adjustment": reduction,
+                    "reason": reason,
+                }
+                self._allocation_reasons = allocation_reasons
+                logger.info(f"[Danelfin] {ticker}: {reason} (${base_value:.2f} → ${adjusted:.2f})")
+                return adjusted
+
+            return base_value
+
+        except Exception as e:
+            logger.debug(f"Danelfin size adjustment skipped for {ticker}: {e}")
+            return base_value
+    
+    def get_allocation_reasons(self) -> Dict[str, Dict]:
+        """Get Danelfin allocation reasons for Round Table logging."""
+        return getattr(self, '_allocation_reasons', {})
     
     async def _execute_trade(
         self,

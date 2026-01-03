@@ -73,16 +73,17 @@ import {
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
-// Risk presets
+// Risk presets - max positions scale with account size
 const RISK_PRESETS = {
-  conservative: { maxPositions: 3, stopLossPercent: 3, takeProfitPercent: 6, budgetPercent: 15 },
-  balanced: { maxPositions: 5, stopLossPercent: 5, takeProfitPercent: 10, budgetPercent: 25 },
-  aggressive: { maxPositions: 8, stopLossPercent: 8, takeProfitPercent: 20, budgetPercent: 40 },
+  conservative: { maxPositions: 5, stopLossPercent: 3, takeProfitPercent: 6, budgetPercent: 15 },
+  balanced: { maxPositions: 10, stopLossPercent: 5, takeProfitPercent: 10, budgetPercent: 25 },
+  aggressive: { maxPositions: 15, stopLossPercent: 8, takeProfitPercent: 15, budgetPercent: 40 },
+  diversified: { maxPositions: 25, stopLossPercent: 5, takeProfitPercent: 12, budgetPercent: 50 },
 };
 
 interface TradingConfig {
   budgetPercent: number;
-  riskLevel: 'conservative' | 'balanced' | 'aggressive';
+  riskLevel: 'conservative' | 'balanced' | 'aggressive' | 'diversified';
   maxPositions: number;
   stopLossPercent: number;
   takeProfitPercent: number;
@@ -138,6 +139,32 @@ export function ControlTower() {
     { refreshInterval: 30000 }
   );
 
+  // State for Danelfin ticker selection (use first position or latest workflow ticker)
+  const [danelfinTicker, setDanelfinTicker] = useState<string>('');
+
+  // Get latest ticker from positions or workflows
+  useEffect(() => {
+    if (!danelfinTicker) {
+      // Try to get from positions first
+      if (performance?.positions && performance.positions.length > 0) {
+        setDanelfinTicker(performance.positions[0].ticker);
+      } else if (recentWorkflows && recentWorkflows.length > 0) {
+        // Try to get from recent workflows
+        const firstTicker = recentWorkflows[0]?.tickers?.[0];
+        if (firstTicker) {
+          setDanelfinTicker(firstTicker);
+        }
+      }
+    }
+  }, [performance?.positions, recentWorkflows, danelfinTicker]);
+
+  // Fetch Danelfin scores for selected ticker
+  const { data: danelfinData, isLoading: danelfinLoading } = useSWR(
+    danelfinTicker ? `${API_BASE_URL}/ai/danelfin/score/${danelfinTicker}` : null,
+    fetcher,
+    { refreshInterval: 300000 } // Refresh every 5 minutes (scores don't change often)
+  );
+
   // Fetch watchlist
   const { data: watchlistData } = useSWR(
     `${API_BASE_URL}/trading/watchlist`,
@@ -145,17 +172,26 @@ export function ControlTower() {
     { refreshInterval: 60000 }
   );
 
+  // Fetch user's saved risk settings from backend
+  const { data: userSettings, mutate: mutateUserSettings } = useSWR(
+    `${API_BASE_URL}/system/user/risk-settings`,
+    fetcher,
+    { revalidateOnFocus: false }
+  );
+
   // Local UI state
   const [isStarting, setIsStarting] = useState(false);
   const [showMergeNotice, setShowMergeNotice] = useState(true);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
 
-  // Map store config to component config format
+  // Map store config to component config format, preferring saved settings
+  const savedSettings = userSettings?.settings;
   const config: TradingConfig = {
-    budgetPercent: tradingConfig?.budgetPercent || 25,
-    riskLevel: tradingConfig?.riskLevel || 'balanced',
-    maxPositions: tradingConfig?.maxPositions || 5,
-    stopLossPercent: tradingConfig?.stopLossPercent || 5,
-    takeProfitPercent: tradingConfig?.takeProfitPercent ?? 10,
+    budgetPercent: savedSettings?.budget_percent ?? tradingConfig?.budgetPercent ?? 25,
+    riskLevel: (savedSettings?.risk_level ?? tradingConfig?.riskLevel ?? 'balanced') as TradingConfig['riskLevel'],
+    maxPositions: savedSettings?.max_positions ?? tradingConfig?.maxPositions ?? 5,
+    stopLossPercent: savedSettings?.stop_loss_percent ?? tradingConfig?.stopLossPercent ?? 5,
+    takeProfitPercent: savedSettings?.take_profit_percent ?? tradingConfig?.takeProfitPercent ?? 10,
   };
   
   const setConfig = (updater: TradingConfig | ((prev: TradingConfig) => TradingConfig)) => {
@@ -163,6 +199,36 @@ export function ControlTower() {
       setTradingConfig(updater(config));
     } else {
       setTradingConfig(updater);
+    }
+  };
+
+  // Save settings to backend
+  const saveSettingsToBackend = async (newConfig: TradingConfig) => {
+    setIsSavingSettings(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/system/user/risk-settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          risk_level: newConfig.riskLevel,
+          max_positions: newConfig.maxPositions,
+          stop_loss_percent: newConfig.stopLossPercent,
+          take_profit_percent: newConfig.takeProfitPercent,
+          budget_percent: newConfig.budgetPercent,
+        }),
+      });
+      
+      if (response.ok) {
+        await mutateUserSettings();
+        toast.success(`Risk settings saved: ${newConfig.riskLevel}`);
+      } else {
+        toast.error('Failed to save settings');
+      }
+    } catch (error) {
+      console.error('Failed to save settings:', error);
+      toast.error('Failed to save settings');
+    } finally {
+      setIsSavingSettings(false);
     }
   };
 
@@ -268,14 +334,20 @@ export function ControlTower() {
     }
   };
 
-  // Handle risk level change
-  const handleRiskChange = (level: TradingConfig['riskLevel']) => {
+  // Handle risk level change - update local state AND save to backend
+  const handleRiskChange = async (level: TradingConfig['riskLevel']) => {
     const preset = RISK_PRESETS[level];
-    setConfig(prev => ({
-      ...prev,
+    const newConfig = {
+      ...config,
       riskLevel: level,
       ...preset,
-    }));
+    };
+    
+    // Update local state immediately
+    setConfig(newConfig);
+    
+    // Save to backend (async)
+    await saveSettingsToBackend(newConfig);
   };
 
   // Handle manual refresh
@@ -715,6 +787,11 @@ export function ControlTower() {
                       <Slider
                         value={[config.budgetPercent]}
                         onValueChange={(value) => setConfig(prev => ({ ...prev, budgetPercent: value[0] }))}
+                        onValueCommit={(value) => {
+                          // Save to backend when user finishes dragging
+                          const newConfig = { ...config, budgetPercent: value[0] };
+                          saveSettingsToBackend(newConfig);
+                        }}
                         min={5}
                         max={100}
                         step={5}
@@ -744,25 +821,29 @@ export function ControlTower() {
                       <Shield className="w-5 h-5 text-orange-400" />
                       Risk Level
                       <InfoTooltip content={TOOLTIP_CONTENT.riskLevel} />
+                      {isSavingSettings && (
+                        <RefreshCw className="w-4 h-4 text-slate-400 animate-spin ml-2" />
+                      )}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="grid grid-cols-3 gap-2">
-                      {(['conservative', 'balanced', 'aggressive'] as const).map((level) => (
+                    <div className="grid grid-cols-4 gap-2">
+                      {(['conservative', 'balanced', 'aggressive', 'diversified'] as const).map((level) => (
                         <Button
                           key={level}
                           variant={config.riskLevel === level ? 'default' : 'outline'}
                           size="sm"
                           onClick={() => handleRiskChange(level)}
-                          disabled={isAutonomousEnabled}
-                          className={config.riskLevel === level 
-                            ? level === 'conservative' ? 'bg-blue-600' 
-                            : level === 'balanced' ? 'bg-purple-600' 
-                            : 'bg-red-600'
-                            : 'border-slate-600'
+                          disabled={isAutonomousEnabled || isSavingSettings}
+                          className={config.riskLevel === level
+                            ? level === 'conservative' ? 'bg-blue-600 hover:bg-blue-700'
+                            : level === 'balanced' ? 'bg-purple-600 hover:bg-purple-700'
+                            : level === 'aggressive' ? 'bg-red-600 hover:bg-red-700'
+                            : 'bg-emerald-600 hover:bg-emerald-700'
+                            : 'border-slate-600 hover:border-slate-500'
                           }
                         >
-                          {level.charAt(0).toUpperCase() + level.slice(1)}
+                          {level === 'diversified' ? 'Diversified' : level.charAt(0).toUpperCase() + level.slice(1)}
                         </Button>
                       ))}
                     </div>
@@ -900,6 +981,121 @@ export function ControlTower() {
 
             {/* AI Team Tab */}
             <TabsContent value="agents" className="space-y-4">
+              {/* Danelfin AI Scores Card */}
+              <Card className="bg-gradient-to-br from-purple-900/30 to-indigo-900/30 border-purple-500/30">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center justify-between text-white">
+                    <div className="flex items-center gap-2">
+                      <Zap className="w-5 h-5 text-yellow-400" />
+                      Danelfin AI Scores
+                    </div>
+                    {danelfinData?.success && (
+                      <Badge className={
+                        danelfinData.ai_score >= 8 ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                        danelfinData.ai_score >= 6 ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                        danelfinData.ai_score >= 4 ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
+                        'bg-red-500/20 text-red-400 border-red-500/30'
+                      }>
+                        {danelfinData.signal?.replace('_', ' ').toUpperCase()}
+                      </Badge>
+                    )}
+                  </CardTitle>
+                  <CardDescription className="flex items-center gap-2">
+                    External AI validation for your trades
+                    {performance?.positions && performance.positions.length > 0 && (
+                      <select
+                        value={danelfinTicker}
+                        onChange={(e) => setDanelfinTicker(e.target.value)}
+                        className="ml-2 bg-slate-700 border-slate-600 rounded px-2 py-1 text-xs text-white"
+                      >
+                        {performance.positions.map((pos: Position) => (
+                          <option key={pos.ticker} value={pos.ticker}>{pos.ticker}</option>
+                        ))}
+                      </select>
+                    )}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {!danelfinTicker ? (
+                    <div className="text-center py-6 text-slate-500">
+                      <Zap className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No positions to analyze</p>
+                      <p className="text-xs mt-1">Add positions to see Danelfin AI scores</p>
+                    </div>
+                  ) : danelfinLoading ? (
+                    <div className="text-center py-6 text-slate-400">
+                      <RefreshCw className="w-6 h-6 mx-auto mb-2 animate-spin" />
+                      <p className="text-sm">Loading Danelfin scores...</p>
+                    </div>
+                  ) : danelfinData?.success ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between text-sm mb-4">
+                        <span className="text-slate-400">Ticker: <span className="text-white font-bold">{danelfinData.ticker}</span></span>
+                        <span className="text-xs text-slate-500">Updated: {danelfinData.date}</span>
+                      </div>
+                      
+                      {/* Score Grid */}
+                      <div className="grid grid-cols-5 gap-2">
+                        {[
+                          { label: 'AI Score', value: danelfinData.ai_score, key: 'ai_score', color: 'purple' },
+                          { label: 'Technical', value: danelfinData.technical, key: 'technical', color: 'blue' },
+                          { label: 'Fundamental', value: danelfinData.fundamental, key: 'fundamental', color: 'green' },
+                          { label: 'Sentiment', value: danelfinData.sentiment, key: 'sentiment', color: 'yellow' },
+                          { label: 'Low Risk', value: danelfinData.low_risk, key: 'low_risk', color: 'cyan' },
+                        ].map((score) => (
+                          <div
+                            key={score.key}
+                            className={`text-center p-2 rounded-lg ${
+                              danelfinData.highest_category === score.key
+                                ? `bg-${score.color}-500/30 border border-${score.color}-500/50 ring-1 ring-${score.color}-400`
+                                : 'bg-slate-700/50'
+                            }`}
+                          >
+                            <div className={`text-2xl font-bold ${
+                              score.value >= 8 ? 'text-green-400' :
+                              score.value >= 6 ? 'text-blue-400' :
+                              score.value >= 4 ? 'text-yellow-400' :
+                              'text-red-400'
+                            }`}>
+                              {score.value}
+                            </div>
+                            <div className="text-xs text-slate-400 mt-1">{score.label}</div>
+                            {danelfinData.highest_category === score.key && (
+                              <Badge className="mt-1 text-[10px] bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                                Highest
+                              </Badge>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Track Record */}
+                      {(danelfinData.buy_track_record !== null || danelfinData.sell_track_record !== null) && (
+                        <div className="flex items-center justify-center gap-4 mt-3 pt-3 border-t border-slate-700">
+                          {danelfinData.buy_track_record && (
+                            <Badge className="bg-green-500/20 text-green-400 border-green-500/30">
+                              <CheckCircle className="w-3 h-3 mr-1" /> Buy Track Record
+                            </Badge>
+                          )}
+                          {danelfinData.sell_track_record && (
+                            <Badge className="bg-red-500/20 text-red-400 border-red-500/30">
+                              <AlertCircle className="w-3 h-3 mr-1" /> Sell Track Record
+                            </Badge>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-center py-6 text-slate-500">
+                      <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">{danelfinData?.error || 'Danelfin not configured'}</p>
+                      <p className="text-xs mt-1">Add your API key in Settings → API Keys</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* AI Team Performance Card */}
               <Card className="bg-slate-800/50 border-slate-700">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-white">
@@ -920,9 +1116,9 @@ export function ControlTower() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-center py-12 text-slate-500">
-                    <Brain className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                    <p className="text-lg">Agent performance tracked in Round Table</p>
+                  <div className="text-center py-8 text-slate-500">
+                    <Brain className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                    <p className="text-base">Agent performance tracked in Round Table</p>
                     <p className="text-sm mt-2">
                       Run an AI cycle to see agent signals and consensus
                     </p>

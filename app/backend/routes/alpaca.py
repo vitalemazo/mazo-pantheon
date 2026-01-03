@@ -234,6 +234,98 @@ async def get_alpaca_status(db: Session = Depends(get_db)):
         }
 
 
+@router.post("/refresh")
+async def refresh_alpaca_connection(db: Session = Depends(get_db)):
+    """
+    Force refresh Alpaca connection with latest credentials from database.
+    Clears all Alpaca caches and fetches fresh account data.
+    
+    Call this after updating Alpaca API keys in Settings.
+    """
+    from app.backend.services.cache_service import delete_cached
+    
+    # Clear all Alpaca caches
+    cache_keys_to_clear = [
+        "alpaca:status",
+        "alpaca:assets:us_equity",
+        "alpaca:assets:crypto",
+        "alpaca:account",
+        "alpaca:positions",
+    ]
+    
+    cleared = 0
+    for key in cache_keys_to_clear:
+        try:
+            delete_cached(key)
+            cleared += 1
+        except Exception:
+            pass
+    
+    logger.info(f"[Alpaca] Cleared {cleared} cache keys for credential refresh")
+    
+    # Now fetch fresh account data with new credentials
+    api_key, secret_key, base_url = get_alpaca_credentials(db)
+    
+    if not api_key or not secret_key:
+        return {
+            "success": False,
+            "error": "Alpaca API credentials not configured",
+            "account": None,
+        }
+    
+    headers = {
+        "APCA-API-KEY-ID": api_key,
+        "APCA-API-SECRET-KEY": secret_key,
+    }
+    
+    try:
+        # Fetch account
+        response = requests.get(f"{base_url}/account", headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"API error: {response.status_code} - {response.text}",
+                "account": None,
+            }
+        
+        account = response.json()
+        
+        # Fetch positions
+        positions_response = requests.get(f"{base_url}/positions", headers=headers, timeout=10)
+        positions = positions_response.json() if positions_response.status_code == 200 else []
+        
+        account_data = {
+            "connected": True,
+            "mode": "paper" if "paper" in base_url else "live",
+            "account_status": account.get("status"),
+            "buying_power": float(account.get("buying_power", 0)),
+            "cash": float(account.get("cash", 0)),
+            "portfolio_value": float(account.get("portfolio_value", 0)),
+            "equity": float(account.get("equity", 0)),
+            "positions_count": len(positions),
+        }
+        
+        # Cache the fresh data
+        set_cached("alpaca:status", account_data, CacheTTL.ALPACA_ACCOUNT)
+        
+        logger.info(f"[Alpaca] Refreshed connection - Equity: ${account_data['equity']:,.2f}, Positions: {account_data['positions_count']}")
+        
+        return {
+            "success": True,
+            "message": "Alpaca connection refreshed with new credentials",
+            "account": account_data,
+        }
+        
+    except Exception as e:
+        logger.error(f"[Alpaca] Refresh failed: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "account": None,
+        }
+
+
 @router.get("/popular")
 async def get_popular_tickers():
     """

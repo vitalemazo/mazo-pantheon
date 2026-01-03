@@ -114,6 +114,35 @@ def sentiment_analyst_agent(state: AgentState, agent_id: str = "sentiment_analys
             "confidence": confidence,
             "reasoning": reasoning,
         }
+        
+        # Add Danelfin external sentiment validation if available
+        try:
+            from src.tools.danelfin_api import get_score, is_danelfin_enabled
+            from src.trading.config import get_danelfin_config
+            import logging
+            sent_logger = logging.getLogger(__name__)
+            
+            danelfin_config = get_danelfin_config()
+            if is_danelfin_enabled() and danelfin_config.include_in_agent_prompts:
+                danelfin_score = get_score(ticker)
+                if danelfin_score.success:
+                    # Check agreement with our sentiment signal
+                    our_bullish = overall_signal.lower() == "bullish"
+                    danelfin_bullish = danelfin_score.sentiment >= 7
+                    agrees = (our_bullish and danelfin_bullish) or (not our_bullish and not danelfin_bullish)
+                    
+                    sentiment_analysis[ticker]["danelfin_validation"] = {
+                        "ai_score": danelfin_score.ai_score,
+                        "sentiment": danelfin_score.sentiment,
+                        "signal": danelfin_score.signal,
+                        "agreement": {
+                            "agrees": agrees,
+                            "note": f"Danelfin Sentiment: {danelfin_score.sentiment}/10 {'aligns' if agrees else 'conflicts'} with our {overall_signal} signal"
+                        },
+                    }
+                    sent_logger.debug(f"[Danelfin] {ticker}: Sentiment={danelfin_score.sentiment}, AI={danelfin_score.ai_score}")
+        except Exception:
+            pass  # Silently skip if Danelfin not available
 
         progress.update_status(agent_id, ticker, "Done", analysis=json.dumps(reasoning, indent=4))
 

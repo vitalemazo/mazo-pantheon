@@ -44,6 +44,8 @@ class MazoResponse:
     raw_output: str = ""
     success: bool = True
     error: Optional[str] = None
+    chart_url: Optional[str] = None  # TradingView chart snapshot URL
+    chart_analysis: Optional[Dict[str, Any]] = None  # AI chart pattern analysis
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -56,6 +58,8 @@ class MazoResponse:
             "execution_time": self.execution_time,
             "success": self.success,
             "error": self.error,
+            "chart_url": self.chart_url,
+            "chart_analysis": self.chart_analysis,
         }
 
     def to_context_string(self) -> str:
@@ -331,7 +335,161 @@ If we already have a position, evaluate whether to add, hold, or reduce.
 5. Valuation relative to peers and history
 6. {"Given our current position, should we add, hold, or reduce exposure?" if portfolio_context else "Is this a good entry point?"}
 """
-        return self.research(query)
+        response = self.research(query)
+
+        # Optionally enrich with chart analysis
+        if self._is_chart_vision_enabled():
+            response = self.enrich_with_chart_analysis(response, ticker)
+
+        # Optionally enrich with Danelfin AI scores
+        response = self.enrich_with_danelfin(response, ticker)
+
+        return response
+    
+    def _is_chart_vision_enabled(self) -> bool:
+        """
+        Check if chart vision analysis is enabled.
+        Checks environment variable first, then database setting.
+        """
+        # Check environment variable first
+        env_value = os.environ.get("ENABLE_CHART_VISION_ANALYSIS", "").lower()
+        if env_value in ("true", "1", "yes"):
+            return True
+        if env_value in ("false", "0", "no"):
+            return False
+        
+        # Check database setting
+        try:
+            from sqlalchemy import create_engine, text
+            db_url = os.environ.get(
+                "DATABASE_URL",
+                "postgresql://mazo:mazo@mazo-postgres:5432/mazo_pantheon"
+            )
+            engine = create_engine(db_url)
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT key_value FROM api_keys WHERE provider = 'ENABLE_CHART_VISION_ANALYSIS' AND is_active = true")
+                )
+                row = result.fetchone()
+                if row and row[0]:
+                    return row[0].lower() in ("true", "1", "yes")
+        except Exception:
+            pass
+        
+        return False
+    
+    def enrich_with_chart_analysis(
+        self,
+        response: MazoResponse,
+        ticker: str,
+        interval: str = "1D",
+    ) -> MazoResponse:
+        """
+        Enrich a Mazo research response with chart analysis.
+        
+        Args:
+            response: Existing MazoResponse to enrich
+            ticker: Stock ticker for chart generation
+            interval: Chart timeframe
+        
+        Returns:
+            MazoResponse with chart_url and chart_analysis added
+        """
+        try:
+            from src.tools.chart_analysis import analyze_ticker_chart
+            
+            chart_result = analyze_ticker_chart(
+                ticker=ticker,
+                interval=interval,
+                exchange="NASDAQ",  # TODO: detect exchange
+                include_vision_analysis=True,
+            )
+            
+            if not chart_result.error:
+                response.chart_url = chart_result.chart_url
+                response.chart_analysis = {
+                    "patterns_detected": chart_result.patterns_detected,
+                    "trend_direction": chart_result.trend_direction,
+                    "key_levels": chart_result.key_levels,
+                    "signal": chart_result.signal,
+                    "confidence": chart_result.confidence,
+                    "summary": chart_result.analysis_summary,
+                }
+                
+                # Append chart analysis to the answer
+                if chart_result.analysis_summary:
+                    response.answer += f"\n\n=== CHART ANALYSIS ===\n"
+                    response.answer += f"Chart URL: {chart_result.chart_url}\n"
+                    response.answer += f"Trend: {chart_result.trend_direction}\n"
+                    if chart_result.patterns_detected:
+                        response.answer += f"Patterns: {', '.join(chart_result.patterns_detected)}\n"
+                    response.answer += f"AI Signal: {chart_result.signal} ({chart_result.confidence*100:.0f}% confidence)\n"
+                    response.answer += f"Summary: {chart_result.analysis_summary}\n"
+                    response.data_sources.append("Chart-img (TradingView)")
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Chart enrichment failed for {ticker}: {e}")
+        
+        return response
+
+    def enrich_with_danelfin(
+        self,
+        response: MazoResponse,
+        ticker: str,
+    ) -> MazoResponse:
+        """
+        Enrich a Mazo research response with Danelfin AI scoring.
+
+        Args:
+            response: Existing MazoResponse to enrich
+            ticker: Stock ticker for Danelfin lookup
+
+        Returns:
+            MazoResponse with Danelfin data added to answer
+        """
+        try:
+            from src.tools.danelfin_api import get_score, is_danelfin_enabled, format_for_agent_prompt
+            from src.trading.config import get_danelfin_config
+
+            danelfin_config = get_danelfin_config()
+            
+            if not is_danelfin_enabled() or not danelfin_config.include_in_agent_prompts:
+                return response
+            
+            danelfin_score = get_score(ticker)
+            
+            if danelfin_score.success:
+                # Add Danelfin data to response
+                if not hasattr(response, 'danelfin') or response.danelfin is None:
+                    # Store in chart_analysis dict since MazoResponse doesn't have danelfin field
+                    if response.chart_analysis is None:
+                        response.chart_analysis = {}
+                    response.chart_analysis["danelfin"] = danelfin_score.to_dict()
+                
+                # Append Danelfin scores to the answer
+                response.answer += f"\n\n=== DANELFIN AI VALIDATION ===\n"
+                response.answer += f"External AI Score: {danelfin_score.ai_score}/10 → {danelfin_score.signal.upper().replace('_', ' ')}\n"
+                response.answer += f"Breakdown:\n"
+                response.answer += f"  • Technical: {danelfin_score.technical}/10\n"
+                response.answer += f"  • Fundamental: {danelfin_score.fundamental}/10\n"
+                response.answer += f"  • Sentiment: {danelfin_score.sentiment}/10\n"
+                response.answer += f"  • Low Risk: {danelfin_score.low_risk}/10\n"
+                
+                # Add track record if available
+                if danelfin_score.buy_track_record:
+                    response.answer += f"  • Has BUY Track Record ✓\n"
+                if danelfin_score.sell_track_record:
+                    response.answer += f"  • Has SELL Track Record ✓\n"
+                
+                response.data_sources.append("Danelfin AI")
+                
+        except ImportError:
+            pass  # Danelfin not available
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug(f"Danelfin enrichment skipped for {ticker}: {e}")
+
+        return response
 
     def compare_companies(self, tickers: List[str]) -> MazoResponse:
         """

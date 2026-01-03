@@ -139,6 +139,36 @@ def fundamentals_analyst_agent(state: AgentState, agent_id: str = "fundamentals_
             "confidence": confidence,
             "reasoning": reasoning,
         }
+        
+        # Add Danelfin external AI validation if available
+        try:
+            from src.tools.danelfin_api import get_score, is_danelfin_enabled
+            from src.trading.config import get_danelfin_config
+            import logging
+            fund_logger = logging.getLogger(__name__)
+            
+            danelfin_config = get_danelfin_config()
+            if is_danelfin_enabled() and danelfin_config.include_in_agent_prompts:
+                danelfin_score = get_score(ticker)
+                if danelfin_score.success:
+                    # Check agreement with our fundamental signal
+                    our_bullish = overall_signal.lower() == "bullish"
+                    danelfin_bullish = danelfin_score.fundamental >= 7
+                    agrees = (our_bullish and danelfin_bullish) or (not our_bullish and not danelfin_bullish)
+                    
+                    fundamental_analysis[ticker]["danelfin_validation"] = {
+                        "ai_score": danelfin_score.ai_score,
+                        "fundamental": danelfin_score.fundamental,
+                        "low_risk": danelfin_score.low_risk,
+                        "signal": danelfin_score.signal,
+                        "agreement": {
+                            "agrees": agrees,
+                            "note": f"Danelfin Fundamental: {danelfin_score.fundamental}/10 {'aligns' if agrees else 'conflicts'} with our {overall_signal} signal"
+                        },
+                    }
+                    fund_logger.debug(f"[Danelfin] {ticker}: Fund={danelfin_score.fundamental}, AI={danelfin_score.ai_score}")
+        except Exception as e:
+            pass  # Silently skip if Danelfin not available
 
         progress.update_status(agent_id, ticker, "Done", analysis=json.dumps(reasoning, indent=4))
 

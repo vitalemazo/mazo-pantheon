@@ -1,6 +1,65 @@
+import logging
 import math
+import os
 
 from langchain_core.messages import HumanMessage
+
+logger = logging.getLogger(__name__)
+
+# Cache for chart vision setting
+_chart_vision_enabled_cache = None
+_chart_vision_cache_time = 0
+
+
+def _is_chart_vision_enabled() -> bool:
+    """
+    Check if chart vision analysis is enabled.
+    Checks environment variable first, then database setting.
+    Caches result for 60 seconds to avoid repeated DB queries.
+    """
+    global _chart_vision_enabled_cache, _chart_vision_cache_time
+    import time
+    
+    # Check cache (valid for 60 seconds)
+    if _chart_vision_enabled_cache is not None and (time.time() - _chart_vision_cache_time) < 60:
+        return _chart_vision_enabled_cache
+    
+    # Check environment variable first
+    env_value = os.environ.get("ENABLE_CHART_VISION_ANALYSIS", "").lower()
+    if env_value in ("true", "1", "yes"):
+        _chart_vision_enabled_cache = True
+        _chart_vision_cache_time = time.time()
+        return True
+    if env_value in ("false", "0", "no"):
+        _chart_vision_enabled_cache = False
+        _chart_vision_cache_time = time.time()
+        return False
+    
+    # Check database setting
+    try:
+        from sqlalchemy import create_engine, text
+        db_url = os.environ.get(
+            "DATABASE_URL",
+            "postgresql://mazo:mazo@mazo-postgres:5432/mazo_pantheon"
+        )
+        engine = create_engine(db_url)
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT key_value FROM api_keys WHERE provider = 'ENABLE_CHART_VISION_ANALYSIS' AND is_active = true")
+            )
+            row = result.fetchone()
+            if row and row[0]:
+                enabled = row[0].lower() in ("true", "1", "yes")
+                _chart_vision_enabled_cache = enabled
+                _chart_vision_cache_time = time.time()
+                return enabled
+    except Exception as e:
+        logger.debug(f"Could not check chart vision setting from DB: {e}")
+    
+    # Default to disabled
+    _chart_vision_enabled_cache = False
+    _chart_vision_cache_time = time.time()
+    return False
 
 from src.graph.state import AgentState, show_agent_reasoning
 from src.utils.api_key import get_api_key_from_state
@@ -10,6 +69,31 @@ import numpy as np
 
 from src.tools.api import get_prices, prices_to_df
 from src.utils.progress import progress
+
+
+def _check_danelfin_agreement(our_signal: str, ai_score: int, tech_score: int) -> dict:
+    """
+    Check if Danelfin agrees with our technical signal.
+    
+    Returns agreement status and any confidence adjustment.
+    """
+    our_bullish = our_signal.lower() in ("bullish", "buy", "long")
+    our_bearish = our_signal.lower() in ("bearish", "sell", "short")
+    
+    # Danelfin considers 7+ as bullish, 4- as bearish
+    danelfin_bullish = ai_score >= 7 or tech_score >= 7
+    danelfin_bearish = ai_score <= 4 or tech_score <= 4
+    
+    if our_bullish and danelfin_bullish:
+        return {"agrees": True, "strength": "strong", "note": f"Danelfin confirms bullish (AI={ai_score}, Tech={tech_score})"}
+    elif our_bearish and danelfin_bearish:
+        return {"agrees": True, "strength": "strong", "note": f"Danelfin confirms bearish (AI={ai_score}, Tech={tech_score})"}
+    elif our_bullish and danelfin_bearish:
+        return {"agrees": False, "strength": "weak", "note": f"Danelfin disagrees - bearish (AI={ai_score}, Tech={tech_score})"}
+    elif our_bearish and danelfin_bullish:
+        return {"agrees": False, "strength": "weak", "note": f"Danelfin disagrees - bullish (AI={ai_score}, Tech={tech_score})"}
+    else:
+        return {"agrees": True, "strength": "neutral", "note": f"Danelfin neutral (AI={ai_score}, Tech={tech_score})"}
 
 
 def safe_float(value, default=0.0):
@@ -82,13 +166,29 @@ def technical_analyst_agent(state: AgentState, agent_id: str = "technical_analys
         progress.update_status(agent_id, ticker, "Statistical analysis")
         stat_arb_signals = calculate_stat_arb_signals(prices_df)
 
+        # NEW: Calculate MACD
+        progress.update_status(agent_id, ticker, "Calculating MACD")
+        macd_signals = calculate_macd(prices_df)
+
+        # NEW: Calculate Fibonacci levels
+        progress.update_status(agent_id, ticker, "Calculating Fibonacci levels")
+        fibonacci_signals = calculate_fibonacci_levels(prices_df)
+
+        # NEW: Calculate Support/Resistance
+        progress.update_status(agent_id, ticker, "Calculating Support/Resistance")
+        sr_signals = calculate_support_resistance(prices_df)
+
         # Combine all signals using a weighted ensemble approach
+        # Updated weights to include new indicators
         strategy_weights = {
-            "trend": 0.25,
-            "mean_reversion": 0.20,
-            "momentum": 0.25,
-            "volatility": 0.15,
-            "stat_arb": 0.15,
+            "trend": 0.18,
+            "mean_reversion": 0.15,
+            "momentum": 0.18,
+            "volatility": 0.10,
+            "stat_arb": 0.09,
+            "macd": 0.12,
+            "fibonacci": 0.10,
+            "support_resistance": 0.08,
         }
 
         progress.update_status(agent_id, ticker, "Combining signals")
@@ -99,9 +199,33 @@ def technical_analyst_agent(state: AgentState, agent_id: str = "technical_analys
                 "momentum": momentum_signals,
                 "volatility": volatility_signals,
                 "stat_arb": stat_arb_signals,
+                "macd": macd_signals,
+                "fibonacci": fibonacci_signals,
+                "support_resistance": sr_signals,
             },
             strategy_weights,
         )
+
+        # Optional: AI Chart Pattern Analysis (uses Chart-img + Vision LLM)
+        chart_analysis_result = None
+        use_chart_analysis = _is_chart_vision_enabled()
+        
+        if use_chart_analysis:
+            try:
+                from src.tools.chart_analysis import analyze_ticker_chart
+                progress.update_status(agent_id, ticker, "AI Chart Pattern Analysis")
+                chart_analysis_result = analyze_ticker_chart(
+                    ticker=ticker,
+                    interval="1D",
+                    exchange="NASDAQ",  # TODO: detect exchange from ticker
+                    include_vision_analysis=True,
+                )
+                if chart_analysis_result.error:
+                    logger.warning(f"Chart analysis failed for {ticker}: {chart_analysis_result.error}")
+                    chart_analysis_result = None
+            except Exception as e:
+                logger.warning(f"Chart analysis unavailable for {ticker}: {e}")
+                chart_analysis_result = None
 
         # Generate detailed analysis report for this ticker
         technical_analysis[ticker] = {
@@ -133,8 +257,62 @@ def technical_analyst_agent(state: AgentState, agent_id: str = "technical_analys
                     "confidence": round(stat_arb_signals["confidence"] * 100),
                     "metrics": normalize_pandas(stat_arb_signals["metrics"]),
                 },
+                "macd": {
+                    "signal": macd_signals["signal"],
+                    "confidence": round(macd_signals["confidence"] * 100),
+                    "metrics": normalize_pandas(macd_signals["metrics"]),
+                },
+                "fibonacci": {
+                    "signal": fibonacci_signals["signal"],
+                    "confidence": round(fibonacci_signals["confidence"] * 100),
+                    "metrics": normalize_pandas(fibonacci_signals["metrics"]),
+                },
+                "support_resistance": {
+                    "signal": sr_signals["signal"],
+                    "confidence": round(sr_signals["confidence"] * 100),
+                    "metrics": normalize_pandas(sr_signals["metrics"]),
+                },
             },
         }
+        
+        # Add chart analysis if available
+        if chart_analysis_result and not chart_analysis_result.error:
+            technical_analysis[ticker]["chart_analysis"] = {
+                "chart_url": chart_analysis_result.chart_url,
+                "patterns_detected": chart_analysis_result.patterns_detected,
+                "trend_direction": chart_analysis_result.trend_direction,
+                "key_levels": chart_analysis_result.key_levels,
+                "ai_signal": chart_analysis_result.signal,
+                "ai_confidence": round(chart_analysis_result.confidence * 100),
+                "summary": chart_analysis_result.analysis_summary,
+            }
+        
+        # Add Danelfin external AI validation if available
+        try:
+            from src.tools.danelfin_api import get_score, is_danelfin_enabled
+            from src.trading.config import get_danelfin_config
+            
+            danelfin_config = get_danelfin_config()
+            if is_danelfin_enabled() and danelfin_config.include_in_agent_prompts:
+                danelfin_score = get_score(ticker)
+                if danelfin_score.success:
+                    technical_analysis[ticker]["danelfin_validation"] = {
+                        "ai_score": danelfin_score.ai_score,
+                        "technical": danelfin_score.technical,
+                        "fundamental": danelfin_score.fundamental,
+                        "sentiment": danelfin_score.sentiment,
+                        "low_risk": danelfin_score.low_risk,
+                        "signal": danelfin_score.signal,
+                        "agreement": _check_danelfin_agreement(
+                            technical_analysis[ticker]["signal"],
+                            danelfin_score.ai_score,
+                            danelfin_score.technical
+                        ),
+                    }
+                    logger.debug(f"[Danelfin] {ticker}: AI={danelfin_score.ai_score}, Tech={danelfin_score.technical}")
+        except Exception as e:
+            logger.debug(f"Danelfin not available for technicals: {e}")
+        
         progress.update_status(agent_id, ticker, "Done", analysis=json.dumps(technical_analysis, indent=4))
 
     # Create the technical analyst message
@@ -597,3 +775,284 @@ def calculate_hurst_exponent(price_series: pd.Series, max_lag: int = 20) -> floa
     except (ValueError, RuntimeWarning):
         # Return 0.5 (random walk) if calculation fails
         return 0.5
+
+
+def calculate_macd(
+    prices_df: pd.DataFrame, 
+    fast_period: int = 12, 
+    slow_period: int = 26, 
+    signal_period: int = 9
+) -> dict:
+    """
+    Calculate MACD (Moving Average Convergence Divergence)
+    
+    MACD Line = EMA(12) - EMA(26)
+    Signal Line = EMA(9) of MACD Line
+    Histogram = MACD Line - Signal Line
+    
+    Args:
+        prices_df: DataFrame with 'close' prices
+        fast_period: Fast EMA period (default 12)
+        slow_period: Slow EMA period (default 26)
+        signal_period: Signal line period (default 9)
+    
+    Returns:
+        dict with macd_line, signal_line, histogram, and signal interpretation
+    """
+    close = prices_df["close"]
+    
+    # Calculate EMAs
+    ema_fast = close.ewm(span=fast_period, adjust=False).mean()
+    ema_slow = close.ewm(span=slow_period, adjust=False).mean()
+    
+    # MACD Line
+    macd_line = ema_fast - ema_slow
+    
+    # Signal Line
+    signal_line = macd_line.ewm(span=signal_period, adjust=False).mean()
+    
+    # Histogram
+    histogram = macd_line - signal_line
+    
+    # Get current values
+    current_macd = safe_float(macd_line.iloc[-1])
+    current_signal = safe_float(signal_line.iloc[-1])
+    current_histogram = safe_float(histogram.iloc[-1])
+    prev_histogram = safe_float(histogram.iloc[-2]) if len(histogram) > 1 else 0
+    
+    # Signal interpretation
+    if current_macd > current_signal and current_histogram > 0:
+        if current_histogram > prev_histogram:
+            signal = "bullish"
+            confidence = min(0.8, abs(current_histogram) * 10)
+        else:
+            signal = "bullish"
+            confidence = 0.6
+    elif current_macd < current_signal and current_histogram < 0:
+        if current_histogram < prev_histogram:
+            signal = "bearish"
+            confidence = min(0.8, abs(current_histogram) * 10)
+        else:
+            signal = "bearish"
+            confidence = 0.6
+    else:
+        signal = "neutral"
+        confidence = 0.5
+    
+    # Detect crossovers
+    crossover = None
+    if len(macd_line) > 1:
+        prev_macd = macd_line.iloc[-2]
+        prev_signal_val = signal_line.iloc[-2]
+        if prev_macd < prev_signal_val and current_macd > current_signal:
+            crossover = "bullish_crossover"
+            confidence = 0.85
+        elif prev_macd > prev_signal_val and current_macd < current_signal:
+            crossover = "bearish_crossover"
+            confidence = 0.85
+    
+    return {
+        "signal": signal,
+        "confidence": confidence,
+        "metrics": {
+            "macd_line": current_macd,
+            "signal_line": current_signal,
+            "histogram": current_histogram,
+            "crossover": crossover,
+        }
+    }
+
+
+def calculate_fibonacci_levels(prices_df: pd.DataFrame, lookback: int = 50) -> dict:
+    """
+    Calculate Fibonacci Retracement Levels
+    
+    Uses recent swing high and swing low to calculate key Fib levels:
+    0%, 23.6%, 38.2%, 50%, 61.8%, 78.6%, 100%
+    
+    Args:
+        prices_df: DataFrame with 'high', 'low', 'close' prices
+        lookback: Period to find swing high/low (default 50 days)
+    
+    Returns:
+        dict with levels, current position, and signal interpretation
+    """
+    # Use available data, up to lookback period
+    period = min(lookback, len(prices_df) - 1)
+    if period < 5:
+        return {
+            "signal": "neutral",
+            "confidence": 0.3,
+            "metrics": {"error": "Insufficient data for Fibonacci calculation"}
+        }
+    
+    recent_data = prices_df.iloc[-period:]
+    
+    swing_high = safe_float(recent_data["high"].max())
+    swing_low = safe_float(recent_data["low"].min())
+    current_price = safe_float(prices_df["close"].iloc[-1])
+    
+    if swing_high == swing_low:
+        return {
+            "signal": "neutral",
+            "confidence": 0.3,
+            "metrics": {"error": "No price range for Fibonacci"}
+        }
+    
+    diff = swing_high - swing_low
+    
+    # Standard Fibonacci levels (retracement from high)
+    levels = {
+        "0.0%": swing_high,
+        "23.6%": swing_high - 0.236 * diff,
+        "38.2%": swing_high - 0.382 * diff,
+        "50.0%": swing_high - 0.500 * diff,
+        "61.8%": swing_high - 0.618 * diff,
+        "78.6%": swing_high - 0.786 * diff,
+        "100%": swing_low,
+    }
+    
+    # Find nearest support and resistance
+    supports = [v for v in levels.values() if v < current_price]
+    resistances = [v for v in levels.values() if v > current_price]
+    
+    nearest_support = max(supports) if supports else swing_low
+    nearest_resistance = min(resistances) if resistances else swing_high
+    
+    # Calculate which Fib zone we're in
+    retracement_pct = (swing_high - current_price) / diff if diff > 0 else 0.5
+    
+    # Signal interpretation
+    # Near 61.8% or 78.6% retracement = potential reversal zone (bullish)
+    # Near 23.6% or 38.2% = shallow pullback, trend continuation
+    if 0.55 <= retracement_pct <= 0.70:
+        signal = "bullish"
+        confidence = 0.75
+        zone = "golden_zone"  # 61.8% - prime reversal area
+    elif 0.70 <= retracement_pct <= 0.85:
+        signal = "bullish"
+        confidence = 0.65
+        zone = "deep_retracement"
+    elif retracement_pct > 0.85:
+        signal = "bearish"
+        confidence = 0.6
+        zone = "breakdown"
+    elif retracement_pct < 0.25:
+        signal = "bullish"
+        confidence = 0.6
+        zone = "near_highs"
+    else:
+        signal = "neutral"
+        confidence = 0.5
+        zone = "mid_range"
+    
+    return {
+        "signal": signal,
+        "confidence": confidence,
+        "metrics": {
+            "swing_high": swing_high,
+            "swing_low": swing_low,
+            "current_price": current_price,
+            "retracement_pct": round(retracement_pct * 100, 1),
+            "zone": zone,
+            "nearest_support": round(nearest_support, 2),
+            "nearest_resistance": round(nearest_resistance, 2),
+            "levels": {k: round(v, 2) for k, v in levels.items()},
+        }
+    }
+
+
+def calculate_support_resistance(prices_df: pd.DataFrame, lookback: int = 50, num_levels: int = 3) -> dict:
+    """
+    Calculate Support and Resistance Levels
+    
+    Uses pivot points and price clustering to identify key levels.
+    
+    Args:
+        prices_df: DataFrame with 'high', 'low', 'close' prices
+        lookback: Period to analyze (default 50 days)
+        num_levels: Number of S/R levels to return (default 3)
+    
+    Returns:
+        dict with support levels, resistance levels, and signal interpretation
+    """
+    period = min(lookback, len(prices_df) - 1)
+    if period < 10:
+        return {
+            "signal": "neutral",
+            "confidence": 0.3,
+            "metrics": {"error": "Insufficient data for S/R calculation"}
+        }
+    
+    recent_data = prices_df.iloc[-period:]
+    current_price = safe_float(prices_df["close"].iloc[-1])
+    
+    # Method 1: Pivot Points
+    high = safe_float(recent_data["high"].max())
+    low = safe_float(recent_data["low"].min())
+    close = safe_float(recent_data["close"].iloc[-1])
+    
+    pivot = (high + low + close) / 3
+    
+    # Standard pivot levels
+    r1 = 2 * pivot - low
+    r2 = pivot + (high - low)
+    r3 = high + 2 * (pivot - low)
+    
+    s1 = 2 * pivot - high
+    s2 = pivot - (high - low)
+    s3 = low - 2 * (high - pivot)
+    
+    # Method 2: Find local maxima/minima for additional levels
+    highs = recent_data["high"].values
+    lows = recent_data["low"].values
+    
+    # Find peaks (local resistance)
+    resistance_candidates = [r1, r2, r3, high]
+    for i in range(2, len(highs) - 2):
+        if highs[i] > highs[i-1] and highs[i] > highs[i+1] and highs[i] > highs[i-2] and highs[i] > highs[i+2]:
+            resistance_candidates.append(highs[i])
+    
+    # Find troughs (local support)
+    support_candidates = [s1, s2, s3, low]
+    for i in range(2, len(lows) - 2):
+        if lows[i] < lows[i-1] and lows[i] < lows[i+1] and lows[i] < lows[i-2] and lows[i] < lows[i+2]:
+            support_candidates.append(lows[i])
+    
+    # Filter and sort
+    resistance_levels = sorted([r for r in set(resistance_candidates) if r > current_price])[:num_levels]
+    support_levels = sorted([s for s in set(support_candidates) if s < current_price], reverse=True)[:num_levels]
+    
+    # Calculate distances
+    nearest_resistance = resistance_levels[0] if resistance_levels else high
+    nearest_support = support_levels[0] if support_levels else low
+    
+    upside_pct = ((nearest_resistance - current_price) / current_price) * 100 if current_price > 0 else 0
+    downside_pct = ((current_price - nearest_support) / current_price) * 100 if current_price > 0 else 0
+    
+    # Risk/Reward interpretation
+    if upside_pct > downside_pct * 2:
+        signal = "bullish"
+        confidence = min(0.8, 0.5 + (upside_pct / downside_pct) * 0.1)
+    elif downside_pct > upside_pct * 2:
+        signal = "bearish"
+        confidence = min(0.8, 0.5 + (downside_pct / upside_pct) * 0.1)
+    else:
+        signal = "neutral"
+        confidence = 0.5
+    
+    return {
+        "signal": signal,
+        "confidence": confidence,
+        "metrics": {
+            "current_price": current_price,
+            "pivot": round(pivot, 2),
+            "resistance_levels": [round(r, 2) for r in resistance_levels],
+            "support_levels": [round(s, 2) for s in support_levels],
+            "nearest_resistance": round(nearest_resistance, 2),
+            "nearest_support": round(nearest_support, 2),
+            "upside_to_resistance_pct": round(upside_pct, 1),
+            "downside_to_support_pct": round(downside_pct, 1),
+            "risk_reward_ratio": round(upside_pct / downside_pct, 2) if downside_pct > 0 else 0,
+        }
+    }

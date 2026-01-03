@@ -5,9 +5,152 @@ Exposes trading configuration, data source status, and system settings.
 """
 
 from fastapi import APIRouter, HTTPException
-from typing import Dict, List, Any
+from pydantic import BaseModel
+from typing import Dict, List, Any, Optional
+import json
+import logging
 
 router = APIRouter(prefix="/system", tags=["System Configuration"])
+logger = logging.getLogger(__name__)
+
+
+# ==================== User Preferences Persistence ====================
+
+class UserRiskSettings(BaseModel):
+    """User risk preference settings."""
+    risk_level: str = "balanced"  # conservative, balanced, aggressive, diversified
+    max_positions: int = 10
+    stop_loss_percent: float = 5.0
+    take_profit_percent: float = 10.0
+    budget_percent: float = 25.0
+
+
+def _get_user_settings_from_db() -> Dict[str, Any]:
+    """Load user settings from database."""
+    try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        
+        with engine.connect() as conn:
+            # Create table if not exists
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS user_settings (
+                    key VARCHAR(100) PRIMARY KEY,
+                    value JSONB NOT NULL,
+                    updated_at TIMESTAMP DEFAULT NOW()
+                )
+            """))
+            conn.commit()
+            
+            # Get risk settings
+            result = conn.execute(
+                text("SELECT value FROM user_settings WHERE key = 'risk_settings'")
+            )
+            row = result.fetchone()
+            if row:
+                return row[0]
+    except Exception as e:
+        logger.warning(f"Could not load user settings: {e}")
+    
+    # Return defaults
+    return {
+        "risk_level": "balanced",
+        "max_positions": 5,
+        "stop_loss_percent": 5.0,
+        "take_profit_percent": 10.0,
+        "budget_percent": 25.0,
+    }
+
+
+def _save_user_settings_to_db(settings: Dict[str, Any]) -> bool:
+    """Save user settings to database."""
+    try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        
+        with engine.connect() as conn:
+            conn.execute(text("""
+                INSERT INTO user_settings (key, value, updated_at)
+                VALUES ('risk_settings', :value, NOW())
+                ON CONFLICT (key) DO UPDATE SET value = :value, updated_at = NOW()
+            """), {"value": json.dumps(settings)})
+            conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Could not save user settings: {e}")
+        return False
+
+
+@router.get("/user/risk-settings")
+async def get_user_risk_settings() -> Dict[str, Any]:
+    """
+    Get user's saved risk settings.
+    
+    These are the UI preferences for risk level, positions, stops, etc.
+    """
+    settings = _get_user_settings_from_db()
+    
+    # Also include the preset descriptions
+    from src.trading.config import RISK_PRESETS
+    
+    return {
+        "success": True,
+        "settings": settings,
+        "presets": RISK_PRESETS,
+    }
+
+
+@router.post("/user/risk-settings")
+async def save_user_risk_settings(settings: UserRiskSettings) -> Dict[str, Any]:
+    """
+    Save user's risk settings.
+    
+    Updates the stored preferences and returns the new effective settings.
+    """
+    settings_dict = settings.model_dump()
+    
+    # Validate risk level
+    valid_levels = ["conservative", "balanced", "aggressive", "diversified"]
+    if settings.risk_level not in valid_levels:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid risk_level. Must be one of: {valid_levels}"
+        )
+    
+    # Save to database
+    success = _save_user_settings_to_db(settings_dict)
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save settings")
+    
+    # Get dynamic risk info based on new settings
+    from src.trading.config import get_dynamic_risk_params, RISK_PRESETS
+    from src.trading.alpaca_service import AlpacaService
+    
+    # Get current equity for dynamic calculations
+    current_equity = 0.0
+    try:
+        alpaca = AlpacaService()
+        account = alpaca.get_account()
+        if account:
+            current_equity = float(account.equity)
+    except Exception:
+        pass
+    
+    # Calculate what the actual risk params will be for a typical trade
+    target_notional = 30.0  # Example micro trade
+    dynamic_params = get_dynamic_risk_params(
+        notional_value=target_notional,
+        equity=current_equity
+    )
+    
+    return {
+        "success": True,
+        "message": f"Risk settings saved: {settings.risk_level}",
+        "settings": settings_dict,
+        "effective_dynamic_risk": dynamic_params,
+        "preset_applied": RISK_PRESETS.get(settings.risk_level),
+    }
 
 
 @router.get("/config")

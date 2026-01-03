@@ -6,12 +6,15 @@ Uses multiple data sources to find opportunities across sectors.
 """
 
 import os
+import logging
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 
 from src.tools.api import get_financial_metrics, get_prices
 from src.trading.alpaca_service import AlpacaService
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -63,8 +66,8 @@ class DiversificationScanner:
         "Communication Services",
     ]
     
-    # Popular affordable stocks by sector (seed list)
-    SECTOR_STOCKS = {
+    # Static fallback - Popular affordable stocks by sector (used when Danelfin unavailable)
+    STATIC_SECTOR_STOCKS = {
         "Technology": ["AMD", "PLTR", "SOFI", "RBLX", "HOOD", "SNAP", "PINS"],
         "Healthcare": ["HIMS", "TDOC", "GDRX", "SDC", "BNGO", "SNDL"],
         "Financials": ["SOFI", "NU", "HOOD", "COIN", "AFRM", "UPST"],
@@ -77,6 +80,66 @@ class DiversificationScanner:
         "Real Estate": ["O", "VNQ", "SPG", "WELL", "PSA"],
         "Communication Services": ["T", "VZ", "TMUS", "LUMN"],
     }
+    
+    # Dynamic cache for Danelfin sector stocks
+    _dynamic_sector_stocks = None
+    _dynamic_stocks_timestamp = 0
+    _DYNAMIC_CACHE_TTL = 3600  # 1 hour
+    
+    @property
+    def SECTOR_STOCKS(self) -> Dict[str, list]:
+        """
+        Get sector stocks - uses Danelfin dynamic data if available,
+        falls back to static list.
+        """
+        import time
+        
+        # Check if dynamic cache is valid
+        if (self._dynamic_sector_stocks is not None and 
+            time.time() - self._dynamic_stocks_timestamp < self._DYNAMIC_CACHE_TTL):
+            return self._dynamic_sector_stocks
+        
+        # Try to get dynamic Danelfin data
+        try:
+            from src.tools.danelfin_api import get_dynamic_sector_stocks, is_danelfin_enabled
+            from src.trading.config import get_danelfin_config
+            
+            danelfin_config = get_danelfin_config()
+            
+            if is_danelfin_enabled() and danelfin_config.enabled:
+                logger.info("[Diversification] Fetching dynamic sector stocks from Danelfin...")
+                dynamic_stocks = get_dynamic_sector_stocks(
+                    min_ai_score=danelfin_config.min_ai_score or 6,
+                    stocks_per_sector=7,
+                )
+                
+                if dynamic_stocks and sum(len(v) for v in dynamic_stocks.values()) > 0:
+                    # Merge with static to ensure coverage
+                    merged = {}
+                    for sector in self.SECTORS:
+                        danelfin_tickers = dynamic_stocks.get(sector, [])
+                        static_tickers = self.STATIC_SECTOR_STOCKS.get(sector, [])
+                        
+                        # Danelfin picks first, then fill with static (deduplicated)
+                        merged[sector] = list(danelfin_tickers)
+                        for t in static_tickers:
+                            if t not in merged[sector]:
+                                merged[sector].append(t)
+                        merged[sector] = merged[sector][:10]  # Cap at 10 per sector
+                    
+                    self._dynamic_sector_stocks = merged
+                    self._dynamic_stocks_timestamp = time.time()
+                    
+                    total = sum(len(v) for v in merged.values())
+                    logger.info(f"[Diversification] Dynamic sector stocks loaded: {total} tickers")
+                    return self._dynamic_sector_stocks
+                    
+        except Exception as e:
+            logger.debug(f"[Diversification] Danelfin unavailable, using static: {e}")
+        
+        # Fallback to static
+        logger.debug("[Diversification] Using static sector stocks")
+        return self.STATIC_SECTOR_STOCKS
     
     def __init__(self):
         self.alpaca = AlpacaService()

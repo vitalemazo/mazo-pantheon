@@ -765,84 +765,131 @@ class TradingScheduler:
         """
         Sync trade status from Alpaca.
         
-        Finds trades in trade_history that are still pending but the position
-        has been closed on Alpaca, and marks them as closed with realized P&L.
+        1. Imports any missing filled orders from Alpaca
+        2. Calculates realized P&L using FIFO matching
         """
         try:
-            from src.trading.trade_history_service import get_trade_history_service
             from sqlalchemy import text
+            from app.backend.database.connection import engine
             
-            trade_history = get_trade_history_service()
+            # Step 1: Import missing orders from Alpaca
+            filled_orders = self.alpaca.get_orders(status="closed", limit=200)
             
-            # Get pending trades
-            pending_trades = trade_history.get_trade_history(status="pending", limit=100)
-            
-            if not pending_trades:
-                return {"status": "completed", "trades_synced": 0, "message": "No pending trades"}
-            
-            # Get current positions from Alpaca
-            positions = self.alpaca.get_positions()
-            position_tickers = {p.symbol for p in positions} if positions else set()
-            
-            synced = 0
-            errors = []
-            
-            for trade in pending_trades:
-                ticker = trade.get("ticker")
-                trade_id = trade.get("id")
-                
-                if not ticker or not trade_id:
-                    continue
-                
-                # If we have a pending trade but no position, it may have been closed
-                if ticker not in position_tickers:
-                    # Try to get the last closed order for this ticker
+            imported = 0
+            with engine.connect() as conn:
+                for order in filled_orders:
+                    if order.status != "filled" or not order.filled_qty or float(order.filled_qty) <= 0:
+                        continue
+                    
                     try:
-                        # Get the entry price from the trade or use a placeholder
-                        entry_price = trade.get("entry_price")
+                        # Check if exists
+                        check = conn.execute(
+                            text("SELECT id FROM trade_history WHERE order_id = :oid"),
+                            {"oid": order.id}
+                        )
+                        if check.fetchone():
+                            continue
                         
-                        # Try to get current price for exit
-                        try:
-                            quote = self.alpaca.get_quote(ticker)
-                            exit_price = float(quote.last_price) if quote and quote.last_price else None
-                            if not exit_price:
-                                exit_price = float(quote.bid_price) if quote and quote.bid_price else None
-                        except Exception:
-                            exit_price = None
-                        
-                        if exit_price:
-                            # Calculate realized P&L if we have entry price
-                            realized_pnl = None
-                            if entry_price:
-                                action = trade.get("action", "").lower()
-                                qty = trade.get("quantity", 0)
-                                if action in ["buy", "cover"]:
-                                    realized_pnl = (exit_price - entry_price) * qty
-                                else:
-                                    realized_pnl = (entry_price - exit_price) * qty
-                            
-                            trade_history.close_trade(
-                                trade_id=trade_id,
-                                exit_price=exit_price,
-                                realized_pnl=realized_pnl,
-                                notes="Auto-synced: position no longer held"
-                            )
-                            synced += 1
-                            logger.info(f"✓ Synced trade {trade_id} ({ticker}) as closed")
+                        # Import
+                        conn.execute(text("""
+                            INSERT INTO trade_history 
+                            (order_id, ticker, action, quantity, entry_price, status, entry_time, created_at)
+                            VALUES (:order_id, :ticker, :action, :qty, :price, 'filled', :time, NOW())
+                        """), {
+                            "order_id": order.id,
+                            "ticker": order.symbol,
+                            "action": order.side,
+                            "qty": float(order.filled_qty),
+                            "price": float(order.filled_avg_price) if order.filled_avg_price else None,
+                            "time": order.filled_at or order.submitted_at,
+                        })
+                        conn.commit()
+                        imported += 1
+                        logger.info(f"✓ Imported order: {order.symbol} {order.side} {order.filled_qty}")
                     except Exception as e:
-                        errors.append(f"{ticker}: {str(e)}")
+                        logger.warning(f"Failed to import order {order.id}: {e}")
+            
+            # Step 2: Calculate P&L for completed round-trips
+            pnl_updated = await self._calculate_pnl_fifo()
             
             return {
-                "status": "completed" if not errors else "partial",
-                "pending_trades": len(pending_trades),
-                "trades_synced": synced,
-                "current_positions": len(position_tickers),
-                "errors": errors[:5],  # Limit error list
+                "status": "completed",
+                "orders_checked": len(filled_orders),
+                "orders_imported": imported,
+                "pnl_calculated": pnl_updated,
             }
             
         except Exception as e:
             logger.error(f"Trade sync failed: {e}")
             return {"status": "error", "error": str(e)}
+
+    async def _calculate_pnl_fifo(self) -> int:
+        """Calculate realized P&L using FIFO matching of buy/sell pairs."""
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        
+        updated = 0
+        
+        with engine.connect() as conn:
+            # Get tickers with both buys and sells
+            tickers_result = conn.execute(text("""
+                SELECT DISTINCT ticker FROM trade_history 
+                WHERE ticker IN (
+                    SELECT ticker FROM trade_history WHERE action = 'buy'
+                    INTERSECT
+                    SELECT ticker FROM trade_history WHERE action = 'sell'
+                )
+            """))
+            tickers = [row[0] for row in tickers_result.fetchall()]
+            
+            for ticker in tickers:
+                trades = conn.execute(text("""
+                    SELECT id, action, quantity, entry_price, status, entry_time
+                    FROM trade_history
+                    WHERE ticker = :ticker
+                    ORDER BY entry_time ASC
+                """), {"ticker": ticker}).fetchall()
+                
+                buys = []  # Queue of [id, remaining_qty, price]
+                
+                for trade in trades:
+                    trade_id, action, qty, price, status, _ = trade
+                    
+                    if action == 'buy':
+                        buys.append([trade_id, float(qty), float(price) if price else 0])
+                    elif action == 'sell' and buys and status != 'closed':
+                        sell_qty = float(qty)
+                        sell_price = float(price) if price else 0
+                        total_cost_basis = 0
+                        qty_matched = 0
+                        
+                        while sell_qty > 0 and buys:
+                            buy_remaining = buys[0][1]
+                            buy_price = buys[0][2]
+                            
+                            match_qty = min(sell_qty, buy_remaining)
+                            total_cost_basis += match_qty * buy_price
+                            qty_matched += match_qty
+                            sell_qty -= match_qty
+                            buys[0][1] -= match_qty
+                            
+                            if buys[0][1] <= 0:
+                                buys.pop(0)
+                        
+                        if qty_matched > 0:
+                            avg_cost = total_cost_basis / qty_matched
+                            realized_pnl = (sell_price - avg_cost) * qty_matched
+                            return_pct = ((sell_price - avg_cost) / avg_cost) * 100 if avg_cost > 0 else 0
+                            
+                            conn.execute(text("""
+                                UPDATE trade_history
+                                SET status = 'closed', realized_pnl = :pnl, return_pct = :ret_pct
+                                WHERE id = :id
+                            """), {"id": trade_id, "pnl": round(realized_pnl, 2), "ret_pct": round(return_pct, 4)})
+                            conn.commit()
+                            updated += 1
+        
+        return updated
 
 
 # Global scheduler instance

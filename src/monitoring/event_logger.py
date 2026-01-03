@@ -1,279 +1,79 @@
 """
-Event Logger Service
+Event Logger - Persists pipeline data to database for Round Table transparency.
 
-Central logging service for all trading events. Provides a unified interface
-for logging workflow steps, agent signals, PM decisions, trade executions,
-and system health metrics.
-
-All events are stored in TimescaleDB hypertables for efficient time-series
-querying and analysis.
+This logger writes to the monitoring tables (workflow_events, agent_signals, 
+mazo_research, pm_decisions, trade_executions) so the Round Table UI can 
+display real data from actual trading cycles.
 """
 
-import logging
 import os
 import uuid
-import time
+import logging
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List
-from dataclasses import dataclass, field
+from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
-from functools import wraps
 
 logger = logging.getLogger(__name__)
 
-# Try to import database dependencies
-try:
-    from sqlalchemy.orm import Session
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    DB_AVAILABLE = True
-except ImportError:
-    DB_AVAILABLE = False
-    logger.warning("SQLAlchemy not available, using in-memory logging only")
+# Singleton instance
+_event_logger_instance = None
 
 
-@dataclass
-class WorkflowContext:
-    """Context for tracking a workflow execution"""
-    workflow_id: uuid.UUID
-    workflow_type: str
-    started_at: datetime
-    tickers: List[str] = field(default_factory=list)
-    mode: str = "full"
-    step_index: int = 0
+def get_event_logger() -> 'EventLogger':
+    """Get or create the singleton EventLogger instance."""
+    global _event_logger_instance
+    if _event_logger_instance is None:
+        _event_logger_instance = EventLogger()
+    return _event_logger_instance
 
 
 class EventLogger:
     """
-    Central logging service for all trading events.
+    Logs pipeline events to the database for Round Table transparency.
     
-    Usage:
-        logger = get_event_logger()
-        
-        # Start a workflow
-        with logger.workflow("trading_cycle", tickers=["AAPL", "MSFT"]) as wf:
-            # Log steps
-            with wf.step("strategy_screening"):
-                # ... do screening ...
-                pass
-            
-            # Log agent signals
-            logger.log_agent_signal(
-                workflow_id=wf.workflow_id,
-                agent_id="warren_buffett",
-                ticker="AAPL",
-                signal="bullish",
-                confidence=75.0,
-                reasoning="Strong fundamentals..."
-            )
+    Uses raw SQL for simplicity and to avoid ORM session management issues
+    when called from async contexts.
     """
     
-    def __init__(self, database_url: str = None):
-        self.database_url = database_url or os.getenv("DATABASE_URL")
-        self._session_factory = None
-        self._in_memory_events: List[Dict] = []  # Fallback storage
-        self._init_db()
+    def __init__(self):
+        self._engine = None
+        self._initialized = False
     
-    def _init_db(self):
-        """Initialize database connection if available."""
-        if not DB_AVAILABLE or not self.database_url:
-            logger.info("Using in-memory event logging")
+    def _get_engine(self):
+        """Lazily get the database engine."""
+        if self._engine is None:
+            try:
+                # Try to import the engine from the backend
+                from app.backend.database.connection import engine
+                self._engine = engine
+                self._initialized = True
+                logger.info("EventLogger connected to database")
+            except Exception as e:
+                logger.warning(f"EventLogger could not connect to database: {e}")
+                self._initialized = False
+        return self._engine
+    
+    @contextmanager
+    def _get_connection(self):
+        """Get a database connection context."""
+        engine = self._get_engine()
+        if engine is None:
+            yield None
             return
         
         try:
-            engine = create_engine(self.database_url)
-            self._session_factory = sessionmaker(bind=engine)
-            logger.info("EventLogger connected to database")
-        except Exception as e:
-            logger.warning(f"Failed to connect to database: {e}")
-            self._session_factory = None
-    
-    def _get_session(self) -> Optional[Session]:
-        """Get a database session if available."""
-        if self._session_factory:
-            return self._session_factory()
-        return None
-    
-    def _store_event(self, table_name: str, event_data: Dict[str, Any]):
-        """Store an event in the database or in-memory fallback."""
-        event_data["timestamp"] = event_data.get("timestamp", datetime.now(timezone.utc))
-        event_data["id"] = event_data.get("id", uuid.uuid4())
-        
-        session = self._get_session()
-        if session:
+            conn = engine.connect()
             try:
-                # Dynamic table insert
-                from app.backend.database.monitoring_models import (
-                    WorkflowEvent, AgentSignal, MazoResearch, PMDecision,
-                    TradeExecution, PerformanceMetric, SystemHealth,
-                    LLMAPICall, Alert, RateLimitTracking, SchedulerHeartbeat
-                )
-                
-                table_map = {
-                    "workflow_events": WorkflowEvent,
-                    "agent_signals": AgentSignal,
-                    "mazo_research": MazoResearch,
-                    "pm_decisions": PMDecision,
-                    "trade_executions": TradeExecution,
-                    "performance_metrics": PerformanceMetric,
-                    "system_health": SystemHealth,
-                    "llm_api_calls": LLMAPICall,
-                    "alerts": Alert,
-                    "rate_limit_tracking": RateLimitTracking,
-                    "scheduler_heartbeats": SchedulerHeartbeat,
-                }
-                
-                model_class = table_map.get(table_name)
-                if model_class:
-                    record = model_class(**event_data)
-                    session.add(record)
-                    session.commit()
-                    return
-                    
+                yield conn
+                conn.commit()
             except Exception as e:
-                logger.error(f"Failed to store event in {table_name}: {e}")
-                logger.error(f"Event data keys: {list(event_data.keys())}")
-                session.rollback()
+                conn.rollback()
+                raise
             finally:
-                session.close()
-        
-        # Fallback to in-memory
-        self._in_memory_events.append({
-            "table": table_name,
-            "data": event_data
-        })
-        
-        # Keep in-memory buffer bounded
-        if len(self._in_memory_events) > 10000:
-            self._in_memory_events = self._in_memory_events[-5000:]
-    
-    # =========================================================================
-    # WORKFLOW LOGGING
-    # =========================================================================
-    
-    @contextmanager
-    def workflow(self, workflow_type: str, tickers: List[str] = None, mode: str = "full"):
-        """
-        Context manager for tracking a complete workflow execution.
-        
-        Usage:
-            with event_logger.workflow("trading_cycle", tickers=["AAPL"]) as wf:
-                # ... workflow steps ...
-                pass
-        """
-        ctx = WorkflowContext(
-            workflow_id=uuid.uuid4(),
-            workflow_type=workflow_type,
-            started_at=datetime.now(timezone.utc),
-            tickers=tickers or [],
-            mode=mode,
-        )
-        
-        # Log workflow start
-        self.log_workflow_event(
-            workflow_id=ctx.workflow_id,
-            workflow_type=workflow_type,
-            step_name="workflow_start",
-            status="started",
-            payload={"tickers": tickers, "mode": mode}
-        )
-        
-        try:
-            yield ctx
-            
-            # Log workflow completion
-            duration_ms = int((datetime.now(timezone.utc) - ctx.started_at).total_seconds() * 1000)
-            self.log_workflow_event(
-                workflow_id=ctx.workflow_id,
-                workflow_type=workflow_type,
-                step_name="workflow_complete",
-                status="completed",
-                duration_ms=duration_ms,
-                payload={"tickers": tickers, "steps_completed": ctx.step_index}
-            )
-            
+                conn.close()
         except Exception as e:
-            # Log workflow failure
-            duration_ms = int((datetime.now(timezone.utc) - ctx.started_at).total_seconds() * 1000)
-            self.log_workflow_event(
-                workflow_id=ctx.workflow_id,
-                workflow_type=workflow_type,
-                step_name="workflow_error",
-                status="failed",
-                duration_ms=duration_ms,
-                error_message=str(e),
-                payload={"tickers": tickers, "steps_completed": ctx.step_index}
-            )
-            raise
-    
-    @contextmanager
-    def step(self, ctx: WorkflowContext, step_name: str, ticker: str = None):
-        """
-        Context manager for tracking a workflow step.
-        
-        Usage:
-            with event_logger.step(wf, "strategy_screening") as step:
-                # ... do work ...
-                step.add_payload({"signals_found": 5})
-        """
-        ctx.step_index += 1
-        step_ctx = {
-            "workflow_id": ctx.workflow_id,
-            "step_name": step_name,
-            "step_index": ctx.step_index,
-            "ticker": ticker,
-            "started_at": datetime.now(timezone.utc),
-            "payload": {},
-        }
-        
-        # Log step start
-        self.log_workflow_event(
-            workflow_id=ctx.workflow_id,
-            workflow_type=ctx.workflow_type,
-            step_name=step_name,
-            step_index=ctx.step_index,
-            status="started",
-            ticker=ticker,
-        )
-        
-        class StepContext:
-            def __init__(self, data):
-                self._data = data
-            
-            def add_payload(self, payload: Dict):
-                self._data["payload"].update(payload)
-        
-        try:
-            yield StepContext(step_ctx)
-            
-            # Log step completion
-            duration_ms = int((datetime.now(timezone.utc) - step_ctx["started_at"]).total_seconds() * 1000)
-            self.log_workflow_event(
-                workflow_id=ctx.workflow_id,
-                workflow_type=ctx.workflow_type,
-                step_name=step_name,
-                step_index=ctx.step_index,
-                status="completed",
-                duration_ms=duration_ms,
-                ticker=ticker,
-                payload=step_ctx["payload"],
-            )
-            
-        except Exception as e:
-            # Log step failure
-            duration_ms = int((datetime.now(timezone.utc) - step_ctx["started_at"]).total_seconds() * 1000)
-            self.log_workflow_event(
-                workflow_id=ctx.workflow_id,
-                workflow_type=ctx.workflow_type,
-                step_name=step_name,
-                step_index=ctx.step_index,
-                status="failed",
-                duration_ms=duration_ms,
-                ticker=ticker,
-                error_message=str(e),
-                payload=step_ctx["payload"],
-            )
-            raise
+            logger.error(f"Database connection error: {e}")
+            yield None
     
     def log_workflow_event(
         self,
@@ -281,32 +81,38 @@ class EventLogger:
         workflow_type: str,
         step_name: str,
         status: str,
-        step_index: int = None,
-        started_at: datetime = None,
-        completed_at: datetime = None,
-        duration_ms: int = None,
         ticker: str = None,
+        payload: Dict[str, Any] = None,
+        duration_ms: int = None,
         error_message: str = None,
-        payload: Dict = None,
     ):
-        """Log a workflow event."""
-        self._store_event("workflow_events", {
-            "workflow_id": workflow_id,
-            "workflow_type": workflow_type,
-            "step_name": step_name,
-            "step_index": step_index,
-            "started_at": started_at,
-            "completed_at": completed_at,
-            "duration_ms": duration_ms,
-            "status": status,
-            "ticker": ticker,
-            "error_message": error_message,
-            "payload": payload,
-        })
-    
-    # =========================================================================
-    # AGENT SIGNAL LOGGING
-    # =========================================================================
+        """Log a workflow event (start, complete, error, etc.)."""
+        with self._get_connection() as conn:
+            if conn is None:
+                return
+            
+            try:
+                from sqlalchemy import text
+                import json
+                
+                conn.execute(text("""
+                    INSERT INTO workflow_events 
+                    (timestamp, id, workflow_id, workflow_type, step_name, status, ticker, payload, duration_ms, error_message)
+                    VALUES (NOW(), :id, :workflow_id, :workflow_type, :step_name, :status, :ticker, :payload, :duration_ms, :error_message)
+                """), {
+                    "id": str(uuid.uuid4()),
+                    "workflow_id": str(workflow_id),
+                    "workflow_type": workflow_type,
+                    "step_name": step_name,
+                    "status": status,
+                    "ticker": ticker,
+                    "payload": json.dumps(payload) if payload else None,
+                    "duration_ms": duration_ms,
+                    "error_message": error_message,
+                })
+                conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to log workflow event: {e}")
     
     def log_agent_signal(
         self,
@@ -316,26 +122,38 @@ class EventLogger:
         signal: str,
         confidence: float = None,
         reasoning: str = None,
-        key_metrics: Dict = None,
-        latency_ms: int = None,
+        key_metrics: Dict[str, Any] = None,
         agent_type: str = None,
+        latency_ms: int = None,
     ):
-        """Log an individual agent's signal."""
-        self._store_event("agent_signals", {
-            "workflow_id": workflow_id,
-            "agent_id": agent_id,
-            "agent_type": agent_type,
-            "ticker": ticker,
-            "signal": signal,
-            "confidence": confidence,
-            "reasoning": reasoning,
-            "key_metrics": key_metrics,
-            "latency_ms": latency_ms,
-        })
-    
-    # =========================================================================
-    # MAZO RESEARCH LOGGING
-    # =========================================================================
+        """Log an individual agent's signal with full reasoning."""
+        with self._get_connection() as conn:
+            if conn is None:
+                return
+            
+            try:
+                from sqlalchemy import text
+                import json
+                
+                conn.execute(text("""
+                    INSERT INTO agent_signals 
+                    (timestamp, id, workflow_id, agent_id, agent_type, ticker, signal, confidence, reasoning, key_metrics, latency_ms)
+                    VALUES (NOW(), :id, :workflow_id, :agent_id, :agent_type, :ticker, :signal, :confidence, :reasoning, :key_metrics, :latency_ms)
+                """), {
+                    "id": str(uuid.uuid4()),
+                    "workflow_id": str(workflow_id),
+                    "agent_id": agent_id,
+                    "agent_type": agent_type,
+                    "ticker": ticker,
+                    "signal": signal.lower() if signal else "neutral",
+                    "confidence": confidence,
+                    "reasoning": reasoning,
+                    "key_metrics": json.dumps(key_metrics) if key_metrics else None,
+                    "latency_ms": latency_ms,
+                })
+                conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to log agent signal: {e}")
     
     def log_mazo_research(
         self,
@@ -344,392 +162,307 @@ class EventLogger:
         query: str,
         mode: str = None,
         response: str = None,
-        sources: List[Dict] = None,
+        sources: List[Dict[str, Any]] = None,
         sentiment: str = None,
         sentiment_confidence: str = None,
         key_points: List[str] = None,
-        success: bool = True,
+        success: bool = False,
         error: str = None,
         latency_ms: int = None,
     ):
-        """Log a Mazo research query and response."""
-        self._store_event("mazo_research", {
-            "workflow_id": workflow_id,
-            "ticker": ticker,
-            "query": query,
-            "mode": mode,
-            "response": response[:5000] if response else None,  # Truncate long responses
-            "response_length": len(response) if response else 0,
-            "sources_count": len(sources) if sources else 0,
-            "sources": sources,
-            "sentiment": sentiment,
-            "sentiment_confidence": sentiment_confidence,
-            "key_points": key_points,
-            "success": success,
-            "error": error,
-            "latency_ms": latency_ms,
-        })
-    
-    def update_mazo_pm_follow(
-        self,
-        mazo_research_id: uuid.UUID,
-        pm_followed: bool,
-        pm_action: str,
-    ):
-        """Update Mazo research record with PM follow-through."""
-        # This would update the existing record
-        # For now, just log as a separate event
-        logger.info(f"Mazo {mazo_research_id}: PM followed={pm_followed}, action={pm_action}")
-    
-    # =========================================================================
-    # PM DECISION LOGGING
-    # =========================================================================
+        """Log Mazo research query and response."""
+        with self._get_connection() as conn:
+            if conn is None:
+                return
+            
+            try:
+                from sqlalchemy import text
+                import json
+                
+                conn.execute(text("""
+                    INSERT INTO mazo_research 
+                    (timestamp, id, workflow_id, ticker, query, mode, response, response_length, sources_count, sources, 
+                     sentiment, sentiment_confidence, key_points, success, error, latency_ms)
+                    VALUES (NOW(), :id, :workflow_id, :ticker, :query, :mode, :response, :response_length, :sources_count, :sources,
+                            :sentiment, :sentiment_confidence, :key_points, :success, :error, :latency_ms)
+                """), {
+                    "id": str(uuid.uuid4()),
+                    "workflow_id": str(workflow_id),
+                    "ticker": ticker,
+                    "query": query[:500] if query else "",
+                    "mode": mode,
+                    "response": response[:5000] if response else None,  # Limit response size
+                    "response_length": len(response) if response else 0,
+                    "sources_count": len(sources) if sources else 0,
+                    "sources": json.dumps(sources) if sources else None,
+                    "sentiment": sentiment,
+                    "sentiment_confidence": sentiment_confidence,
+                    "key_points": json.dumps(key_points) if key_points else None,
+                    "success": success,
+                    "error": error,
+                    "latency_ms": latency_ms,
+                })
+                conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to log Mazo research: {e}")
     
     def log_pm_decision(
         self,
         workflow_id: uuid.UUID,
         ticker: str,
         action: str,
-        quantity: int = None,
+        quantity: float = None,
         stop_loss_pct: float = None,
         take_profit_pct: float = None,
-        agents_received: Dict = None,
+        confidence: float = None,
+        reasoning: str = None,
         bullish_count: int = None,
         bearish_count: int = None,
         neutral_count: int = None,
         consensus_direction: str = None,
         consensus_score: float = None,
-        mazo_received: bool = False,
-        mazo_considered: bool = False,
-        mazo_sentiment: str = None,
-        mazo_bypass_reason: str = None,
-        action_matches_consensus: bool = None,
-        override_reason: str = None,
-        reasoning_raw: str = None,
-        confidence: float = None,
         portfolio_equity: float = None,
         portfolio_cash: float = None,
+        mazo_sentiment: str = None,
         latency_ms: int = None,
+        danelfin_ai_score: int = None,
+        danelfin_technical: int = None,
+        danelfin_fundamental: int = None,
+        danelfin_sentiment: int = None,
+        danelfin_low_risk: int = None,
+        danelfin_signal: str = None,
     ):
-        """Log a Portfolio Manager decision with full context."""
-        self._store_event("pm_decisions", {
-            "workflow_id": workflow_id,
-            "ticker": ticker,
-            "action": action,
-            "quantity": quantity,
-            "stop_loss_pct": stop_loss_pct,
-            "take_profit_pct": take_profit_pct,
-            "agents_received": agents_received,
-            "agents_considered": agents_received,  # Same for now
-            "bullish_count": bullish_count,
-            "bearish_count": bearish_count,
-            "neutral_count": neutral_count,
-            "consensus_direction": consensus_direction,
-            "consensus_score": consensus_score,
-            "mazo_received": mazo_received,
-            "mazo_considered": mazo_considered,
-            "mazo_sentiment": mazo_sentiment,
-            "mazo_bypass_reason": mazo_bypass_reason,
-            "action_matches_consensus": action_matches_consensus,
-            "override_reason": override_reason,
-            "reasoning_raw": reasoning_raw,
-            "confidence": confidence,
-            "portfolio_equity": portfolio_equity,
-            "portfolio_cash": portfolio_cash,
-            "latency_ms": latency_ms,
-        })
+        """Log Portfolio Manager decision with full context."""
+        with self._get_connection() as conn:
+            if conn is None:
+                return
+            
+            try:
+                from sqlalchemy import text
+                
+                conn.execute(text("""
+                    INSERT INTO pm_decisions 
+                    (timestamp, id, workflow_id, ticker, action, quantity, stop_loss_pct, take_profit_pct, confidence,
+                     reasoning_raw, bullish_count, bearish_count, neutral_count, consensus_direction, consensus_score,
+                     portfolio_equity, portfolio_cash, mazo_sentiment, latency_ms)
+                    VALUES (NOW(), :id, :workflow_id, :ticker, :action, :quantity, :stop_loss_pct, :take_profit_pct, :confidence,
+                            :reasoning, :bullish_count, :bearish_count, :neutral_count, :consensus_direction, :consensus_score,
+                            :portfolio_equity, :portfolio_cash, :mazo_sentiment, :latency_ms)
+                """), {
+                    "id": str(uuid.uuid4()),
+                    "workflow_id": str(workflow_id),
+                    "ticker": ticker,
+                    "action": action.lower() if action else "hold",
+                    "quantity": quantity,
+                    "stop_loss_pct": stop_loss_pct,
+                    "take_profit_pct": take_profit_pct,
+                    "confidence": confidence,
+                    "reasoning": reasoning[:2000] if reasoning else None,
+                    "bullish_count": bullish_count,
+                    "bearish_count": bearish_count,
+                    "neutral_count": neutral_count,
+                    "consensus_direction": consensus_direction,
+                    "consensus_score": consensus_score,
+                    "portfolio_equity": portfolio_equity,
+                    "portfolio_cash": portfolio_cash,
+                    "mazo_sentiment": mazo_sentiment,
+                    "latency_ms": latency_ms,
+                })
+                conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to log PM decision: {e}")
     
-    # =========================================================================
-    # TRADE EXECUTION LOGGING
-    # =========================================================================
+    def log_danelfin_scores(
+        self,
+        workflow_id: uuid.UUID,
+        tickers: List[str],
+        scores: Dict[str, Dict[str, Any]],
+    ):
+        """
+        Log Danelfin AI scores for workflow tickers.
+        
+        Stores as a workflow_event with step_name='danelfin_validation'
+        so it appears in Round Table as external AI validation.
+        """
+        with self._get_connection() as conn:
+            if conn is None:
+                return
+            
+            try:
+                from sqlalchemy import text
+                import json
+                
+                # Build summary payload
+                summary = {}
+                for ticker in tickers:
+                    score_data = scores.get(ticker, {})
+                    if score_data.get('success', False):
+                        summary[ticker] = {
+                            "ai_score": score_data.get('ai_score'),
+                            "technical": score_data.get('technical'),
+                            "fundamental": score_data.get('fundamental'),
+                            "sentiment": score_data.get('sentiment'),
+                            "low_risk": score_data.get('low_risk'),
+                            "signal": score_data.get('signal'),
+                        }
+                
+                if summary:
+                    conn.execute(text("""
+                        INSERT INTO workflow_events
+                        (timestamp, id, workflow_id, workflow_type, step_name, status, ticker, payload, duration_ms, error_message)
+                        VALUES (NOW(), :id, :workflow_id, 'autonomous', 'danelfin_validation', 'completed', NULL, :payload, NULL, NULL)
+                    """), {
+                        "id": str(uuid.uuid4()),
+                        "workflow_id": str(workflow_id),
+                        "payload": json.dumps({
+                            "source": "danelfin",
+                            "tickers_scored": len(summary),
+                            "scores": summary,
+                        }),
+                    })
+                    conn.commit()
+                    logger.debug(f"Logged Danelfin scores for {len(summary)} tickers")
+            except Exception as e:
+                logger.error(f"Failed to log Danelfin scores: {e}")
     
     def log_trade_execution(
         self,
+        workflow_id: uuid.UUID,
         order_id: str,
         ticker: str,
         side: str,
+        order_type: str,
         quantity: float,
-        order_type: str = "market",
-        status: str = "new",
-        workflow_id: uuid.UUID = None,
-        pm_decision_id: uuid.UUID = None,
-        limit_price: float = None,
-        stop_price: float = None,
-        submitted_at: datetime = None,
-        filled_at: datetime = None,
+        status: str,
         filled_qty: float = None,
         filled_avg_price: float = None,
         expected_price: float = None,
         slippage_bps: float = None,
         fill_latency_ms: int = None,
         reject_reason: str = None,
-        commission: float = None,
     ):
-        """Log a trade execution event."""
-        self._store_event("trade_executions", {
-            "workflow_id": workflow_id,
-            "pm_decision_id": pm_decision_id,
-            "order_id": order_id,
-            "ticker": ticker,
-            "side": side,
-            "order_type": order_type,
-            "quantity": quantity,
-            "limit_price": limit_price,
-            "stop_price": stop_price,
-            "submitted_at": submitted_at,
-            "filled_at": filled_at,
-            "filled_qty": filled_qty,
-            "filled_avg_price": filled_avg_price,
-            "expected_price": expected_price,
-            "slippage_bps": slippage_bps,
-            "fill_latency_ms": fill_latency_ms,
-            "status": status,
-            "reject_reason": reject_reason,
-            "commission": commission,
-        })
+        """Log trade execution details."""
+        with self._get_connection() as conn:
+            if conn is None:
+                return
+            
+            try:
+                from sqlalchemy import text
+                
+                conn.execute(text("""
+                    INSERT INTO trade_executions 
+                    (timestamp, id, workflow_id, order_id, ticker, side, order_type, quantity, status,
+                     filled_qty, filled_avg_price, expected_price, slippage_bps, fill_latency_ms, reject_reason)
+                    VALUES (NOW(), :id, :workflow_id, :order_id, :ticker, :side, :order_type, :quantity, :status,
+                            :filled_qty, :filled_avg_price, :expected_price, :slippage_bps, :fill_latency_ms, :reject_reason)
+                """), {
+                    "id": str(uuid.uuid4()),
+                    "workflow_id": str(workflow_id),
+                    "order_id": order_id,
+                    "ticker": ticker,
+                    "side": side.lower() if side else "buy",
+                    "order_type": order_type.lower() if order_type else "market",
+                    "quantity": quantity,
+                    "status": status.lower() if status else "new",
+                    "filled_qty": filled_qty,
+                    "filled_avg_price": filled_avg_price,
+                    "expected_price": expected_price,
+                    "slippage_bps": slippage_bps,
+                    "fill_latency_ms": fill_latency_ms,
+                    "reject_reason": reject_reason,
+                })
+                conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to log trade execution: {e}")
     
-    # =========================================================================
-    # LLM API CALL LOGGING
-    # =========================================================================
-    
-    def log_llm_call(
+    def update_agent_accuracy(
         self,
-        provider: str,
-        model: str,
-        success: bool,
-        workflow_id: uuid.UUID = None,
-        agent_id: str = None,
-        call_purpose: str = None,
-        prompt_tokens: int = None,
-        completion_tokens: int = None,
-        latency_ms: int = None,
-        total_time_ms: int = None,
-        error_type: str = None,
-        error_message: str = None,
-        retry_count: int = 0,
-        estimated_cost_usd: float = None,
+        workflow_id: uuid.UUID,
+        ticker: str,
+        actual_return: float,
     ):
-        """Log an LLM API call."""
-        self._store_event("llm_api_calls", {
-            "workflow_id": workflow_id,
-            "agent_id": agent_id,
-            "call_purpose": call_purpose,
-            "provider": provider,
-            "model": model,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": (prompt_tokens or 0) + (completion_tokens or 0),
-            "latency_ms": latency_ms,
-            "total_time_ms": total_time_ms,
-            "success": success,
-            "error_type": error_type,
-            "error_message": error_message,
-            "retry_count": retry_count,
-            "estimated_cost_usd": estimated_cost_usd,
-        })
-    
-    # =========================================================================
-    # SYSTEM HEALTH LOGGING
-    # =========================================================================
-    
-    def log_system_health(
-        self,
-        service: str,
-        status: str,
-        latency_ms: int = None,
-        error_count: int = 0,
-        rate_limit_remaining: int = None,
-        rate_limit_reset_at: datetime = None,
-        details: Dict = None,
-    ):
-        """Log system health metrics."""
-        self._store_event("system_health", {
-            "service": service,
-            "status": status,
-            "latency_ms": latency_ms,
-            "error_count": error_count,
-            "rate_limit_remaining": rate_limit_remaining,
-            "rate_limit_reset_at": rate_limit_reset_at,
-            "details": details,
-        })
-    
-    # =========================================================================
-    # PERFORMANCE METRICS
-    # =========================================================================
-    
-    def log_metric(
-        self,
-        metric_name: str,
-        value: float,
-        ticker: str = None,
-        agent_id: str = None,
-        tags: Dict = None,
-    ):
-        """Log a performance metric."""
-        self._store_event("performance_metrics", {
-            "metric_name": metric_name,
-            "value": value,
-            "ticker": ticker,
-            "agent_id": agent_id,
-            "tags": tags,
-        })
-    
-    # =========================================================================
-    # RATE LIMIT TRACKING
-    # =========================================================================
-    
-    def log_rate_limit(
-        self,
-        api_name: str,
-        calls_made: int,
-        calls_remaining: int = None,
-        window_start: datetime = None,
-        window_resets_at: datetime = None,
-        utilization_pct: float = None,
-        last_call_at: datetime = None,
-    ):
-        """Log rate limit usage."""
-        self._store_event("rate_limit_tracking", {
-            "api_name": api_name,
-            "calls_made": calls_made,
-            "calls_remaining": calls_remaining,
-            "window_start": window_start,
-            "window_resets_at": window_resets_at,
-            "utilization_pct": utilization_pct,
-            "last_call_at": last_call_at or datetime.now(timezone.utc),
-        })
-    
-    # =========================================================================
-    # SCHEDULER HEARTBEAT
-    # =========================================================================
-    
-    def log_heartbeat(
-        self,
-        scheduler_id: str,
-        hostname: str = None,
-        jobs_pending: int = None,
-        jobs_running: int = None,
-        memory_mb: float = None,
-        cpu_percent: float = None,
-    ):
-        """Log scheduler heartbeat."""
-        # Store extra details as JSON since table has limited columns
-        details = {
-            "scheduler_id": scheduler_id,
-            "hostname": hostname,
-            "jobs_running": jobs_running,
-            "memory_mb": memory_mb,
-            "cpu_percent": cpu_percent,
-        }
-        
-        self._store_event("scheduler_heartbeats", {
-            "status": "running",
-            "active_jobs": jobs_pending or 0,
-            "details": details,
-        })
+        """Update agent signals with actual outcome for accuracy tracking."""
+        with self._get_connection() as conn:
+            if conn is None:
+                return
+            
+            try:
+                from sqlalchemy import text
+                
+                # Mark bullish signals as correct if return > 0, bearish if return < 0
+                conn.execute(text("""
+                    UPDATE agent_signals
+                    SET was_correct = CASE 
+                        WHEN signal = 'bullish' AND :actual_return > 0 THEN TRUE
+                        WHEN signal = 'bearish' AND :actual_return < 0 THEN TRUE
+                        WHEN signal = 'neutral' THEN NULL
+                        ELSE FALSE
+                    END,
+                    actual_return = :actual_return
+                    WHERE workflow_id = :workflow_id AND ticker = :ticker
+                """), {
+                    "workflow_id": str(workflow_id),
+                    "ticker": ticker,
+                    "actual_return": actual_return,
+                })
+                conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to update agent accuracy: {e}")
     
     def update_pm_execution(
         self,
         workflow_id: uuid.UUID,
         ticker: str,
         order_id: str,
-        was_executed: bool = True,
-        actual_return: float = None,
-        was_profitable: bool = None,
+        was_executed: bool,
     ):
-        """Update PM decision with execution outcome."""
-        session = self._get_session()
-        if not session:
-            return
-        
-        try:
-            from sqlalchemy import text
+        """Update PM decision with execution status."""
+        with self._get_connection() as conn:
+            if conn is None:
+                return
             
-            update_query = text("""
-                UPDATE pm_decisions 
-                SET was_executed = :was_executed,
-                    execution_order_id = :order_id,
-                    actual_return = :actual_return,
-                    was_profitable = :was_profitable
-                WHERE workflow_id = :workflow_id 
-                  AND ticker = :ticker
-                  AND was_executed IS NULL
-            """)
-            
-            session.execute(update_query, {
-                "was_executed": was_executed,
-                "order_id": order_id,
-                "actual_return": actual_return,
-                "was_profitable": was_profitable,
-                "workflow_id": str(workflow_id),
-                "ticker": ticker,
-            })
-            session.commit()
-            
-        except Exception as e:
-            logger.error(f"Failed to update PM execution: {e}")
-            session.rollback()
-        finally:
-            session.close()
-    
-    # =========================================================================
-    # UTILITY METHODS
-    # =========================================================================
-    
-    def get_in_memory_events(self, table: str = None) -> List[Dict]:
-        """Get in-memory events (for debugging)."""
-        if table:
-            return [e for e in self._in_memory_events if e["table"] == table]
-        return self._in_memory_events
-
-
-# =============================================================================
-# GLOBAL INSTANCE
-# =============================================================================
-
-_event_logger: Optional[EventLogger] = None
-
-
-def get_event_logger() -> EventLogger:
-    """Get the global EventLogger instance."""
-    global _event_logger
-    if _event_logger is None:
-        _event_logger = EventLogger()
-    return _event_logger
-
-
-def reset_event_logger():
-    """Reset the global EventLogger instance (for testing)."""
-    global _event_logger
-    _event_logger = None
-
-
-# =============================================================================
-# DECORATOR FOR TIMING
-# =============================================================================
-
-def timed_operation(operation_name: str):
-    """Decorator to log operation timing."""
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            start = time.time()
             try:
-                result = func(*args, **kwargs)
-                duration_ms = int((time.time() - start) * 1000)
-                get_event_logger().log_metric(
-                    metric_name=f"operation_duration_{operation_name}",
-                    value=duration_ms,
-                    tags={"operation": operation_name, "success": True}
-                )
-                return result
+                from sqlalchemy import text
+                
+                conn.execute(text("""
+                    UPDATE pm_decisions
+                    SET was_executed = :was_executed,
+                        execution_order_id = :order_id
+                    WHERE workflow_id = :workflow_id AND ticker = :ticker
+                """), {
+                    "workflow_id": str(workflow_id),
+                    "ticker": ticker,
+                    "order_id": order_id,
+                    "was_executed": was_executed,
+                })
+                conn.commit()
             except Exception as e:
-                duration_ms = int((time.time() - start) * 1000)
-                get_event_logger().log_metric(
-                    metric_name=f"operation_duration_{operation_name}",
-                    value=duration_ms,
-                    tags={"operation": operation_name, "success": False, "error": str(e)[:100]}
-                )
-                raise
-        return wrapper
-    return decorator
+                logger.error(f"Failed to update PM execution: {e}")
+    
+    def log_heartbeat(
+        self,
+        status: str = "running",
+        active_jobs: int = 0,
+        details: Dict[str, Any] = None,
+    ):
+        """Log scheduler heartbeat."""
+        with self._get_connection() as conn:
+            if conn is None:
+                return
+            
+            try:
+                from sqlalchemy import text
+                import json
+                
+                conn.execute(text("""
+                    INSERT INTO scheduler_heartbeats (timestamp, id, status, active_jobs, details)
+                    VALUES (NOW(), :id, :status, :active_jobs, :details)
+                """), {
+                    "id": str(uuid.uuid4()),
+                    "status": status,
+                    "active_jobs": active_jobs,
+                    "details": json.dumps(details) if details else None,
+                })
+                conn.commit()
+            except Exception as e:
+                logger.debug(f"Failed to log heartbeat: {e}")

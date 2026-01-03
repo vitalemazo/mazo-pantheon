@@ -372,6 +372,157 @@ class SmallAccountConfig:
             ["momentum", "mean_reversion", "trend_following", "vwap_scalper", "breakout_micro"]
         )
     )
+    
+    # ==================== DYNAMIC RISK PARAMETERS ====================
+    # For small accounts, use wider percentage-based stops since dollar impact is minimal
+    
+    # Stop loss percentage for small trades (<$50 notional)
+    # Wider stops to avoid noise-based exits
+    stop_loss_pct_small: float = field(
+        default_factory=lambda: _env_float("SMALL_ACCOUNT_STOP_LOSS_SMALL", 0.08)  # 8%
+    )
+    
+    # Stop loss percentage for medium trades ($50-$200 notional)
+    stop_loss_pct_medium: float = field(
+        default_factory=lambda: _env_float("SMALL_ACCOUNT_STOP_LOSS_MEDIUM", 0.05)  # 5%
+    )
+    
+    # Stop loss percentage for large trades (>$200 notional)
+    stop_loss_pct_large: float = field(
+        default_factory=lambda: _env_float("SMALL_ACCOUNT_STOP_LOSS_LARGE", 0.03)  # 3%
+    )
+    
+    # Take profit percentage for small trades (<$50 notional)
+    # Wider targets to capture meaningful gains
+    take_profit_pct_small: float = field(
+        default_factory=lambda: _env_float("SMALL_ACCOUNT_TAKE_PROFIT_SMALL", 0.15)  # 15%
+    )
+    
+    # Take profit percentage for medium trades ($50-$200 notional)
+    take_profit_pct_medium: float = field(
+        default_factory=lambda: _env_float("SMALL_ACCOUNT_TAKE_PROFIT_MEDIUM", 0.10)  # 10%
+    )
+    
+    # Take profit percentage for large trades (>$200 notional)
+    take_profit_pct_large: float = field(
+        default_factory=lambda: _env_float("SMALL_ACCOUNT_TAKE_PROFIT_LARGE", 0.07)  # 7%
+    )
+    
+    # Use ATR-based dynamic stops (volatility-aware)
+    use_atr_stops: bool = field(
+        default_factory=lambda: _env_bool("SMALL_ACCOUNT_USE_ATR_STOPS", True)
+    )
+    
+    # ATR multiplier for stop loss (e.g., 2.0 = 2x ATR)
+    atr_stop_multiplier: float = field(
+        default_factory=lambda: _env_float("SMALL_ACCOUNT_ATR_STOP_MULT", 2.0)
+    )
+    
+    # ATR multiplier for take profit (e.g., 3.0 = 3x ATR for 1.5:1 R:R)
+    atr_take_profit_multiplier: float = field(
+        default_factory=lambda: _env_float("SMALL_ACCOUNT_ATR_TP_MULT", 3.0)
+    )
+
+
+@dataclass
+class DanelfinConfig:
+    """
+    Danelfin AI Scoring Integration Configuration.
+    
+    Danelfin provides external AI validation with 5 metrics (1-10 scale):
+    - AI Score: Overall ML-driven rating
+    - Technical: Technical analysis score
+    - Fundamental: Fundamental analysis score
+    - Sentiment: Market sentiment score
+    - Low Risk: Risk assessment (higher = safer)
+    """
+    
+    # Master toggle for Danelfin integration
+    enabled: bool = field(
+        default_factory=lambda: _env_bool("USE_DANELFIN", True)
+    )
+    
+    # Minimum AI score to include ticker in universe (0 = no filter)
+    min_ai_score: int = field(
+        default_factory=lambda: _env_int("DANELFIN_MIN_AI_SCORE", 0)
+    )
+    
+    # Minimum AI score for small account mode (stricter filtering)
+    min_ai_score_small_account: int = field(
+        default_factory=lambda: _env_int("DANELFIN_MIN_AI_SCORE_SMALL", 5)
+    )
+    
+    # Maximum Low Risk score for risky trades (higher = riskier allowed)
+    # If ticker's low_risk < this threshold, it's considered too risky
+    min_low_risk_score: int = field(
+        default_factory=lambda: _env_int("DANELFIN_MIN_LOW_RISK", 0)
+    )
+    
+    # Weight given to Danelfin in PM decision (0-1, like another analyst)
+    # 0.15 means Danelfin counts for 15% of the decision weight
+    pm_weight: float = field(
+        default_factory=lambda: _env_float("DANELFIN_PM_WEIGHT", 0.15)
+    )
+    
+    # Disagreement threshold: if Danelfin AI score differs from our signal by this much,
+    # flag it for review (e.g., we say BUY but Danelfin AI is 2/10)
+    disagreement_threshold: int = field(
+        default_factory=lambda: _env_int("DANELFIN_DISAGREEMENT_THRESHOLD", 4)
+    )
+    
+    # If Danelfin disagrees, reduce confidence by this factor (0.7 = -30%)
+    disagreement_confidence_penalty: float = field(
+        default_factory=lambda: _env_float("DANELFIN_DISAGREEMENT_PENALTY", 0.7)
+    )
+    
+    # Position size boost for high Danelfin scores (AI ≥ 8 and Low Risk ≥ 6)
+    high_score_size_boost: float = field(
+        default_factory=lambda: _env_float("DANELFIN_HIGH_SCORE_BOOST", 1.25)
+    )
+    
+    # Position size reduction for low Danelfin scores (AI ≤ 4)
+    low_score_size_reduction: float = field(
+        default_factory=lambda: _env_float("DANELFIN_LOW_SCORE_REDUCTION", 0.75)
+    )
+    
+    # Prioritize high Danelfin scores when selecting from candidates
+    prioritize_in_selection: bool = field(
+        default_factory=lambda: _env_bool("DANELFIN_PRIORITIZE_SELECTION", True)
+    )
+    
+    # Include Danelfin data in agent reasoning prompts
+    include_in_agent_prompts: bool = field(
+        default_factory=lambda: _env_bool("DANELFIN_IN_AGENT_PROMPTS", True)
+    )
+    
+    # Cache TTL in seconds (Danelfin scores don't change frequently)
+    cache_ttl_seconds: int = field(
+        default_factory=lambda: _env_int("DANELFIN_CACHE_TTL", 900)  # 15 minutes
+    )
+    
+    # --- Auto-Watchlist Enrichment ---
+    
+    # Enable auto-populating watchlist with Danelfin top picks
+    auto_watchlist_enabled: bool = field(
+        default_factory=lambda: _env_bool("DANELFIN_AUTO_WATCHLIST", True)
+    )
+    
+    # Minimum AI score for auto-watchlist additions
+    auto_watchlist_min_ai: int = field(
+        default_factory=lambda: _env_int("DANELFIN_AUTO_WATCHLIST_MIN_AI", 8)
+    )
+    
+    # Max stocks to add per auto-enrichment run
+    auto_watchlist_max_items: int = field(
+        default_factory=lambda: _env_int("DANELFIN_AUTO_WATCHLIST_MAX", 10)
+    )
+    
+    # --- Dynamic Sector Stocks ---
+    
+    # Use Danelfin to dynamically populate sector stock lists
+    use_dynamic_sectors: bool = field(
+        default_factory=lambda: _env_bool("DANELFIN_DYNAMIC_SECTORS", True)
+    )
 
 
 @dataclass
@@ -416,6 +567,7 @@ class TradingConfig:
     fractional: FractionalConfig = field(default_factory=FractionalConfig)
     intraday: IntradayConfig = field(default_factory=IntradayConfig)
     small_account: SmallAccountConfig = field(default_factory=SmallAccountConfig)
+    danelfin: DanelfinConfig = field(default_factory=DanelfinConfig)
     
     def to_dict(self) -> dict:
         """Export configuration as dictionary."""
@@ -495,6 +647,10 @@ def get_small_account_config() -> SmallAccountConfig:
     return get_trading_config().small_account
 
 
+def get_danelfin_config() -> DanelfinConfig:
+    return get_trading_config().danelfin
+
+
 def is_small_account_mode_active(equity: float) -> bool:
     """
     Check if small account mode should be active based on config and equity.
@@ -563,3 +719,133 @@ def get_effective_trading_params(equity: float) -> Dict[str, Any]:
             "trade_cooldown_minutes": cooldown.trade_cooldown_minutes,
             "use_notional_sizing": False,
         }
+
+
+def get_dynamic_risk_params(
+    notional_value: float,
+    atr_pct: Optional[float] = None,
+    equity: Optional[float] = None
+) -> Dict[str, float]:
+    """
+    Calculate dynamic stop loss and take profit based on trade size and volatility.
+    
+    Args:
+        notional_value: Dollar value of the trade
+        atr_pct: Optional ATR as percentage of price (e.g., 0.02 = 2% daily range)
+        equity: Optional account equity (to determine if small account mode)
+        
+    Returns:
+        Dict with stop_loss_pct, take_profit_pct, and sizing info
+    """
+    # Check if small account mode is active
+    small_mode = False
+    if equity is not None:
+        small_mode = is_small_account_mode_active(equity)
+    
+    if small_mode:
+        sac = get_small_account_config()
+        
+        # Use ATR-based stops if available and enabled
+        if atr_pct is not None and sac.use_atr_stops and atr_pct > 0:
+            stop_loss_pct = min(atr_pct * sac.atr_stop_multiplier, 0.15)  # Cap at 15%
+            take_profit_pct = min(atr_pct * sac.atr_take_profit_multiplier, 0.25)  # Cap at 25%
+            method = "atr_based"
+        else:
+            # Size-tiered approach
+            if notional_value < 50:
+                stop_loss_pct = sac.stop_loss_pct_small
+                take_profit_pct = sac.take_profit_pct_small
+                tier = "small"
+            elif notional_value < 200:
+                stop_loss_pct = sac.stop_loss_pct_medium
+                take_profit_pct = sac.take_profit_pct_medium
+                tier = "medium"
+            else:
+                stop_loss_pct = sac.stop_loss_pct_large
+                take_profit_pct = sac.take_profit_pct_large
+                tier = "large"
+            method = f"size_tiered_{tier}"
+        
+        return {
+            "stop_loss_pct": round(stop_loss_pct, 4),
+            "take_profit_pct": round(take_profit_pct, 4),
+            "stop_loss_dollars": round(notional_value * stop_loss_pct, 2),
+            "take_profit_dollars": round(notional_value * take_profit_pct, 2),
+            "risk_reward_ratio": round(take_profit_pct / stop_loss_pct, 2) if stop_loss_pct > 0 else 0,
+            "method": method,
+            "mode": "small_account",
+        }
+    else:
+        # Standard mode - use default risk config
+        risk = get_risk_config()
+        return {
+            "stop_loss_pct": risk.default_stop_loss_pct,
+            "take_profit_pct": risk.default_take_profit_pct,
+            "stop_loss_dollars": round(notional_value * risk.default_stop_loss_pct, 2),
+            "take_profit_dollars": round(notional_value * risk.default_take_profit_pct, 2),
+            "risk_reward_ratio": round(risk.default_take_profit_pct / risk.default_stop_loss_pct, 2),
+            "method": "standard",
+            "mode": "standard",
+        }
+
+
+# Risk level presets for UI
+# These are base values - actual max_positions scales with account size
+RISK_PRESETS = {
+    "conservative": {
+        "max_positions": 5,
+        "stop_loss_pct": 0.03,
+        "take_profit_pct": 0.06,
+        "max_position_pct": 0.10,
+        "description": "Lower risk, tighter stops, 5-10 positions",
+    },
+    "balanced": {
+        "max_positions": 10,
+        "stop_loss_pct": 0.05,
+        "take_profit_pct": 0.10,
+        "max_position_pct": 0.08,
+        "description": "Moderate risk, balanced diversification, 10-15 positions",
+    },
+    "aggressive": {
+        "max_positions": 15,
+        "stop_loss_pct": 0.08,
+        "take_profit_pct": 0.15,
+        "max_position_pct": 0.05,
+        "description": "Higher risk, maximum diversification, 15-25 positions",
+    },
+    "diversified": {
+        "max_positions": 25,
+        "stop_loss_pct": 0.05,
+        "take_profit_pct": 0.12,
+        "max_position_pct": 0.04,  # 4% per position = 25 positions max
+        "description": "Maximum diversification, many small positions, 20-30 positions",
+    },
+}
+
+
+def get_scaled_max_positions(preset_name: str, account_equity: float) -> int:
+    """
+    Scale max positions based on account size.
+    Larger accounts can hold more positions while maintaining proper sizing.
+    """
+    base_preset = RISK_PRESETS.get(preset_name.lower(), RISK_PRESETS["balanced"])
+    base_max = base_preset["max_positions"]
+    
+    # Scale factors based on account size
+    if account_equity >= 100000:
+        scale = 2.0  # $100k+ can double positions
+    elif account_equity >= 50000:
+        scale = 1.5  # $50k+ can 1.5x positions
+    elif account_equity >= 25000:
+        scale = 1.25  # $25k+ can 1.25x positions  
+    elif account_equity >= 10000:
+        scale = 1.0  # $10k-25k uses base
+    else:
+        scale = 0.75  # Under $10k reduce slightly
+    
+    return max(3, int(base_max * scale))  # Minimum 3 positions
+
+
+def get_risk_preset(preset_name: str) -> Dict[str, Any]:
+    """Get risk parameters for a named preset."""
+    return RISK_PRESETS.get(preset_name.lower(), RISK_PRESETS["balanced"])

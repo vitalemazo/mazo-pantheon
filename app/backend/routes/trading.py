@@ -298,6 +298,9 @@ async def add_to_watchlist(request: WatchlistAddRequest):
         expires_in_days=request.expires_in_days,
     )
     
+    if item is None:
+        raise HTTPException(status_code=500, detail="Failed to add item to watchlist")
+    
     return {
         "success": True,
         "item": item.to_dict(),
@@ -557,7 +560,7 @@ def _get_safe_trading_service():
 
 @router.get("/automated/status")
 async def get_automated_trading_status():
-    """Get automated trading service status."""
+    """Get automated trading service status including latest cycle metrics."""
     # First check if credentials are configured
     is_configured, error_response = _check_alpaca_credentials()
     if not is_configured:
@@ -567,6 +570,7 @@ async def get_automated_trading_status():
             "is_running": False,
             "last_run": None,
             "total_runs": 0,
+            "latest_cycle": None,
         }
     
     # Try to get the service
@@ -578,11 +582,94 @@ async def get_automated_trading_status():
             "is_running": False,
             "last_run": None,
             "total_runs": 0,
+            "latest_cycle": None,
         }
+    
+    status = service.get_status()
+    
+    # Try to get latest cycle metrics from database (service.last_result is in-memory only)
+    latest_cycle = None
+    last_run = None
+    total_runs = 0
+    
+    try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        
+        with engine.connect() as conn:
+            # Get the latest completed trading cycle from workflow_events
+            query = """
+                SELECT 
+                    workflow_id,
+                    MIN(timestamp) as started_at,
+                    MAX(timestamp) as completed_at,
+                    MAX(CASE WHEN payload IS NOT NULL AND payload::text LIKE '%"tickers_screened"%' 
+                             THEN (payload->>'tickers_screened')::int ELSE 0 END) as tickers_screened,
+                    MAX(CASE WHEN payload IS NOT NULL AND payload::text LIKE '%"signals_found"%' 
+                             THEN (payload->>'signals_found')::int ELSE 0 END) as signals_found,
+                    MAX(CASE WHEN payload IS NOT NULL AND payload::text LIKE '%"mazo_validated"%' 
+                             THEN (payload->>'mazo_validated')::int ELSE 0 END) as mazo_validated,
+                    MAX(CASE WHEN payload IS NOT NULL AND payload::text LIKE '%"trades_executed"%'
+                             THEN (payload->>'trades_executed')::int ELSE 0 END) as trades_executed
+                FROM workflow_events
+                WHERE workflow_type = 'automated_trading'
+                  AND step_name = 'trading_cycle_complete'
+                GROUP BY workflow_id
+                ORDER BY MAX(timestamp) DESC
+                LIMIT 1
+            """
+            result = conn.execute(text(query))
+            row = result.fetchone()
+            
+            if row:
+                started = row[1]
+                completed = row[2]
+                duration_ms = None
+                if started and completed:
+                    duration_ms = int((completed - started).total_seconds() * 1000)
+                
+                latest_cycle = {
+                    "workflow_id": str(row[0]),
+                    "tickers_screened": row[3] or 0,
+                    "signals_found": row[4] or 0,
+                    "mazo_validated": row[5] or 0,
+                    "trades_analyzed": 0,  # Not tracked in workflow_events payload
+                    "trades_executed": row[6] or 0,
+                    "total_execution_time_ms": duration_ms or 0,
+                    "timestamp": completed.isoformat() if completed else None,
+                }
+                last_run = completed.isoformat() if completed else None
+            
+            # Count total runs
+            count_query = """
+                SELECT COUNT(DISTINCT workflow_id) 
+                FROM workflow_events 
+                WHERE workflow_type = 'automated_trading'
+                  AND step_name = 'trading_cycle_complete'
+            """
+            count_result = conn.execute(text(count_query))
+            total_runs = count_result.scalar() or 0
+            
+    except Exception as e:
+        logger.warning(f"Failed to fetch latest cycle from DB: {e}")
+        # Fall back to in-memory last_result if available
+        if service.last_result:
+            latest_cycle = {
+                "tickers_screened": service.last_result.tickers_screened,
+                "signals_found": service.last_result.signals_found,
+                "mazo_validated": service.last_result.mazo_validated,
+                "trades_analyzed": service.last_result.trades_analyzed,
+                "trades_executed": service.last_result.trades_executed,
+                "total_execution_time_ms": service.last_result.total_execution_time_ms,
+                "timestamp": service.last_result.timestamp.isoformat() if service.last_result.timestamp else None,
+            }
     
     return {
         "success": True,
-        **service.get_status()
+        **status,
+        "last_run": last_run or status.get("last_run"),
+        "total_runs": total_runs or status.get("total_runs", 0),
+        "latest_cycle": latest_cycle,
     }
 
 
@@ -597,7 +684,9 @@ async def get_small_account_mode_status():
     from src.trading.config import (
         get_small_account_config, 
         get_effective_trading_params,
-        is_small_account_mode_active
+        is_small_account_mode_active,
+        get_dynamic_risk_params,
+        RISK_PRESETS,
     )
     from src.trading.strategy_engine import get_strategy_engine, STRATEGY_METADATA
     
@@ -654,7 +743,39 @@ async def get_small_account_mode_status():
             "max_ticker_price": config.max_ticker_price,
             "include_etfs": config.include_etfs,
             "enable_scalping_strategies": config.enable_scalping_strategies,
-        }
+        },
+        "dynamic_risk": {
+            # Example: what risk params would be for a $30 micro-trade
+            "example_micro_trade": get_dynamic_risk_params(
+                notional_value=30.0, 
+                atr_pct=0.025,  # Assume 2.5% ATR
+                equity=current_equity
+            ),
+            # Example: what risk params would be for a $100 trade
+            "example_medium_trade": get_dynamic_risk_params(
+                notional_value=100.0,
+                atr_pct=0.02,
+                equity=current_equity
+            ),
+            # Example: what risk params would be for a $300 trade
+            "example_large_trade": get_dynamic_risk_params(
+                notional_value=300.0,
+                atr_pct=0.015,
+                equity=current_equity
+            ),
+            "small_account_risk_config": {
+                "use_atr_stops": config.use_atr_stops,
+                "atr_stop_multiplier": config.atr_stop_multiplier,
+                "atr_take_profit_multiplier": config.atr_take_profit_multiplier,
+                "stop_loss_pct_small": config.stop_loss_pct_small,
+                "stop_loss_pct_medium": config.stop_loss_pct_medium,
+                "stop_loss_pct_large": config.stop_loss_pct_large,
+                "take_profit_pct_small": config.take_profit_pct_small,
+                "take_profit_pct_medium": config.take_profit_pct_medium,
+                "take_profit_pct_large": config.take_profit_pct_large,
+            },
+        },
+        "risk_presets": RISK_PRESETS,
     }
 
 
@@ -708,26 +829,77 @@ async def run_automated_trading_cycle(request: AutomatedTradingRequest):
 
 @router.get("/automated/history")
 async def get_automated_trading_history(limit: int = 10):
-    """Get automated trading run history."""
-    # Check credentials first
-    is_configured, error_response = _check_alpaca_credentials()
-    if not is_configured:
+    """Get automated trading run history from database."""
+    try:
+        from sqlalchemy import text
+        from app.backend.database.connection import engine
+        
+        with engine.connect() as conn:
+            # Query workflow_events for trading cycles
+            # Use BOOL_OR to properly detect completion status (MAX on strings is alphabetical)
+            query = """
+                SELECT 
+                    workflow_id,
+                    MIN(timestamp) as started_at,
+                    MAX(timestamp) as completed_at,
+                    CASE 
+                        WHEN BOOL_OR(step_name = 'trading_cycle_complete') THEN 'completed'
+                        WHEN BOOL_OR(step_name = 'trading_cycle_error') THEN 'failed'
+                        WHEN BOOL_OR(step_name LIKE '%dry%') THEN 'dry_run'
+                        ELSE 'running' 
+                    END as status,
+                    MAX(CASE WHEN payload IS NOT NULL AND payload::text LIKE '%"signals_found"%' 
+                             THEN (payload->>'signals_found')::int ELSE 0 END) as signals_found,
+                    MAX(CASE WHEN payload IS NOT NULL AND payload::text LIKE '%"trades_executed"%'
+                             THEN (payload->>'trades_executed')::int ELSE 0 END) as trades_executed,
+                    COUNT(DISTINCT ticker) as tickers_analyzed
+                FROM workflow_events
+                WHERE workflow_type = 'automated_trading'
+                GROUP BY workflow_id
+                ORDER BY MIN(timestamp) DESC
+                LIMIT :limit
+            """
+            result = conn.execute(text(query), {"limit": limit})
+            
+            history = []
+            for row in result.fetchall():
+                started = row[1]
+                completed = row[2]
+                duration_ms = None
+                if started and completed:
+                    duration_ms = int((completed - started).total_seconds() * 1000)
+                
+                history.append({
+                    "workflow_id": str(row[0]),
+                    "timestamp": started.isoformat() if started else None,
+                    "completed_at": completed.isoformat() if completed else None,
+                    "status": row[3],
+                    "signals_found": row[4] or 0,
+                    "trades_executed": row[5] or 0,
+                    "tickers_analyzed": row[6] or 0,
+                    "duration_ms": duration_ms,
+                })
+            
+            return {
+                "success": True,
+                "history": history,
+                "count": len(history),
+            }
+    except Exception as e:
+        trade_sync_logger.error(f"Failed to get cycle history: {e}")
+        # Fall back to in-memory history
+        is_configured, error_response = _check_alpaca_credentials()
+        if not is_configured:
+            return {"success": False, "history": [], **error_response}
+        
+        service, error = _get_safe_trading_service()
+        if error:
+            return {"success": False, "history": [], **error}
+        
         return {
-            **error_response,
-            "history": [],
+            "success": True,
+            "history": service.get_history(limit=limit),
         }
-    
-    service, error = _get_safe_trading_service()
-    if error:
-        return {
-            **error,
-            "history": [],
-        }
-    
-    return {
-        "success": True,
-        "history": service.get_history(limit=limit),
-    }
 
 
 @router.post("/automated/dry-run")

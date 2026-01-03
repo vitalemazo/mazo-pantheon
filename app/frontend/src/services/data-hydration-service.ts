@@ -112,6 +112,16 @@ export interface WatchlistItem {
   entry_target: number | null;
 }
 
+export interface LatestCycleMetrics {
+  tickers_screened: number;
+  signals_found: number;
+  mazo_validated: number;
+  trades_analyzed: number;
+  trades_executed: number;
+  total_execution_time_ms: number;
+  timestamp: string | null;
+}
+
 export interface AutomatedTradingStatus {
   success: boolean;
   is_running: boolean;
@@ -119,6 +129,7 @@ export interface AutomatedTradingStatus {
   last_run: string | null;
   total_runs: number;
   last_result: any | null;
+  latest_cycle: LatestCycleMetrics | null;
   error?: string;
   message?: string;
   requires_setup?: {
@@ -275,6 +286,7 @@ interface DataStore extends ControlTowerSlice, WorkspaceSlice, IntelligenceSlice
   setAutomatedStatus: (data: AutomatedTradingStatus) => void;
   setTradingConfig: (config: Partial<TradingConfig>) => void;
   setLatestWorkflow: (data: WorkflowResult) => void;
+  setRecentWorkflows: (data: WorkflowResult[]) => void;
   addAIActivity: (activity: Omit<AIActivity, 'id' | 'timestamp'>) => void;
   setQuickAnalysisResult: (result: QuickAnalysisResult | null) => void;
   setQuickAnalysisTicker: (ticker: string) => void;
@@ -399,6 +411,11 @@ export const useDataStore = create<DataStore>()(
       setLatestWorkflow: (data) => set((state) => ({
         recentWorkflows: [data, ...state.recentWorkflows.slice(0, 9)],
         lastUpdated: { ...state.lastUpdated, recentWorkflows: Date.now() }
+      })),
+
+      setRecentWorkflows: (data) => set(() => ({
+        recentWorkflows: data.slice(0, 20),
+        lastUpdated: { recentWorkflows: Date.now() }
       })),
 
       addAIActivity: (activity) => set((state) => {
@@ -563,9 +580,10 @@ class DataHydrationService {
     const store = useDataStore.getState();
     console.log('[DataHydration] Hydrating Control Tower slice...');
 
-    const [schedulerData, automatedData] = await Promise.all([
+    const [schedulerData, automatedData, cycleHistoryData] = await Promise.all([
       safeFetch<any>('/trading/scheduler/status', null),
       safeFetch<any>('/trading/automated/status', null),
+      safeFetch<any>('/trading/automated/history?limit=20', { history: [] }),
     ]);
 
     if (schedulerData) {
@@ -575,6 +593,26 @@ class DataHydrationService {
       }
     }
     if (automatedData) store.setAutomatedStatus(automatedData);
+    
+    // Populate recent workflows from cycle history
+    if (cycleHistoryData?.history?.length > 0) {
+      // Convert history items to WorkflowResult format
+      const workflows = cycleHistoryData.history.map((item: any) => ({
+        id: item.workflow_id,
+        workflow_id: item.workflow_id,
+        status: item.status || 'completed',
+        timestamp: item.timestamp,
+        started_at: item.timestamp,  // Control Tower uses started_at
+        completed_at: item.completed_at,
+        signals_found: item.signals_found,
+        trades_executed: item.trades_executed,
+        tickers_analyzed: item.tickers_analyzed,
+        duration_ms: item.duration_ms,
+        tickers: [],
+        mode: 'automated',
+      }));
+      store.setRecentWorkflows(workflows);
+    }
   }
 
   /**
