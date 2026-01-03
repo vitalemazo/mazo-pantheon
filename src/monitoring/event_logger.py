@@ -502,3 +502,52 @@ class EventLogger:
         # High-frequency operation, skip DB logging
         # Health data is tracked in-memory by the HealthChecker
         pass
+
+    def log_llm_call(
+        self,
+        provider: str,
+        model: str,
+        success: bool = True,
+        workflow_id: str = None,
+        agent_id: str = None,
+        call_purpose: str = None,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        latency_ms: int = 0,
+        total_time_ms: int = 0,
+        retry_count: int = 0,
+        estimated_cost_usd: float = 0.0,
+        error: str = None,
+    ):
+        """Log an LLM API call for monitoring and cost tracking."""
+        try:
+            # Log to workflow events if we have a workflow_id and are initialized
+            if workflow_id and self._initialized:
+                self._insert_workflow_event(
+                    workflow_id=workflow_id,
+                    event_type="llm_call",
+                    stage=agent_id or "unknown",
+                    status="completed" if success else "failed",
+                    data={
+                        "provider": provider,
+                        "model": model,
+                        "success": success,
+                        "purpose": call_purpose,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "latency_ms": latency_ms,
+                        "total_time_ms": total_time_ms,
+                        "retry_count": retry_count,
+                        "estimated_cost_usd": estimated_cost_usd,
+                        "error": error,
+                    },
+                )
+            
+            # Log summary for debugging (only failures at warning level)
+            if not success:
+                logger.warning(
+                    f"[LLM] {agent_id or 'unknown'} FAILED: {provider}/{model} - {error}"
+                )
+        except Exception as e:
+            # Silent fail - don't let logging errors break the pipeline
+            pass
