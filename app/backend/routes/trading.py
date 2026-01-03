@@ -358,6 +358,34 @@ async def remove_from_watchlist(item_id: int):
     return {"success": True, "message": f"Removed item {item_id}"}
 
 
+@router.post("/watchlist/auto-enrich")
+async def auto_enrich_watchlist(
+    min_ai_score: int = 6,
+    stocks_per_sector: int = 5,
+    max_total: int = 15,
+):
+    """
+    Auto-populate watchlist with high-scoring Danelfin picks.
+    
+    Uses Danelfin AI scoring to find top-rated stocks and adds them
+    to the watchlist with appropriate entry targets and stop losses.
+    """
+    service = get_watchlist_service()
+    result = service.auto_enrich_from_danelfin(
+        min_ai_score=min_ai_score,
+        stocks_per_sector=stocks_per_sector,
+        max_total=max_total,
+    )
+    
+    return {
+        "success": True,
+        "added": result.get("added", 0),
+        "added_tickers": result.get("added_tickers", []),
+        "skipped": result.get("skipped", 0),
+        "error": result.get("error"),
+    }
+
+
 @router.post("/watchlist/check-triggers")
 async def check_watchlist_triggers():
     """Check all watchlist items for triggered conditions."""

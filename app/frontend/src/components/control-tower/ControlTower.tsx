@@ -663,6 +663,29 @@ export function ControlTower() {
                       <Eye className="w-5 h-5 text-blue-400" />
                       Watchlist
                       <Badge variant="outline" className="ml-2">{watchlist.length}</Badge>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="ml-auto text-xs text-blue-400 hover:text-blue-300"
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(`${API_BASE_URL}/trading/watchlist/auto-enrich`, {
+                              method: 'POST',
+                            });
+                            const data = await res.json();
+                            if (data.added > 0) {
+                              toast.success(`Added ${data.added} tickers: ${data.added_tickers?.join(', ')}`);
+                            } else {
+                              toast.info(data.error || 'No new tickers to add');
+                            }
+                          } catch (err) {
+                            toast.error('Failed to auto-enrich watchlist');
+                          }
+                        }}
+                      >
+                        <Sparkles className="w-3 h-3 mr-1" />
+                        Auto-Enrich
+                      </Button>
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -670,7 +693,7 @@ export function ControlTower() {
                       <div className="text-center py-8 text-slate-500">
                         <Eye className="w-8 h-8 mx-auto mb-2 opacity-50" />
                         <p>No items in watchlist</p>
-                        <p className="text-xs mt-1">Add tickers to track opportunities</p>
+                        <p className="text-xs mt-1">Click "Auto-Enrich" to add Danelfin AI-scored picks</p>
                       </div>
                     ) : (
                       <div className="space-y-2 max-h-64 overflow-y-auto">
@@ -681,7 +704,11 @@ export function ControlTower() {
                           >
                             <div>
                               <div className="font-medium text-white">{item.ticker}</div>
-                              <div className="text-xs text-slate-400">{item.reason || 'Watching'}</div>
+                              <div className="text-xs text-slate-400">
+                                {item.notes?.includes('AI:') 
+                                  ? item.notes.match(/AI:\d+\/10/)?.[0] || item.notes.substring(0, 30)
+                                  : item.reason || 'Watching'}
+                              </div>
                             </div>
                             <Badge className={
                               item.status === 'watching' ? 'bg-blue-500/20 text-blue-400' :

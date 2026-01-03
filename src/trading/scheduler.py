@@ -990,6 +990,43 @@ async def _add_monitoring_schedule(scheduler: TradingScheduler):
         replace_existing=True,
     )
     logger.info("Added daily analytics at 4:30 PM ET")
+    
+    # Watchlist auto-enrich (6:00 AM ET - before pre-market health check)
+    scheduler.scheduler.add_job(
+        _run_watchlist_auto_enrich,
+        trigger=CronTrigger(hour=6, minute=0, timezone='America/New_York'),
+        id="watchlist_auto_enrich",
+        name="Watchlist Auto-Enrich from Danelfin",
+        replace_existing=True,
+    )
+    logger.info("Added watchlist auto-enrich at 6:00 AM ET")
+
+
+async def _run_watchlist_auto_enrich():
+    """Auto-enrich watchlist with high Danelfin-scored stocks."""
+    try:
+        from src.trading.watchlist_service import get_watchlist_service
+        from src.trading.config import get_danelfin_config
+        
+        danelfin_config = get_danelfin_config()
+        if not danelfin_config.enabled:
+            logger.info("Skipping watchlist auto-enrich: Danelfin not enabled")
+            return
+        
+        service = get_watchlist_service()
+        result = service.auto_enrich_from_danelfin(
+            min_ai_score=danelfin_config.auto_watchlist_min_ai,
+            stocks_per_sector=5,
+            max_total=danelfin_config.auto_watchlist_max_items,
+        )
+        
+        added = result.get("added", 0)
+        if added > 0:
+            logger.info(f"✅ Watchlist auto-enriched: added {added} tickers ({result.get('added_tickers', [])})")
+        else:
+            logger.info(f"Watchlist auto-enrich: no new tickers added (error={result.get('error')})")
+    except Exception as e:
+        logger.error(f"Error in watchlist auto-enrich: {e}")
 
 
 async def _emit_heartbeat(scheduler_id: str, hostname: str, jobs_pending: int):
